@@ -221,6 +221,9 @@ test('a busy Badge is as tall as every other tone, and so is its line', async ({
 
 test.describe('with motion', () => {
   test.use({ reducedMotion: 'no-preference' });
+  // Three changes per test at the slowed --dur-change: some 25 s on the CI WebKit runner, more
+  // as the catalogue grows, so past the 30 s default.
+  test.describe.configure({ timeout: 90_000 });
 
   test.beforeEach(async ({ page }) => {
     await page.addStyleTag({ content: `.states { --dur-change: ${D}ms; }` });

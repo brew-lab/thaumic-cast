@@ -124,6 +124,40 @@
   }
 
   /*
+   * In a SettingsSection (Audio › Advanced) the panel is a settings grid of its own, with the
+   * section's tracks (a subgrid of the section through <details> needs <details> to be a
+   * grid, above the floors), so the rows inside share one control column and their help one
+   * edge. They are divided as the section's items are: the gap, a --divider hairline, the
+   * gap. No rule sits under the summary.
+   */
+  :where([data-settings-grid='section']) > .disclosure > .panel {
+    gap: var(--card-gap);
+  }
+
+  @container card (inline-size >= 25rem) {
+    :where([data-settings-grid='section']) > .disclosure > .panel {
+      display: grid;
+      grid-template-columns: minmax(min-content, 1fr) auto;
+      gap: var(--card-gap) var(--space-5);
+    }
+
+    :where([data-settings-grid='section']) > .disclosure > .panel > * {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @container card (inline-size >= 45rem) {
+    :where([data-settings-grid='section']) > .disclosure > .panel {
+      grid-template-columns: minmax(min-content, 1fr) auto minmax(0, 1fr);
+    }
+  }
+
+  :where([data-settings-grid='section']) > .disclosure > .panel > * + * {
+    padding-block-start: var(--card-gap);
+    border-block-start: var(--line-hair) solid var(--divider);
+  }
+
+  /*
    * The content fades in and out with the chevron's turn wherever the engine has
    * ::details-content, and the fold animates its height too where it can also size the
    * content to auto (interpolate-size, which base.css allows; WebKit cannot, so there the

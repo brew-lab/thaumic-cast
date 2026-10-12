@@ -1,7 +1,0 @@
-/* The copy control's place on the speaker card, until Phase 4 rebuilds it as the RoomCard. */
-@layer app {
-  .listen {
-    padding-block-start: var(--space-3);
-    border-block-start: var(--line-hair) solid var(--divider);
-  }
-}

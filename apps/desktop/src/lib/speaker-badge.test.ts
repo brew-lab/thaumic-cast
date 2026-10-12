@@ -19,29 +19,29 @@ function reading(state: string | undefined, isCasting: boolean) {
 }
 
 describe('speakerBadge', () => {
-  it('should show no badge without a transport state', () => {
+  it('should show no badge without a transport state, unless our cast holds it', () => {
     expect(reading(undefined, false)).toBeNull();
-    expect(reading(undefined, true)).toBeNull();
+    expect(reading(undefined, true)).toEqual({ label: 'Casting', tone: 'casting' });
   });
 
   it('should say in use when something else is playing', () => {
-    expect(reading('Playing', false)).toEqual({ label: 'In use', tone: 'busy' });
+    expect(reading('Playing', false)).toEqual({ label: 'In use', tone: 'warning' });
   });
 
   it('should keep loading as it was, since our own cast reports it before the card knows', () => {
-    expect(reading('Transitioning', false)).toEqual({ label: 'Loading', tone: 'idle' });
+    expect(reading('Transitioning', false)).toEqual({ label: 'Loading', tone: 'busy' });
   });
 
   it('should keep paused and stopped as they were when something else holds the speaker', () => {
-    expect(reading('PAUSED_PLAYBACK', false)).toEqual({ label: 'Paused', tone: 'idle' });
-    expect(reading('Stopped', false)).toEqual({ label: 'Not playing', tone: 'idle' });
+    expect(reading('PAUSED_PLAYBACK', false)).toEqual({ label: 'Paused', tone: 'neutral' });
+    expect(reading('Stopped', false)).toEqual({ label: 'Not playing', tone: 'neutral' });
   });
 
   it('should keep every reading of our own cast as it was', () => {
     expect(reading('Playing', true)).toEqual({ label: 'Casting', tone: 'casting' });
-    expect(reading('Transitioning', true)).toEqual({ label: 'Loading', tone: 'idle' });
-    expect(reading('PAUSED_PLAYBACK', true)).toEqual({ label: 'Paused', tone: 'idle' });
-    expect(reading('Stopped', true)).toEqual({ label: 'Not playing', tone: 'idle' });
+    expect(reading('Transitioning', true)).toEqual({ label: 'Loading', tone: 'busy' });
+    expect(reading('PAUSED_PLAYBACK', true)).toEqual({ label: 'Paused', tone: 'neutral' });
+    expect(reading('Stopped', true)).toEqual({ label: 'Not playing', tone: 'neutral' });
   });
 
   it('should show no badge for a state with no words, never the raw state name', () => {

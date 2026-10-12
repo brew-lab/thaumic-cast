@@ -1,7 +1,6 @@
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { AddressField, type AddressResult } from '../../src/AddressField';
-import { BrandBlock } from '../../src/BrandBlock';
 import { Button } from '../../src/Button';
 import { Card } from '../../src/Card';
 import { ChoiceGroup } from '../../src/ChoiceGroup';
@@ -9,7 +8,8 @@ import { Cluster } from '../../src/Cluster';
 import { CopyField } from '../../src/CopyField';
 import { DescriptionList } from '../../src/DescriptionList';
 import { EmptyState } from '../../src/EmptyState';
-import { NavItem } from '../../src/NavItem';
+import { Rail, type RailItem } from '../../src/Rail';
+import { SettingsSection } from '../../src/SettingsSection';
 import { Notice } from '../../src/Notice';
 import { NoticeLine } from '../../src/NoticeLine';
 import { Toast } from '../../src/Toast';
@@ -199,11 +199,11 @@ export function ContainerFramesSpecimen(): JSX.Element {
           </div>
         )}
       </Frames>
-      <Frames title="SettingsRow on its card's subgrid (from 25rem); wide adds the help column">
+      <Frames title="SettingsRow on its section's subgrid (from 25rem); wide adds the help column">
         {() => (
-          <Card title="Audio" level={4}>
+          <SettingsSection title="Audio" headingLevel={4}>
             <SettingsRows />
-          </Card>
+          </SettingsSection>
         )}
       </Frames>
       <Frames title="ChoiceGroup: one column below 25rem, option columns from 25rem">
@@ -300,8 +300,7 @@ export function ContainerFieldsSpecimen(): JSX.Element {
 }
 
 /**
- * One rail, as the DesktopShell will draw it: the BrandBlock and the NavItems, in an `app`
- * container of the given width.
+ * One Rail, as the DesktopShell draws it, in an `app` container of the given width.
  * @param props - Component props
  * @param props.rem - The window's width in rem
  * @returns The rail in its window
@@ -314,12 +313,13 @@ function RailWindow({ rem }: { rem: number }): JSX.Element {
         {narrow ? 'Narrow rail' : 'Wide rail'} · a {rem}rem window
       </p>
       <div class="rail-window" data-density="desktop" data-rail={narrow ? 'narrow' : 'wide'}>
-        <nav class="rail" aria-label={narrow ? 'Narrow rail' : 'Wide rail'}>
-          <BrandBlock name="Thaumic Cast" kind="rail" version="Version 0.12.0" />
-          <NavItem icon="speaker" label="Speakers" href="#speakers" current onNavigate={noop} />
-          <NavItem icon="server" label="Server" href="#server" onNavigate={noop} />
-          <NavItem icon="settings" label="Settings" href="#settings" onNavigate={noop} />
-        </nav>
+        <Rail
+          brand={{ name: 'Thaumic Cast', version: 'Version 0.12.0' }}
+          items={RAIL_ITEMS}
+          current="#speakers"
+          onNavigate={noop}
+          navLabel={narrow ? 'Narrow rail' : 'Wide rail'}
+        />
         <p class="rail-main">The view.</p>
       </div>
     </div>
@@ -339,6 +339,13 @@ export function RailSpecimen(): JSX.Element {
     </div>
   );
 }
+
+/** The rail's destinations. */
+const RAIL_ITEMS: RailItem[] = [
+  { href: '#speakers', icon: 'speaker', label: 'Speakers' },
+  { href: '#server', icon: 'server', label: 'Server' },
+  { href: '#settings', icon: 'settings', label: 'Settings' },
+];
 
 /** The fluid steps the strip measures (DESIGN.md T-type, T-space). */
 const FLUID_TYPE = ['--text-4', '--text-5', '--text-6', '--text-7', '--text-8'];
@@ -406,9 +413,9 @@ export function FluidSpecimen(): JSX.Element {
         Drag the corner to resize: {rem ? `${rem}rem, ${rangeOf(rem)}` : 'measuring'}
       </h3>
       <div ref={ref} class="resizable" data-density="desktop">
-        <Card title="Speakers" level={4}>
+        <SettingsSection title="Speakers" headingLevel={4}>
           <SettingsRows />
-        </Card>
+        </SettingsSection>
         <Notice
           tone="info"
           lead="The rooms fold from eight"

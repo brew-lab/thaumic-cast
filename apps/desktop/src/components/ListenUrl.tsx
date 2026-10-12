@@ -4,7 +4,6 @@ import { CopyField } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import { fetchStats, getPlatform, stats, type Platform } from '../state/store';
 import { listenUrl, type SpeakerCast } from '../lib/listen-url';
-import styles from './ListenUrl.module.css';
 
 const log = createLogger('ListenUrl');
 
@@ -73,25 +72,23 @@ export function ListenUrl({ cast }: ListenUrlProps) {
   }, []);
 
   return (
-    <div className={styles.listen}>
-      <CopyField
-        getValue={() => freshListenUrl(cast)}
-        action={t('device.listen_url_copy')}
-        done={t('device.listen_url_copied')}
-        refusedNote={t('device.listen_url_copy_failed')}
-        unavailableNote={t('device.listen_url_unavailable')}
-        reveal="onRefusal"
-        resetKey={`${cast.streamId}:${cast.codec}`}
-        help={
-          <>
-            <p>{t('device.listen_url_hint')}</p>
-            {/* Browser-wide capture is Windows-only and always casts PCM. */}
-            {cast.codec === 'pcm' && mayCaptureBrowserWide(platform) && (
-              <p>{t('device.listen_url_echo')}</p>
-            )}
-          </>
-        }
-      />
-    </div>
+    <CopyField
+      getValue={() => freshListenUrl(cast)}
+      action={t('device.listen_url_copy')}
+      done={t('device.listen_url_copied')}
+      refusedNote={t('device.listen_url_copy_failed')}
+      unavailableNote={t('device.listen_url_unavailable')}
+      reveal="onRefusal"
+      resetKey={`${cast.streamId}:${cast.codec}`}
+      help={
+        <>
+          <p>{t('device.listen_url_hint')}</p>
+          {/* Browser-wide capture is Windows-only and always casts PCM. */}
+          {cast.codec === 'pcm' && mayCaptureBrowserWide(platform) && (
+            <p>{t('device.listen_url_echo')}</p>
+          )}
+        </>
+      }
+    />
   );
 }

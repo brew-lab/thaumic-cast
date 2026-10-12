@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { AddressField, Card, ChoiceGroup, Notice } from '@thaumic-cast/ui';
+import { AddressField, ChoiceGroup, Notice, SettingsSection } from '@thaumic-cast/ui';
 import type { ExtensionSettings } from '../../lib/settings';
 import { connectToServer, isServerUrl, serverAddressResult } from '../../lib/serverTest';
 import { releaseHostPermission } from '../../lib/hostPermission';
@@ -69,7 +69,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
   );
 
   return (
-    <Card title={t('server_section_title')}>
+    <SettingsSection title={t('server_section_title')}>
       <ChoiceGroup
         legend={t('server_section_title')}
         legendHidden
@@ -110,6 +110,6 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
           />
         </>
       )}
-    </Card>
+    </SettingsSection>
   );
 }

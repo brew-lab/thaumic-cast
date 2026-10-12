@@ -52,7 +52,7 @@ test('axe finds no violations on the floor', async ({ page }) => {
 
 test('every section on the floor matches its screenshot', async ({ page }, testInfo) => {
   test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
   await page.evaluate(() => document.fonts.ready);
   // The catalogue's own sections: a specimen's PopupShell draws a <main> of its own.
   const ids = await page
@@ -61,8 +61,21 @@ test('every section on the floor matches its screenshot', async ({ page }, testI
   for (const id of ids) {
     const name = `floor-${id}.png`;
     const section = page.locator(`#${id}`);
+    // A window's iframe loads lazily, as it nears the view: each is brought there and drawn.
+    for (const iframe of await section.locator('iframe').all()) {
+      await iframe.scrollIntoViewIfNeeded();
+      await expect
+        .poll(() =>
+          iframe.evaluate(
+            (f: HTMLIFrameElement) => !!f.contentDocument?.getElementById('app')?.childElementCount,
+          ),
+        )
+        .toBe(true);
+    }
     if (!existsSync(testInfo.snapshotPath(name))) {
-      await section.screenshot({ path: testInfo.outputPath('new-baselines', name) });
+      // At CSS scale, as toHaveScreenshot compares; at WebKit's 2x the tallest sections pass
+      // the 32767 px a screenshot can be.
+      await section.screenshot({ path: testInfo.outputPath('new-baselines', name), scale: 'css' });
       testInfo.annotations.push({ type: 'new baseline', description: name });
       continue;
     }

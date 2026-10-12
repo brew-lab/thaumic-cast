@@ -301,6 +301,9 @@ ${coarse()}
 `;
 }
 
+/** The tokens a top-layer ::backdrop reads (the Dialog's scrim). */
+const BACKDROP_TOKENS = ['scrim'];
+
 /** Renders `webkit-fallbacks.css`: every themed token, per theme, for engines without light-dark().
  * @returns The file's contents
  */
@@ -314,6 +317,17 @@ function renderFallbacks(): string {
       }
       return null;
     }).replace(/^/gm, '    ');
+  // Before Safari 17.4, ::backdrop inherits nothing, so the tokens a backdrop reads are set on
+  // it too. Every engine that has light-dark() inherits into ::backdrop, so tokens.css needs
+  // no such rule.
+  const backdrop = (key: 'light' | 'dark'): string =>
+    block(groups, (v, name) =>
+      BACKDROP_TOKENS.includes(name) && isThemed(v) ? color(v[key]) : null,
+    )
+      .split('\n')
+      .filter((l) => !l.includes('/*'))
+      .map((l) => `    ${l}`)
+      .join('\n');
   return `/*
  * ${HEADER}
  *
@@ -337,6 +351,20 @@ ${side('dark').replace(/^/gm, '  ')}
 
     :root[data-theme='dark'] {
 ${side('dark')}
+    }
+
+    ::backdrop {
+${backdrop('light')}
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme='light']) ::backdrop {
+${backdrop('dark').replace(/^/gm, '  ')}
+      }
+    }
+
+    :root[data-theme='dark'] ::backdrop {
+${backdrop('dark')}
     }
 
     @media (prefers-contrast: more) {

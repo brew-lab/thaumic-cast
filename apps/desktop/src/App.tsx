@@ -1,28 +1,35 @@
-import { Route, Switch } from 'wouter-preact';
+import { Route, Switch, useLocation } from 'wouter-preact';
 import { useEffect } from 'preact/hooks';
-import { Sidebar } from './components/Sidebar';
+import { useSignal } from '@preact/signals';
+import { getVersion } from '@tauri-apps/api/app';
+import { useTranslation } from 'react-i18next';
+import { DesktopShell, Rail, Toast, type RailItem } from '@thaumic-cast/ui';
 import { Speakers } from './views/Speakers';
 import { Server } from './views/Server';
 import { Settings } from './views/Settings';
+import { NotFound } from './views/NotFound';
 import { Onboarding } from './views/Onboarding';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useHashScroll } from './hooks/useHashScroll';
-import { startNetworkServices, startSpeakerNoticeListener } from './state/store';
-import './App.css';
-import styles from './App.module.css';
-import { useTranslation } from 'react-i18next';
-import { Button, EmptyState } from '@thaumic-cast/ui';
+import {
+  castingSpeakers,
+  startNetworkServices,
+  startSpeakerNoticeListener,
+  toast,
+} from './state/store';
 
 /**
  * Root application component.
  *
- * Renders onboarding for first-time users, otherwise the main app with
- * sidebar navigation and routes.
+ * Renders onboarding for first-time users, otherwise the window (DesktopShell): the Rail,
+ * the current view, and the toast row.
  * @returns The rendered App component
  */
 export function App() {
   const { t } = useTranslation();
   const { isLoading, isComplete } = useOnboarding();
+  const [location, navigate] = useLocation();
+  const version = useSignal('');
 
   // Enable hash-based scrolling for client-side navigation
   useHashScroll();
@@ -35,6 +42,30 @@ export function App() {
     }
   }, [isComplete]);
 
+  useEffect(() => {
+    getVersion()
+      .then((v) => {
+        version.value = v;
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // A Toast is about what was just done; leaving the view clears it.
+  useEffect(() => {
+    toast.value = null;
+  }, [location]);
+
+  // So does the next action: any control pressed outside the toast row (M-toast).
+  useEffect(() => {
+    const onPress = (event: Event): void => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!toast.value || !target || target.closest('[data-toast-row]')) return;
+      if (target.closest('button, a[href], input, select, summary')) toast.value = null;
+    };
+    document.addEventListener('click', onPress, true);
+    return () => document.removeEventListener('click', onPress, true);
+  }, []);
+
   // Show nothing while loading onboarding state
   if (isLoading) {
     return null;
@@ -45,29 +76,48 @@ export function App() {
     return <Onboarding />;
   }
 
+  const items: RailItem[] = [
+    { href: '/', icon: 'speaker', label: t('nav.speakers') },
+    { href: '/server', icon: 'server', label: t('nav.server') },
+    { href: '/settings', icon: 'settings', label: t('nav.settings') },
+  ];
+
   return (
-    <div className={styles.layout}>
-      <Sidebar />
-      <main className={styles.content} data-scroller="">
-        <Switch>
-          <Route path="/" component={Speakers} />
-          <Route path="/server" component={Server} />
-          <Route path="/settings" component={Settings} />
-          <Route>
-            <div className={styles.notFound}>
-              <EmptyState
-                title={t('error.page_not_found')}
-                body=""
-                action={
-                  <Button size="md" kind="link" href="/">
-                    {t('error.go_home')}
-                  </Button>
-                }
-              />
-            </div>
-          </Route>
-        </Switch>
-      </main>
-    </div>
+    <DesktopShell
+      wide={location === '/'}
+      rail={
+        <Rail
+          brand={{
+            name: t('app.title'),
+            version: version.value
+              ? t('settings.about_version', { version: version.value })
+              : undefined,
+            lit: castingSpeakers.value.size > 0,
+          }}
+          items={items}
+          current={location}
+          onNavigate={navigate}
+          navLabel={t('app.title')}
+        />
+      }
+      toast={
+        toast.value && (
+          <Toast
+            text={toast.value}
+            onDismiss={() => {
+              toast.value = null;
+            }}
+            dismissLabel={t('dismiss')}
+          />
+        )
+      }
+    >
+      <Switch>
+        <Route path="/" component={Speakers} />
+        <Route path="/server" component={Server} />
+        <Route path="/settings" component={Settings} />
+        <Route component={NotFound} />
+      </Switch>
+    </DesktopShell>
   );
 }

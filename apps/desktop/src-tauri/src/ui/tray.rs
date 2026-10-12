@@ -37,6 +37,8 @@ use crate::api::AppState;
 pub struct TrayState {
     /// The status menu item showing streaming state.
     status_item: MenuItem<tauri::Wry>,
+    /// "Stop all casts", disabled while nothing casts.
+    stop_item: MenuItem<tauri::Wry>,
     /// The tray icon for dynamic icon updates.
     tray_icon: TrayIcon<tauri::Wry>,
     /// Current streaming state (for Windows icon selection).
@@ -48,11 +50,15 @@ pub struct TrayState {
 }
 
 impl TrayState {
-    /// Updates the status text based on current stream count.
+    /// Updates the status text based on current stream count, and enables
+    /// "Stop all casts" only while something casts (DESIGN.md C-tray).
     fn update_status(&self, stream_count: usize) {
         let text = format_status_text(stream_count);
         if let Err(e) = self.status_item.set_text(&text) {
             log::warn!("Failed to update tray status: {}", e);
+        }
+        if let Err(e) = self.stop_item.set_enabled(stream_count > 0) {
+            log::warn!("Failed to update tray Stop all casts: {}", e);
         }
     }
 
@@ -324,13 +330,15 @@ impl<T, E: std::fmt::Display> MenuResultExt<T> for Result<T, E> {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The number of casts running, or 0 before the app state exists.
+fn stream_count(app: &tauri::App) -> usize {
+    app.try_state::<AppState>()
+        .map_or(0, |state| state.services.stream_coordinator.stream_count())
+}
+
 /// Gets the current status text based on app state.
 fn get_status_text(app: &tauri::App) -> String {
-    let Some(state) = app.try_state::<AppState>() else {
-        return format_status_text(0);
-    };
-
-    format_status_text(state.services.stream_coordinator.stream_count())
+    format_status_text(stream_count(app))
 }
 
 /// Checks if autostart is currently enabled.
@@ -402,8 +410,10 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     .build(app)
     .tray_err()?;
 
+    // Disabled while idle: there is nothing to stop (DESIGN.md C-tray, §11 call 10).
     let stop_all_streams =
         MenuItemBuilder::with_id(MenuItemId::StopAllStreams.id(), t!("tray.stop_all_streams"))
+            .enabled(stream_count(app) > 0)
             .build(app)
             .tray_err()?;
 
@@ -453,6 +463,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), TrayError> {
     // Store tray state for dynamic updates
     let tray_state = TrayState {
         status_item: status,
+        stop_item: stop_all_streams,
         tray_icon,
         #[cfg(target_os = "windows")]
         is_streaming: Arc::new(AtomicBool::new(false)),

@@ -2,6 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { Button } from '../Button';
 import { Card } from '../Card';
 import { Cluster } from '../Cluster';
+import { Divider } from '../Divider';
 import { IconButton } from '../IconButton';
 import { PopupShell } from '../PopupShell';
 import { StepIndicator, type StepOfLabel } from '../StepIndicator';
@@ -48,8 +49,11 @@ interface WizardProps {
 }
 
 /**
- * A wizard component for multi-step flows.
- * Used for onboarding and setup experiences.
+ * The onboarding flow (DESIGN.md C-wizard). Compact, in the popup: a PopupShell `fill`, Back
+ * (icon only) and the StepIndicator in its header row, the step in a Card, and Skip and
+ * Carry on in a StickyActionBar. Full, on the desktop: inside the WizardShell, the
+ * StepIndicator centred, the step, a rule, then Skip at the start and Back (an outline
+ * Button, from step 2) and Carry on at the end.
  *
  * @param props - Wizard configuration
  * @param props.currentStep
@@ -136,8 +140,12 @@ export function Wizard({
     );
   }
 
+  // The desktop's onboarding (L-wizard full), inside the WizardShell, which is its window and
+  // its scroller: the StepIndicator centred, the step, then a rule and the footer (Skip at the
+  // start; Back from step 2 and Carry on at the end), all md. It is the whole window, not a
+  // modal, so it carries no dialog role.
   return (
-    <div className={styles.wizard} role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+    <div className={styles.wizard}>
       <div class={styles.indicator}>
         <StepIndicator
           current={currentStep}
@@ -147,30 +155,30 @@ export function Wizard({
         />
       </div>
 
-      {/* The full Wizard's one scroller; the compact one is as tall as its step. */}
-      <div className={styles.content} data-scroller="">
-        {children}
-      </div>
+      <div className={styles.content}>{children}</div>
 
-      <div className={styles.footer}>
-        <div className={styles.footerStart}>
-          {showSkip && onSkip && (
-            <Button size="md" kind="quiet" flush onClick={onSkip}>
-              {skip}
+      <div className={styles.foot}>
+        <Divider />
+        <div className={styles.footer}>
+          <div className={styles.footerStart}>
+            {showSkip && onSkip && (
+              <Button size="md" kind="quiet" flush onClick={onSkip}>
+                {skip}
+              </Button>
+            )}
+          </div>
+
+          <Cluster gap="3">
+            {!isFirstStep && onBack && (
+              <Button size="md" kind="outline" onClick={onBack}>
+                {back}
+              </Button>
+            )}
+            <Button size="md" kind="filled" onClick={onNext} disabled={nextDisabled}>
+              {nextLabel}
             </Button>
-          )}
+          </Cluster>
         </div>
-
-        <Cluster gap="3">
-          {!isFirstStep && onBack && (
-            <Button size="md" kind="outline" onClick={onBack}>
-              {back}
-            </Button>
-          )}
-          <Button size="md" kind="filled" onClick={onNext} disabled={nextDisabled}>
-            {nextLabel}
-          </Button>
-        </Cluster>
       </div>
     </div>
   );

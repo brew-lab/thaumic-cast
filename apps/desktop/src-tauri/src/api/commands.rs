@@ -7,8 +7,8 @@ use tauri::{Manager, WebviewWindow};
 use thaumic_core::api::ws_connection::RemotePeers;
 use thaumic_core::{
     now_millis, probe_speaker_by_ip, validate_speaker_ip, CompanionAudio, ErrorCode, EventEmitter,
-    ManualSpeakerConfig, NetworkHealth, PlaybackSession, SettingOrigin, Speaker, StreamEvent,
-    ZoneGroup,
+    ManualSpeakerConfig, NetworkHealth, PlaybackSession, SettingOrigin, Speaker, StopAllOutcome,
+    StreamEvent, ZoneGroup,
 };
 
 use crate::api::AppState;
@@ -243,11 +243,15 @@ pub fn warn_if_server_wide(action: &str, state: &AppState) -> ClearAllImpact {
 /// machine. Logs a warning naming the blast radius when more than one client
 /// is affected.
 ///
-/// Returns the number of streams that were cleared.
+/// Returns how many casts it ended and how many of them were started on
+/// another machine, for the app's feedback (the tray's tooltip says the same).
 #[tauri::command]
-pub async fn clear_all_streams(state: tauri::State<'_, AppState>) -> Result<usize, CommandError> {
+pub async fn clear_all_streams(
+    state: tauri::State<'_, AppState>,
+) -> Result<StopAllOutcome, CommandError> {
     warn_if_server_wide("clear_all_streams", state.inner());
-    Ok(state.clear_all_streams().await)
+    let host_ip = state.services.network.get_local_ip().parse().ok();
+    Ok(state.services.stop_all_casts(host_ip).await)
 }
 
 /// Force-closes all WebSocket connections.

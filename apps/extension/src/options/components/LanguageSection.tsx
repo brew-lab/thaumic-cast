@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card, Select, SettingsRow } from '@thaumic-cast/ui';
+import { Select, SettingsRow, SettingsSection } from '@thaumic-cast/ui';
 import type { ExtensionSettings, SupportedLocale } from '../../lib/settings';
 import { SUPPORTED_LOCALES, changeLanguage, getInitialLanguage } from '../../lib/i18n';
 
@@ -33,7 +33,7 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
   );
 
   return (
-    <Card title={t('language_section_title')}>
+    <SettingsSection title={t('language_section_title')}>
       <SettingsRow
         label={t('language_label')}
         control={
@@ -49,6 +49,6 @@ export function LanguageSection({ settings, onUpdate }: LanguageSectionProps): J
           />
         }
       />
-    </Card>
+    </SettingsSection>
   );
 }

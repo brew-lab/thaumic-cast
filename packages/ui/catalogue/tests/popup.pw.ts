@@ -245,8 +245,20 @@ test('an update marks Settings, renames it and moves nothing in the header', asy
   expect(m.width).toBeCloseTo(p.width, 1);
   expect(m.x).toBeCloseTo(p.x, 1);
   // The words are in the name and in the Tooltip, not in colour alone.
+  const tip = marked.locator('[role="tooltip"]', { hasText: 'Settings, update available' });
   await button.hover();
-  await expect(
-    marked.locator('[role="tooltip"]', { hasText: 'Settings, update available' }),
-  ).toBeVisible({ timeout: 5000 });
+  // Waited for in the page: polling toBeVisible forces a layout of the whole catalogue each
+  // time, which on a slow WebKit runner holds the delay's timer back by seconds.
+  await tip.evaluate(
+    (el) =>
+      new Promise<void>((resolve) => {
+        if (el.hasAttribute('data-open')) return resolve();
+        new MutationObserver((_, observer) => {
+          if (!el.hasAttribute('data-open')) return;
+          observer.disconnect();
+          resolve();
+        }).observe(el, { attributes: true, attributeFilter: ['data-open'] });
+      }),
+  );
+  await expect(tip).toBeVisible();
 });

@@ -1,0 +1,66 @@
+@layer components {
+  /*
+   * L-desktop. The shell is the window: the `app` container, as tall as the window
+   * (100dvb, the Tauri window's height), on --ground. The frame is the rail and the column;
+   * the column is main (the `content` container and the one scroller: base.css gives it the
+   * thin scrollbar and the balanced gutter) over the toast row. The track widths are the
+   * one @container rule an app layout needs; no app writes one.
+   */
+  .shell {
+    container: app / inline-size;
+    block-size: 100dvb;
+    background-color: var(--ground);
+    color: var(--on-surface);
+  }
+
+  .frame {
+    display: grid;
+    grid-template-columns: var(--rail-narrow) minmax(0, 1fr);
+    block-size: 100%;
+    transition: grid-template-columns var(--dur-effects) var(--ease-effects);
+  }
+
+  @container app (inline-size >= 45rem) {
+    .frame {
+      grid-template-columns: var(--rail-wide) minmax(0, 1fr);
+    }
+  }
+
+  .column {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-inline-size: 0;
+    min-block-size: 0;
+  }
+
+  .main {
+    container: content / inline-size;
+    min-inline-size: 0;
+    overflow-y: auto;
+  }
+
+  .view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    max-inline-size: calc(var(--page-max) + 2 * var(--space-7));
+    padding: var(--space-7);
+  }
+
+  .wide {
+    max-inline-size: none;
+  }
+
+  /*
+   * The toast row: nothing while there is no Toast, so it takes no room; with one, the
+   * Toast sits on the ground under main, on the view's inline edges.
+   */
+  .toast:not(:empty) {
+    padding-block: var(--space-3);
+    padding-inline: var(--space-7);
+  }
+
+  .toast > * {
+    max-inline-size: var(--page-max);
+  }
+}

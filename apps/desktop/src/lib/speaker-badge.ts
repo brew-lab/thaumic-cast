@@ -3,8 +3,11 @@
  * transport state and whether one of our casts is on it.
  */
 
-/** How the badge is coloured: our cast, something else holding the speaker, or neither. */
-export type SpeakerBadgeTone = 'casting' | 'busy' | 'idle';
+/**
+ * The Badge tone (DESIGN.md A-badge): our cast, something else holding the speaker
+ * (warning), loading (busy, with the Clacks), or neither (neutral).
+ */
+export type SpeakerBadgeTone = 'casting' | 'warning' | 'busy' | 'neutral';
 
 /** The badge's label, as an i18n key, and its tone. */
 export interface SpeakerBadge {
@@ -18,10 +21,10 @@ export interface SpeakerBadge {
  * The label key for each transport state the core sends (`TransportState` in
  * `thaumic-core`, which serialises the paused state under its UPnP name).
  */
-const STATE_KEY: Record<string, string> = {
-  PAUSED_PLAYBACK: 'transport.paused',
-  Stopped: 'transport.stopped',
-  Transitioning: 'transport.transitioning',
+const STATE_BADGE: Record<string, SpeakerBadge> = {
+  PAUSED_PLAYBACK: { key: 'transport.paused', tone: 'neutral' },
+  Stopped: { key: 'transport.stopped', tone: 'neutral' },
+  Transitioning: { key: 'transport.transitioning', tone: 'busy' },
 };
 
 /**
@@ -32,7 +35,8 @@ const STATE_KEY: Record<string, string> = {
  * ours. "Loading" stays as it is: when we start a cast the speaker can report
  * it before the card knows the cast is ours, and calling that "In use" would
  * flash amber over our own start. A state with no words (one the core adds
- * later) shows no badge: a badge never shows a raw state name.
+ * later) shows no badge: a badge never shows a raw state name. A speaker one of our
+ * casts holds says Casting until its first state arrives.
  * @param transportState - The transport state the core reports, such as "Playing"
  * @param isCasting - Whether one of our casts is on this speaker
  * @returns The badge, or null when there is no state to show
@@ -41,10 +45,10 @@ export function speakerBadge(
   transportState: string | undefined,
   isCasting: boolean,
 ): SpeakerBadge | null {
-  if (!transportState) return null;
+  const casting: SpeakerBadge = { key: 'device.streaming', tone: 'casting' };
+  if (!transportState) return isCasting ? casting : null;
   const isPlaying = transportState === 'Playing';
-  if (isCasting && isPlaying) return { key: 'device.streaming', tone: 'casting' };
-  if (!isCasting && isPlaying) return { key: 'transport.in_use', tone: 'busy' };
-  const key = STATE_KEY[transportState];
-  return key ? { key, tone: 'idle' } : null;
+  if (isCasting && isPlaying) return casting;
+  if (!isCasting && isPlaying) return { key: 'transport.in_use', tone: 'warning' };
+  return STATE_BADGE[transportState] ?? null;
 }

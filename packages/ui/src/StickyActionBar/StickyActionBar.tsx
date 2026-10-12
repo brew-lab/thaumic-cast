@@ -8,7 +8,7 @@ export const OVERLAY_END = '--overlay-end';
 
 /** Props for {@link StickyActionBar}. */
 export interface StickyActionBarProps {
-  /** The Toast, above the actions (one at a time). */
+  /** The Toast, above the actions (one at a time); nothing, and the bar is 0 tall. */
   toast?: ComponentChildren;
   /** The actions: the CastBar, or the compact Wizard's Skip and Carry on. */
   children?: ComponentChildren;
@@ -35,7 +35,9 @@ export function scrollerOf(el: Element): HTMLElement {
  * and publishes its block size as `--overlay-end` on its scroller, which sets
  * its end scroll padding to `--overlay-end` plus `--space-3`, so a focused
  * control is never under it (WCAG 2.4.11). Its hairline shows only while content runs under
- * it (a scroll-state query); where those are missing it is always shown.
+ * it (a scroll-state query); where those are missing it is always shown. With nothing in it
+ * (the options page between Toasts) it stays mounted and is 0 tall, so the page's end padding
+ * never comes and goes with it.
  * @param props - Component props
  * @param props.toast - The Toast
  * @param props.children - The actions
@@ -65,6 +67,7 @@ export function StickyActionBar({ toast, children }: StickyActionBarProps): JSX.
       class={styles.bar}
       data-sticky-bar=""
       data-toast-only={children ? undefined : ''}
+      data-empty={toast || children ? undefined : ''}
     >
       <span class={styles.rule}>
         <Divider />

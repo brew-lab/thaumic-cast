@@ -66,5 +66,6 @@ conductor/
 # Local scratch for logs and captures handed over during debugging
 tmp/
 
-# The real-extension check's screenshots
+# The real-extension and real-app checks' screenshots
 apps/extension/real-ext/shots/
+apps/desktop/real-app/shots/

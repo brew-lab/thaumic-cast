@@ -131,6 +131,7 @@ export function Notice({
     <Root
       class={cx(styles.notice, styles[kind], onDismiss && styles.dismissible)}
       data-tone={tone}
+      data-notice=""
       style={index === undefined ? undefined : { '--i': index }}
       role={kind === 'banner' ? 'region' : undefined}
       aria-labelledby={lead || text ? nameId : undefined}

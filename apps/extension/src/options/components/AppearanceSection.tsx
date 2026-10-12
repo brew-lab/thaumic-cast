@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card, SegmentedControl, SettingsRow } from '@thaumic-cast/ui';
+import { SegmentedControl, SettingsRow, SettingsSection } from '@thaumic-cast/ui';
 import type { ExtensionSettings, ThemeMode } from '../../lib/settings';
 import { applyTheme } from '../../lib/theme';
 
@@ -29,7 +29,7 @@ export function AppearanceSection({ settings, onUpdate }: AppearanceSectionProps
   );
 
   return (
-    <Card title={t('appearance_section_title')}>
+    <SettingsSection title={t('appearance_section_title')}>
       <SettingsRow
         label={t('appearance_theme')}
         controlWidth="wide"
@@ -49,6 +49,6 @@ export function AppearanceSection({ settings, onUpdate }: AppearanceSectionProps
           />
         )}
       />
-    </Card>
+    </SettingsSection>
   );
 }

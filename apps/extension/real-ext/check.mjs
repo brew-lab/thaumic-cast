@@ -3,6 +3,7 @@
 // popup through what reviews of the screenshot harness and the catalogue missed, checks each
 // outcome, and saves a screenshot per step. Exit 1 on any failure. See README.md.
 import * as lib from './lib.mjs';
+import { optionsPass } from './options.mjs';
 import { roomsPass } from './rooms.mjs';
 
 const scale = Number(process.env.SCALE ?? 1);
@@ -793,7 +794,8 @@ try {
   const undone = await until(async () => /Upstairs\n\d rooms/.test(await setsText()));
   check(
     'Undo puts the set back, and the Toast goes',
-    undone === true && !(await o.eval(`return !!document.querySelector('[data-sticky-bar]')`)),
+    undone === true &&
+      (await o.eval(`return document.querySelector('[data-sticky-bar]').innerText.trim() === ''`)),
     await o.text(),
   );
 
@@ -858,6 +860,10 @@ try {
 
   // ── Rooms joining and leaving casts, over and over (rooms.mjs) ────────
   problems.push(...(await roomsPass(env, { check, shot, dark })));
+
+  // ── The options page's layout at three windows (options.mjs) ──────────
+  // Last: after it closes its tab, the toolbar popup finds no active window to open over.
+  problems.push(...(await optionsPass(env, { check, shot, dark, scale })));
 } catch (e) {
   check('the walk finished', false, String(e.stack ?? e));
 } finally {

@@ -24,9 +24,9 @@
 //! household does.
 //!
 //! Environment: `REALEXT_ROOMS` (comma-separated names), `REALEXT_GROUPS`
-//! (`Coordinator+Member;...`), `REALEXT_PORT`, `REALEXT_VERSION`,
-//! `REALEXT_APPTYPE=desktop` and `REALEXT_LOG` (`info`, `debug`, ...: the
-//! companion's log on stderr).
+//! (`Coordinator+Member;...`), `REALEXT_PORT`, `REALEXT_CONTROL_PORT`,
+//! `REALEXT_VERSION`, `REALEXT_APPTYPE=desktop` and `REALEXT_LOG` (`info`,
+//! `debug`, ...: the companion's log on stderr).
 //!
 //! Ignored, so it never runs with the suite. `apps/extension/real-ext/run.sh`
 //! starts it; by hand:
@@ -59,7 +59,7 @@ static INITIAL_GRC: AtomicBool = AtomicBool::new(true);
 /// Whether an AVTransport subscription gets its first event.
 static INITIAL_AVT: AtomicBool = AtomicBool::new(true);
 
-/// The control API's port.
+/// The control API's port, unless `REALEXT_CONTROL_PORT` names another.
 const CONTROL_PORT: u16 = 49499;
 
 /// What the pump compares between ticks, per speaker.
@@ -103,6 +103,15 @@ fn env_or(name: &str, default: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "a long-running companion for the real-extension check, started by hand"]
 async fn real_ext_companion() {
+    let system = start_companion(AppType::Server).await;
+    serve_control(control_routes().with_state(system), "REALEXT").await;
+}
+
+/// Starts the companion on the fake household, as the environment shapes it,
+/// with the pump running: the part the real-extension companion and the
+/// real-desktop companion (`real_desktop`) share. `app_type` is what it
+/// claims to be unless `REALEXT_APPTYPE` says otherwise.
+pub(super) async fn start_companion(app_type: AppType) -> Arc<TestSystem> {
     let names: Vec<String> = env_or(
         "REALEXT_ROOMS",
         "Kitchen,Office,Living Room,Bedroom,Bathroom,Study",
@@ -119,10 +128,10 @@ async fn real_ext_companion() {
     let group_refs: Vec<&[&str]> = groups.iter().map(Vec::as_slice).collect();
     let port: u16 = env_or("REALEXT_PORT", "49400").parse().unwrap_or(49400);
     let version: &'static str = Box::leak(env_or("REALEXT_VERSION", "0.12.0").into_boxed_str());
-    let app_type = if env_or("REALEXT_APPTYPE", "server") == "desktop" {
-        AppType::Desktop
-    } else {
-        AppType::Server
+    let app_type = match std::env::var("REALEXT_APPTYPE").as_deref() {
+        Ok("desktop") => AppType::Desktop,
+        Ok("server") => AppType::Server,
+        _ => app_type,
     };
 
     if let Ok(level) = std::env::var("REALEXT_LOG") {
@@ -151,7 +160,7 @@ async fn real_ext_companion() {
     eprintln!("REALEXT companion on :{port} ({version})");
 
     tokio::spawn(pump(Arc::clone(&system)));
-    serve_control(system).await;
+    system
 }
 
 /// The mean level and whether every member is muted, for the group led by
@@ -294,12 +303,14 @@ async fn pump(system: Arc<TestSystem>) {
     }
 }
 
-/// Serves the control API until the test is stopped.
-async fn serve_control(system: Arc<TestSystem>) {
-    fn param<'a>(q: &'a HashMap<String, String>, name: &str) -> &'a str {
-        q.get(name).map_or("", String::as_str)
-    }
-    let app = Router::new()
+/// A query parameter, or "" when it is missing.
+pub(super) fn param<'a>(q: &'a HashMap<String, String>, name: &str) -> &'a str {
+    q.get(name).map_or("", String::as_str)
+}
+
+/// The control API's routes, without their state.
+pub(super) fn control_routes() -> Router<Arc<TestSystem>> {
+    Router::new()
         .route(
             "/state",
             get(|State(sys): Sys| async move {
@@ -415,11 +426,18 @@ async fn serve_control(system: Arc<TestSystem>) {
                 "ok\n"
             }),
         )
-        .with_state(system);
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, CONTROL_PORT))
+}
+
+/// Serves `app` on the control port until the test is stopped, saying
+/// "`{tag}` control on ..." once it listens (the scripts wait for it).
+pub(super) async fn serve_control(app: Router, tag: &str) {
+    let port: u16 = env_or("REALEXT_CONTROL_PORT", &CONTROL_PORT.to_string())
+        .parse()
+        .unwrap_or(CONTROL_PORT);
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .expect("bind the control port");
-    eprintln!("REALEXT control on 127.0.0.1:{CONTROL_PORT}");
+    eprintln!("{tag} control on 127.0.0.1:{port}");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

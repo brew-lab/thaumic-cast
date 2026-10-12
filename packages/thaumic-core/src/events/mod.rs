@@ -9,9 +9,11 @@
 
 mod bridge;
 mod emitter;
+pub mod frontend;
 
 pub use bridge::BroadcastEventBridge;
 pub use emitter::EventEmitter;
+pub use frontend::frontend_event;
 
 // Re-export SonosEvent from sonos::gena for convenience
 pub use crate::sonos::gena::SonosEvent;

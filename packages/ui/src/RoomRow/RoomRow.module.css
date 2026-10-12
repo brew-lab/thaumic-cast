@@ -195,6 +195,15 @@
     min-block-size: var(--size-art-lg);
   }
 
+  /*
+   * In a list of rooms a --divider hairline parts each row from the one before, as in every
+   * other list, with the list's gap again under it (C-section's rule).
+   */
+  .list + .list {
+    padding-block-start: var(--space-3);
+    border-block-start: var(--line-hair) solid var(--divider);
+  }
+
   .list-text {
     display: flex;
     flex: 1 1 auto;

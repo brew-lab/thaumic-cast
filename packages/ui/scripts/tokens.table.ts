@@ -325,6 +325,7 @@ export const PLAIN: TokenGroup[] = [
       'popup-inline': '22rem',
       'popup-block-max': '37.5rem',
       'page-max': '40rem',
+      'dialog-inline': '27.5rem',
       'ch-volume': '3ch',
       'ch-ms': '7ch',
       'ch-ip': '15ch',

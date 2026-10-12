@@ -184,6 +184,7 @@ export const TOKEN_NAMES = [
   '--popup-inline',
   '--popup-block-max',
   '--page-max',
+  '--dialog-inline',
   '--ch-volume',
   '--ch-ms',
   '--ch-ip',

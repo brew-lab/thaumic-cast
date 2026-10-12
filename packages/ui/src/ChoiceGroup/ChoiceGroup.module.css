@@ -2,11 +2,14 @@
   /*
    * M-choice. A fieldset of Radio options. The options bleed by their own padding
    * (--choice-pad), so each radio lines up with the text above. Under a 25rem `card`: one
-   * column; from 25rem: --track-option columns. The option's look is the Radio's.
+   * column; from 25rem: --track-option columns, at most two (each track is at least half the
+   * row), so four options read two by two, never three and an orphan. The option's look is
+   * the Radio's.
    */
   .group {
     --choice-pad: var(--space-3);
     --choice-col-min: var(--track-option);
+    --choice-gap: var(--space-1);
     --choice-legend: var(--text-3);
     --choice-legend-leading: var(--leading-3);
     --choice-legend-ink: var(--on-surface);
@@ -34,13 +37,16 @@
   .options {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-1);
+    gap: var(--choice-gap);
     margin-inline: calc(-1 * var(--choice-pad));
   }
 
   @container card (inline-size >= 25rem) {
     .options {
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--choice-col-min)), 1fr));
+      grid-template-columns: repeat(
+        auto-fit,
+        minmax(min(100%, max(var(--choice-col-min), (100% - var(--choice-gap)) / 2)), 1fr)
+      );
     }
   }
 

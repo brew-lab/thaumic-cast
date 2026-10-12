@@ -102,7 +102,9 @@ pub use capture::{
 pub use stream::{AudioCodec, AudioFormat, StreamMetadata};
 
 // Re-export bootstrap types
-pub use bootstrap::{bootstrap_services, bootstrap_services_with_network, BootstrappedServices};
+pub use bootstrap::{
+    bootstrap_services, bootstrap_services_with_network, BootstrappedServices, StopAllOutcome,
+};
 
 // Re-export streaming runtime
 pub use streaming_runtime::StreamingRuntime;

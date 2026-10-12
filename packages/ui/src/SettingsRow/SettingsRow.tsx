@@ -28,8 +28,9 @@ export interface SettingsRowProps {
   control: ComponentChildren | ((a11y: SettingsRowControl) => ComponentChildren);
   /**
    * How much room the control needs. narrow: a Switch, a Select of 15rem or less; wide:
-   * anything wider (the SegmentedControl, a long Select), which stacks under the help below
-   * 45rem; action: a Button, centred against the label and the help.
+   * anything wider (the SegmentedControl, a long Select), which stacks under the help in a
+   * compact card and from 25rem shares the name's line when both fit (under the name when
+   * not), the help under both; action: a Button, centred against the label and the help.
    */
   controlWidth?: 'narrow' | 'wide' | 'action';
   /** A dependent control under the row, shown by the caller while the row's Switch is on. */
@@ -50,7 +51,8 @@ export interface SettingsRowProps {
  * One setting (DESIGN.md M-setrow): a name, help, an optional note and the control. It is a
  * `card` container's child, so its layout follows the card: under 25rem the help runs under
  * the name and the control, from 25rem the help keeps out of the control's column, and from
- * 45rem it sits in a third column. A wide control stacks under the help until 45rem. The row
+ * 45rem it sits in a third column. A wide control stacks under the help in a compact card;
+ * from 25rem it sits on the name's line, at the end, when both fit, with the help under. The row
  * never tints: hover, focus and press belong to the control. A named row is a group named
  * by its label, marked `aria-disabled` while it needs another setting.
  * @param props - Component props
@@ -97,13 +99,15 @@ export function SettingsRow({
       aria-labelledby={label ? labelId : undefined}
       aria-disabled={label && (disabled || locked) ? 'true' : undefined}
     >
-      {label && (
-        <p id={labelId} class={styles.label}>
-          {label}
-        </p>
-      )}
-      <div class={styles.control} data-settings-grid={label ? undefined : 'row'}>
-        {typeof control === 'function' ? control(a11y) : control}
+      <div class={styles.lead}>
+        {label && (
+          <p id={labelId} class={styles.label}>
+            {label}
+          </p>
+        )}
+        <div class={styles.control} data-settings-grid={label ? undefined : 'row'}>
+          {typeof control === 'function' ? control(a11y) : control}
+        </div>
       </div>
       {help && (
         <p id={`${id}-help`} class={styles.help}>

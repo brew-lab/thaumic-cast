@@ -30,13 +30,19 @@ to tab on the cast's own tab), adding a grouped room whose first event is lost, 
 speaker dropping off the network and the Undo Toast, rooms joining slowly beside a room playing
 alone (every row's Slider on one start and end), a cast in every room (no Add a room), and
 Settings › Saved sets (rename, Escape, remove, Undo, a long name in Settings and in the popup).
-Then the rooms
-pass (`rooms.mjs`), with every new subscription's first event lost: rooms leave a cast, come back
-with Undo and are added again, a second tab takes a room of the first cast, a grouped room is
-cast alone, and the lead of a group playing music is cast alone, leaving the music to a room with
-nothing on record; every cast room must show its level within about a second, a cast that loses a room
-must play on in the rest, Stop must put every room back, and "In use" must match what the
-household plays. Each step is
+Then the rooms pass (`rooms.mjs`), with every new subscription's first event lost: rooms leave a
+cast, come back with Undo and are added again, a second tab takes a room of the first cast, a
+grouped room is cast alone, and the lead of a group playing music is cast alone, leaving the music
+to a room with nothing on record; every cast room must show its level within about a second, a cast
+that loses a room must play on in the rest, Stop must put every room back, and "In use" must match
+what the household plays. Last, the options page pass (`options.mjs`) at a 1200, 600 and 400 px
+window: the sections in the drawing's order, one content column and one scroller, a rule between
+items and none under a heading or round a Notice, every row's control on the card's end edge
+(Theme's on its line from a 25rem card), Quality two by two from Economical, Start no louder than
+first in Finer points, Bespoke with Advanced open (its rows on one control column), nothing moving
+when a setting saves, the Toast's bar (0 tall without a Toast, sticky with one, never over focus)
+and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
+to open over. Each step is
 checked and screenshotted into `real-ext/shots/` (`REALEXT_SHOTS` moves them). It prints PASS or
 FAIL per check and exits 1 on any failure.
 

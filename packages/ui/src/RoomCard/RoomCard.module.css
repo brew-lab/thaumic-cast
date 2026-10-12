@@ -1,0 +1,46 @@
+@layer components {
+  /*
+   * C-roomcard. The Card's padding and gap (--space-5 and --space-4 on the desktop). The
+   * head is two lines: the name and the Badge on a wrapping flex line, then the sub line on
+   * its own. The line wraps on the items' natural widths, so the Badge drops under the name
+   * only when both cannot fit; only a name wider than the whole line shrinks, and it wraps
+   * (at any character, last) rather than being cut. The Badge never shrinks.
+   */
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .title > :last-child:not(.name) {
+    flex: none;
+  }
+
+  .name {
+    flex: 0 1 auto;
+    margin: 0;
+    color: var(--on-surface);
+    font-size: var(--text-5);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-5);
+    overflow-wrap: anywhere;
+  }
+
+  .sub {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--leading-2);
+    overflow-wrap: anywhere;
+  }
+}

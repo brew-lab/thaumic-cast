@@ -805,3 +805,28 @@ async fn a_speaker_is_on_the_allowlist_when_its_fetch_arrives() {
     })
     .await;
 }
+
+/// Proves: "Stop all casts" ends every stream and reports how many it ended;
+/// with no extension connected from another machine, none of them count as
+/// remote.
+#[tokio::test]
+async fn stop_all_casts_reports_what_it_ended() {
+    within("stop all casts", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Office"])
+            .build()
+            .await;
+        let first = sys.new_stream();
+        let second = sys.new_stream();
+        assert!(sys.start(&first, &["Kitchen"], false).await[0].success);
+        assert!(sys.start(&second, &["Office"], false).await[0].success);
+
+        let outcome = sys.services.stop_all_casts(None).await;
+
+        assert_eq!(outcome.stopped, 2);
+        assert_eq!(outcome.remote, 0);
+        assert_eq!(sys.coordinator().stream_count(), 0);
+        assert!(sys.sessions().is_empty());
+    })
+    .await;
+}

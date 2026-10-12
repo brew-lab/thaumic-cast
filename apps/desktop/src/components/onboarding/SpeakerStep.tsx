@@ -4,21 +4,33 @@ import {
   WizardStep,
   AddressField,
   Button,
+  Card,
+  Cluster,
   DescriptionList,
   Disclosure,
   EmptyState,
   Notice,
+  RoomRow,
   type AddressResult,
 } from '@thaumic-cast/ui';
+import { roomsOf } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { useTranslation } from 'react-i18next';
-import { groups, fetchGroups, refreshTopology, networkHealth } from '../../state/store';
+import {
+  groups,
+  fetchGroups,
+  refreshTopology,
+  networkHealth,
+  transportStates,
+} from '../../state/store';
+import { roomCards } from '../../lib/rooms';
 import {
   listenOnce,
   type DiscoveryCompletePayload,
   type NetworkHealthPayload,
 } from '../../lib/events';
 import { addManualSpeaker, getSpeakerErrorMessage } from '../../lib/manual-speaker';
+import styles from './SpeakerStep.module.css';
 
 const log = createLogger('SpeakerStep');
 
@@ -51,6 +63,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     return { ok: true, said: t('settings.manual_added', { address: outcome.ip }) };
   };
   const speakerCount = groups.value.length;
+  const rooms = roomCards(groups.value, new Set(), transportStates.value);
 
   useEffect(() => {
     let unlistenDiscovery: UnlistenFn | null = null;
@@ -160,29 +173,40 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       {isSearching ? (
         <EmptyState kind="searching" body={t('onboarding.speakers.searching')} />
       ) : speakerCount > 0 ? (
-        // The found rooms are checklist lines under the count, as in the popup.
-        <DescriptionList
-          kind="checklist"
-          rows={[
-            {
-              key: 'status',
-              state: 'connected',
-              text: t('onboarding.speakers.found', { count: speakerCount }),
-            },
-            ...groups.value.flatMap((group) => {
-              const coordinator = group.members.find((m) => m.uuid === group.coordinatorUuid);
-              if (!coordinator) return [];
-              const extra = group.members.length - 1;
-              return [
-                {
-                  key: group.coordinatorUuid,
-                  state: 'connected' as const,
-                  text: extra > 0 ? `${coordinator.zoneName} +${extra}` : coordinator.zoneName,
-                },
-              ];
-            }),
-          ]}
-        />
+        // The count, then each room as a read-only row: its group and what it is doing.
+        <>
+          <DescriptionList
+            kind="checklist"
+            rows={[
+              {
+                key: 'status',
+                state: 'connected',
+                text: t('onboarding.speakers.found', { count: roomsOf(groups.value).length }),
+              },
+            ]}
+          />
+          <Card>
+            <ul className={styles.rooms} aria-label={t('onboarding.speakers.rooms')}>
+              {rooms.map(({ room, badge }) => (
+                <RoomRow
+                  key={room.id}
+                  mode="list"
+                  room={room}
+                  sub={
+                    room.groupedWith.length > 0
+                      ? t('device.grouped_with', { names: room.groupedWith.join(', ') })
+                      : undefined
+                  }
+                  badge={
+                    badge && badge.tone === 'warning'
+                      ? { tone: badge.tone, label: t(badge.key) }
+                      : undefined
+                  }
+                />
+              ))}
+            </ul>
+          </Card>
+        </>
       ) : (
         <EmptyState
           title={t('onboarding.speakers.none_found')}
@@ -211,9 +235,12 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
         </Disclosure>
       )}
 
-      <Button size="md" icon="refresh" onAction={handleScan}>
-        {t('onboarding.speakers.scan_button')}
-      </Button>
+      {/* At its own width, at the start: it is not the step's action (Carry on is). */}
+      <Cluster>
+        <Button size="md" icon="refresh" onAction={handleScan}>
+          {t('onboarding.speakers.scan_button')}
+        </Button>
+      </Cluster>
     </WizardStep>
   );
 }

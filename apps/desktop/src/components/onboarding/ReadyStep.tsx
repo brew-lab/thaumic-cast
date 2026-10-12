@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { WizardStep, Card, DescriptionList, Notice, Switch } from '@thaumic-cast/ui';
 import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
 import { useTranslation } from 'react-i18next';
+import { roomsOf } from '@thaumic-cast/protocol';
 import { groups, stats, getAutostartEnabled, setAutostartEnabled } from '../../state/store';
 import styles from './ReadyStep.module.css';
 
@@ -13,7 +14,7 @@ import styles from './ReadyStep.module.css';
  */
 export function ReadyStep(): preact.JSX.Element {
   const { t } = useTranslation();
-  const speakerCount = groups.value.length;
+  const roomCount = roomsOf(groups.value).length;
   const connectionCount = stats.value?.connectionCount ?? 0;
   const [autostartEnabled, setAutostartState] = useState(true);
 
@@ -44,9 +45,9 @@ export function ReadyStep(): preact.JSX.Element {
           rows={[
             { key: 'app', state: 'connected', text: t('onboarding.ready.summary_app') },
             {
-              key: 'speakers',
+              key: 'rooms',
               state: 'connected',
-              text: t('onboarding.ready.summary_speakers', { count: speakerCount }),
+              text: t('onboarding.ready.summary_rooms', { count: roomCount }),
             },
             {
               key: 'extension',

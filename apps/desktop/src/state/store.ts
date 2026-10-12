@@ -1,4 +1,4 @@
-import { signal } from '@preact/signals';
+import { computed, signal } from '@preact/signals';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { NetworkEventSchema } from '@thaumic-cast/protocol';
@@ -232,13 +232,65 @@ export const startPlayback = async (ip: string, streamId: string = 'default'): P
   await invoke('start_playback', { ip, streamId });
 };
 
+/** What "Stop all casts" ended, as the backend reports it. */
+export interface StopAllOutcome {
+  /** Casts it ended, on every machine. */
+  stopped: number;
+  /** How many of them were started on another machine. */
+  remote: number;
+}
+
 /**
- * Stops all active streams and playback.
- * Refreshes stats after completion.
+ * Stops all active streams and playback, everywhere.
+ * Refreshes the casts and stats after completion.
+ * @returns What it ended
  */
-export const stopAll = async (): Promise<void> => {
-  await invoke('clear_all_streams');
-  await fetchStats();
+export const stopAll = async (): Promise<StopAllOutcome> => {
+  const outcome = await invoke<StopAllOutcome>('clear_all_streams');
+  await fetchGroups();
+  return outcome;
+};
+
+/** Whether anything casts: a stream is open or a speaker plays one of ours. */
+export const anythingCasting = computed(
+  () => (stats.value?.streamCount ?? 0) > 0 || castingSpeakers.value.size > 0,
+);
+
+/**
+ * The one Toast the window shows (what Stop all casts stopped), or null. It goes on the
+ * next route change, X or Esc.
+ */
+export const toast = signal<string | null>(null);
+
+/** Where Show diagnostics is kept: a view preference of this window, nothing reads it. */
+const DIAGNOSTICS_KEY = 'thaumic-cast-diagnostics';
+
+/**
+ * Reads Show diagnostics from local storage; off when it is missing or unreadable.
+ * @returns Whether it is on
+ */
+function readDiagnostics(): boolean {
+  try {
+    return localStorage.getItem(DIAGNOSTICS_KEY) === 'on';
+  } catch {
+    return false;
+  }
+}
+
+/** Show diagnostics (DESIGN.md P-diag): the reserve Meter on each casting RoomCard. */
+export const showDiagnostics = signal<boolean>(readDiagnostics());
+
+/**
+ * Turns Show diagnostics on or off and keeps it for the next start.
+ * @param on - Whether to show the reserve Meters
+ */
+export const setShowDiagnostics = (on: boolean): void => {
+  showDiagnostics.value = on;
+  try {
+    localStorage.setItem(DIAGNOSTICS_KEY, on ? 'on' : 'off');
+  } catch {
+    // Kept for this run only.
+  }
 };
 
 /**
@@ -377,7 +429,7 @@ export const setDriftCompensation = async (mode: DriftMode): Promise<DriftCompen
 // Speaker Notices
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Latest notice reading per speaker IP, from the core's speaker-health reports. */
+/** Latest notice and reserve reading per speaker IP, from the core's speaker-health reports. */
 export const speakerNoticeReadings = signal<Record<string, SpeakerNoticeReading>>({});
 
 /** Notices the user dismissed this app run. */
@@ -423,7 +475,7 @@ export const startSpeakerNoticeListener = (() => {
         log.debug('Ignoring unreadable speaker-health event');
         return;
       }
-      const { speakerIp, streamId, notice } = parsed.data;
+      const { speakerIp, streamId, notice, reserveMs, floorMs, targetMs } = parsed.data;
       const previous = speakerNoticeReadings.value[speakerIp];
       const isNewNotice =
         notice !== undefined &&
@@ -433,7 +485,7 @@ export const startSpeakerNoticeListener = (() => {
       }
       speakerNoticeReadings.value = {
         ...speakerNoticeReadings.value,
-        [speakerIp]: { streamId, notice },
+        [speakerIp]: { streamId, notice, reserveMs, floorMs, targetMs },
       };
     }).catch((error) => {
       started = false;

@@ -74,19 +74,22 @@ describe('desktop en.json', () => {
       lng: 'en',
       interpolation: { escapeValue: false },
     });
-    const summary = (speakers: number, streams: number): string =>
+    const summary = (rooms: number, streams: number): string =>
       i18n.t('speakers.summary', {
-        speakers: i18n.t('speakers.summary_speakers', { count: speakers }),
+        rooms: i18n.t('speakers.summary_rooms', { count: rooms }),
         streams: i18n.t('speakers.summary_streaming', { count: streams }),
       });
 
-    expect(summary(1, 0)).toBe('1 speaker, 0 casting');
-    expect(summary(4, 2)).toBe('4 speakers, 2 casting');
-    expect(i18n.t('device.others', { count: 1 })).toBe('+1 other');
-    expect(i18n.t('device.others', { count: 2 })).toBe('+2 others');
-    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 speaker answered.');
-    expect(i18n.t('onboarding.speakers.found', { count: 5 })).toBe('5 speakers answered.');
-    expect(i18n.t('onboarding.ready.summary_speakers', { count: 1 })).toBe('Speakers: 1 answered');
+    expect(summary(1, 0)).toBe('1 room, 0 casting');
+    expect(summary(4, 2)).toBe('4 rooms, 2 casting');
+    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 room answered.');
+    expect(i18n.t('onboarding.speakers.found', { count: 5 })).toBe('5 rooms answered.');
+    expect(i18n.t('onboarding.ready.summary_rooms', { count: 1 })).toBe('Rooms: 1 answered');
+    expect(i18n.t('server.stopped', { count: 1 })).toBe('Stopped 1 cast.');
+    expect(i18n.t('server.stopped', { count: 3 })).toBe('Stopped 3 casts.');
+    expect(i18n.t('server.stopped_remote', { count: 2 })).toBe(
+      '2 of them were not started on this computer.',
+    );
     expect(i18n.t('onboarding.step_of', { current: 1, total: 5 })).toBe('Step 1 of 5');
   });
 });
