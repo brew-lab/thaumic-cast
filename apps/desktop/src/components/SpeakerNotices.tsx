@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { useTranslation } from 'react-i18next';
-import { Alert } from '@thaumic-cast/ui';
+import { Notice } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import {
   castingStreams,
@@ -91,16 +91,21 @@ export function SpeakerNotices() {
   return (
     <div className={styles.notices}>
       {cards.map(({ speakerIp, offersSettings, message }) => (
-        <Alert
+        <Notice
           key={speakerIp}
-          variant="warning"
+          tone="warning"
+          text={message}
           onDismiss={() => dismissSpeakerNotice(speakerIp)}
           dismissLabel={t('dashboard.speaker_notice_dismiss')}
-          action={offersSettings ? t('dashboard.speaker_notice_open_settings') : undefined}
-          onAction={offersSettings ? () => navigate('/settings#speakers') : undefined}
-        >
-          {message}
-        </Alert>
+          action={
+            offersSettings
+              ? {
+                  label: t('dashboard.speaker_notice_open_settings'),
+                  onClick: () => navigate('/settings#speakers'),
+                }
+              : undefined
+          }
+        />
       ))}
     </div>
   );

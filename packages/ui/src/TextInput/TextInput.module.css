@@ -7,7 +7,6 @@
   .control {
     --input-h: var(--control-md);
     --input-bg: light-dark(var(--surface), var(--container));
-    --input-ro-bg: light-dark(var(--container), var(--container-high));
     --input-edge: var(--outline);
     --input-edge-w: var(--line-hair);
     --input-fg: var(--on-surface);
@@ -37,15 +36,20 @@
     --input-h: var(--control-sm);
   }
 
-  :where([data-density='desktop']) .control {
+  :where([data-density='desktop']) .md {
     --input-font: var(--text-4-fixed);
     --input-glyph: var(--icon-md);
   }
 
+  /*
+   * The native input is the hit area (F-size): at least --hit-min tall, centred on the drawn
+   * box, so a press just above or below the box still lands in the field. It is transparent,
+   * so nothing drawn changes.
+   */
   .input {
     flex: 1 1 0;
     min-inline-size: 0;
-    block-size: 100%;
+    block-size: calc(max(var(--input-h), var(--hit-min)));
     margin: 0;
     padding: 0;
     border: 0;
@@ -90,7 +94,7 @@
   }
 
   /* States */
-  .control:is(:hover, [data-force='hover']):not(.read-only, .disabled) {
+  .control:is(:hover, [data-force='hover']):not(.disabled) {
     --input-edge: var(--on-surface);
   }
 
@@ -102,10 +106,6 @@
 
     outline: var(--line-bold) solid transparent;
     outline-offset: var(--line-bold);
-  }
-
-  .read-only {
-    --input-bg: var(--input-ro-bg);
   }
 
   .invalid,

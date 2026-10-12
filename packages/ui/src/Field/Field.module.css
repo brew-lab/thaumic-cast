@@ -1,0 +1,85 @@
+@layer components {
+  /*
+   * M-field. A stack: label, control, one message slot. The label takes the settings-row
+   * style (13 in the popup, 14 on the desktop, 600); the slot is 12/16 and holds the help,
+   * a status, or the error with the danger glyph in --danger-ink.
+   */
+  .field {
+    --field-gap: var(--space-2);
+    --field-label: var(--text-3);
+    --field-label-leading: var(--leading-3);
+    --field-label-ink: var(--on-surface);
+    --field-help: var(--text-2);
+    --field-help-leading: var(--leading-2);
+    --field-help-ink: var(--on-surface-variant);
+    --field-error-ink: var(--danger-ink);
+
+    container: field / inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--field-gap);
+    min-inline-size: 0;
+  }
+
+  :where([data-density='desktop']) .field {
+    --field-label: var(--text-4-fixed);
+    --field-label-leading: var(--leading-4);
+  }
+
+  .label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    color: var(--field-label-ink);
+    font-size: var(--field-label);
+    font-weight: var(--weight-strong);
+    line-height: var(--field-label-leading);
+  }
+
+  .optional {
+    color: var(--field-help-ink);
+    font-size: var(--field-help);
+    font-weight: var(--weight-body);
+    line-height: var(--field-help-leading);
+  }
+
+  .message {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+    min-block-size: calc(1lh);
+    margin: 0;
+    color: var(--field-help-ink);
+    font-size: var(--field-help);
+    line-height: var(--field-help-leading);
+    text-wrap: pretty;
+  }
+
+  .message[data-kind='status'] {
+    color: var(--on-surface);
+  }
+
+  .error {
+    color: var(--field-error-ink);
+  }
+
+  .glyph {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    block-size: calc(1lh);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--icon-sm);
+  }
+
+  .words {
+    min-inline-size: 0;
+  }
+
+  .disabled {
+    --field-label-ink: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+  }
+}

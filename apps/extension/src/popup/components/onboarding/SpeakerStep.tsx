@@ -1,5 +1,5 @@
 import { useEffect } from 'preact/hooks';
-import { WizardStep, Alert, Icon } from '@thaumic-cast/ui';
+import { WizardStep, DescriptionList, Icon, Notice } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useSonosState } from '../../hooks/useSonosState';
 import styles from './SpeakerStep.module.css';
@@ -32,12 +32,22 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       glyph="speaker"
     >
       {loading ? (
-        <Alert variant="info">{t('onboarding.speakers.loading')}</Alert>
+        <DescriptionList
+          kind="checklist"
+          rows={[{ key: 'status', state: 'checking', text: t('onboarding.speakers.loading') }]}
+        />
       ) : !speakerGroups.isEmpty ? (
         <>
-          <Alert variant="success">
-            {t('onboarding.speakers.found', { count: speakerGroups.size })}
-          </Alert>
+          <DescriptionList
+            kind="checklist"
+            rows={[
+              {
+                key: 'status',
+                state: 'connected',
+                text: t('onboarding.speakers.found', { count: speakerGroups.size }),
+              },
+            ]}
+          />
 
           <div className={styles.speakerList}>
             {[...speakerGroups].map((group) => (
@@ -52,7 +62,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           </div>
         </>
       ) : (
-        <Alert variant="warning">{t('onboarding.speakers.none_found')}</Alert>
+        <Notice tone="warning" text={t('onboarding.speakers.none_found')} />
       )}
     </WizardStep>
   );

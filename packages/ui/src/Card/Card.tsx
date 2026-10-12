@@ -1,60 +1,75 @@
-import type { ComponentChildren } from 'preact';
-import type { HTMLAttributes } from 'preact/compat';
-import { Icon } from '../Icon';
-import type { GlyphName } from '../Icon/glyphs';
+import type { ComponentChildren, JSX } from 'preact';
+import { useId } from 'preact/hooks';
+import { SectionHeader } from '../SectionHeader';
+import { cx } from '../utils/cx';
 import styles from './Card.module.css';
 
-type HeadingLevel = 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
-
-interface CardProps extends HTMLAttributes<HTMLDivElement> {
-  /** Card content */
-  children: ComponentChildren;
-  /** Optional card title */
+/** Props for {@link Card}. */
+export interface CardProps {
+  /** The heading, a SectionHeader of kind `card`. A card with one is a named `<section>`. */
   title?: string;
-  /** Optional icon to display before the title */
-  icon?: GlyphName;
-  /** Heading level for the title (default: h2). Use to maintain proper heading hierarchy. */
-  titleLevel?: HeadingLevel;
-  /** Remove default padding (for cards with custom internal layout) */
-  noPadding?: boolean;
+  /** The heading's level. Defaults to 2. */
+  level?: 2 | 3 | 4;
+  /** A short line beside the heading. */
+  meta?: string;
+  /** Actions at the end of the heading. */
+  actions?: ComponentChildren;
+  /** No padding, for a card that lays out its own edge (a cast, a room). */
+  flush?: boolean;
+  /** The element id, for a link to the card (`#speakers`). */
+  id?: string;
+  /** Names the card when it has no heading. */
+  'aria-label'?: string;
+  /** The content. */
+  children: ComponentChildren;
 }
 
 /**
- * Shared Card Component for grouping content.
+ * The one container (DESIGN.md C-card): `--radius-card`, `--surface`, a hairline in light
+ * only (in dark the surface step is the edge), and no shadow; there is no raised kind. It is
+ * the `card` container its contents lay out from, and it points the focus ring's gap at its
+ * surface. With a title it is a `<section>` named by a SectionHeader; without one, a plain
+ * box. The density sets the padding: 12 in the popup, `--space-5` on the desktop.
  * @param props - Component props
- * @param props.children - Card content
- * @param props.title - Optional card title
- * @param props.icon - Optional icon to display before the title
- * @param props.titleLevel - Heading level for title (default: h2)
- * @param props.className - Additional CSS class
- * @param props.noPadding - Remove default padding
- * @returns The rendered Card component
+ * @param props.title - The heading
+ * @param props.level - The heading's level
+ * @param props.meta - A line beside the heading
+ * @param props.actions - Actions at the end of the heading
+ * @param props.flush - No padding
+ * @param props.id - The element id
+ * @param props.children - The content
+ * @returns The card
  */
 export function Card({
-  children,
   title,
-  icon,
-  titleLevel = 'h2',
-  className,
-  noPadding,
+  level = 2,
+  meta,
+  actions,
+  flush = false,
+  id,
+  children,
   ...rest
-}: CardProps) {
-  const classes = [styles.card, noPadding && styles.noPadding, className].filter(Boolean).join(' ');
-  const TitleTag = titleLevel;
-
+}: CardProps): JSX.Element {
+  const headingId = useId();
+  const className = cx(styles.card, flush && styles.flush);
+  if (!title) {
+    return (
+      <div id={id} class={className} aria-label={rest['aria-label']}>
+        {children}
+      </div>
+    );
+  }
   return (
-    <div className={classes} {...rest}>
-      {title && (
-        <TitleTag className={styles.title}>
-          {icon && (
-            <span className={styles.icon}>
-              <Icon glyph={icon} />
-            </span>
-          )}
-          <span className={styles.titleText}>{title}</span>
-        </TitleTag>
-      )}
-      {children}
-    </div>
+    <section id={id} class={className} aria-labelledby={headingId}>
+      <SectionHeader
+        kind="card"
+        level={level}
+        title={title}
+        meta={meta}
+        actions={actions}
+        id={headingId}
+      />
+      <div class={styles.body}>{children}</div>
+    </section>
   );
 }

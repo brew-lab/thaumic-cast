@@ -28,9 +28,22 @@ export * from './Switch';
 export * from './TextInput';
 export * from './Tooltip';
 
-// Rebuilt in later phases (DESIGN.md §14)
-export * from './Alert';
+// Molecules (DESIGN.md §5) and Card (C-card)
+export * from './AddressField';
 export * from './Card';
+export * from './ChoiceGroup';
+export * from './CopyField';
+export * from './DescriptionList';
 export * from './Disclosure';
+export * from './EmptyState';
+export * from './Field';
+export * from './Notice';
+export * from './NoticeLine';
+export * from './PageHeader';
+export * from './SettingsRow';
+export * from './Toast';
+export * from './WizardStep';
+
+// Rebuilt in later phases (DESIGN.md §14)
 export * from './Speaker';
 export * from './Wizard';

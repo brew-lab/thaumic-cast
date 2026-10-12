@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { WizardStep, Notice } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { getPlatform, type Platform } from '../../state/store';
 import styles from './FirewallStep.module.css';
@@ -33,9 +33,7 @@ export function FirewallStep(): preact.JSX.Element {
       subtitle={platformKey ? t(`onboarding.firewall.subtitle_${platformKey}`) : undefined}
       glyph="shield"
     >
-      {platformKey && (
-        <Alert variant="info">{t(`onboarding.firewall.prompt_${platformKey}`)}</Alert>
-      )}
+      {platformKey && <Notice tone="info" text={t(`onboarding.firewall.prompt_${platformKey}`)} />}
 
       <ul className={styles.reasonList}>
         <li>{t('onboarding.firewall.reason_1')}</li>

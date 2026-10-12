@@ -28,6 +28,12 @@ const THEMES: { value: ThemePreference; label: string }[] = [
  */
 export function Catalogue({ initialTheme }: CatalogueProps): JSX.Element {
   const [theme, setTheme] = useState(initialTheme);
+  const [hits, setHits] = useState(() => new URLSearchParams(location.search).get('hits') === '1');
+  const showHits = (on: boolean): void => {
+    setHits(on);
+    document.documentElement.toggleAttribute('data-hits', on);
+  };
+  if (hits) document.documentElement.setAttribute('data-hits', '');
   const choose = (value: ThemePreference): void => {
     setTheme(value);
     applyTheme(value);
@@ -56,6 +62,14 @@ export function Catalogue({ initialTheme }: CatalogueProps): JSX.Element {
               </label>
             ))}
           </fieldset>
+          <label class="theme-option hits-toggle">
+            <input
+              type="checkbox"
+              checked={hits}
+              onChange={(event) => showHits((event.currentTarget as HTMLInputElement).checked)}
+            />
+            Show hit areas
+          </label>
           <nav aria-label="Sections">
             <ul class="toc">
               {SECTIONS.map((s) => (

@@ -1,0 +1,50 @@
+@layer components {
+  /*
+   * M-pageheader. No container query: the actions wrap under the titles by themselves. The
+   * title is fluid on its container (--text-8, 32 → 40).
+   */
+  .header {
+    --page-title-ink: light-dark(var(--brand-ink), var(--on-surface));
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4) var(--space-5);
+    min-inline-size: 0;
+  }
+
+  .titles {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .title {
+    margin: 0;
+    color: var(--page-title-ink);
+    font-family: var(--font-head);
+    font-size: var(--text-8);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-8);
+    letter-spacing: var(--tracking-8);
+    text-wrap: balance;
+  }
+
+  .summary {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-4);
+    line-height: var(--leading-4);
+    text-wrap: pretty;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+}

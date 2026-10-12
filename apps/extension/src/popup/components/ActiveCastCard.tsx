@@ -13,7 +13,6 @@ import {
   Artwork,
   Badge,
   Button,
-  Card,
   IconButton,
   Slider,
   SpeakerVolumeRow,
@@ -243,8 +242,9 @@ export function ActiveCastCard({
   }
 
   return (
-    <Card
-      noPadding
+    // Phase 3 rebuilds this as the CastTile on Card; until then it draws its own artwork
+    // backdrop, which the v1 Card has no slot for.
+    <div
       className={`${styles.card} ${stagedImage ? styles.hasArtwork : ''}`}
       style={cardStyle as CSSProperties}
     >
@@ -423,6 +423,6 @@ export function ActiveCastCard({
           </div>
         )}
       </div>
-    </Card>
+    </div>
   );
 }

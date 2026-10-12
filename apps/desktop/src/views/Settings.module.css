@@ -1,41 +1,20 @@
 /* The Settings view, until Phase 4 rebuilds it with SettingsSections in the DesktopShell. */
 @layer app {
   .settings {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
     max-inline-size: var(--page-max);
     padding: var(--space-7);
   }
 
-  .page-title {
-    margin-block: 0 var(--space-6);
-    font-size: var(--text-8);
-    line-height: var(--leading-8);
-    letter-spacing: var(--tracking-8);
-  }
-
-  .section {
-    margin-block-end: var(--space-5);
-  }
-
-  .section-content {
+  .updates {
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    align-items: flex-start;
+    gap: var(--space-1);
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .field-label {
-    color: var(--on-surface);
-    font-size: var(--text-4-fixed);
-    font-weight: var(--weight-strong);
-    line-height: var(--leading-4);
-  }
-
-  .toggle-description,
   .hint {
     margin: 0;
     color: var(--on-surface-variant);

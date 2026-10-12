@@ -1,0 +1,114 @@
+@layer components {
+  /*
+   * M-empty. The root is its own `card` container. Under 25rem: the art beside the words,
+   * start-aligned, 13/18 text. From 25rem: art, words and actions stacked and centred, the
+   * title in Geist at --text-5, the body at --text-4 on a short measure.
+   */
+  .root {
+    container: card / inline-size;
+    min-inline-size: 0;
+  }
+
+  .empty {
+    --empty-art: var(--size-art-md);
+    --empty-pad: var(--space-3);
+    --empty-gap: var(--space-3);
+    --empty-text: var(--text-3);
+    --empty-leading: var(--leading-3);
+    --empty-measure: var(--track-card);
+    --empty-title-ink: light-dark(var(--brand-ink), var(--on-surface));
+
+    display: grid;
+    grid-template-columns: var(--empty-art) minmax(0, 1fr);
+    grid-template-areas: 'art words';
+    align-items: center;
+    gap: var(--empty-gap);
+    padding: var(--empty-pad);
+    color: var(--on-surface-variant);
+    font-size: var(--empty-text);
+    line-height: var(--empty-leading);
+  }
+
+  .empty:has(.actions) {
+    grid-template-areas:
+      'art words'
+      '. actions';
+  }
+
+  .art {
+    grid-area: art;
+    display: grid;
+    place-items: center;
+    inline-size: var(--empty-art);
+    block-size: var(--empty-art);
+    color: var(--on-surface-variant);
+  }
+
+  .art > svg {
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .words {
+    grid-area: words;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .title,
+  .body,
+  .link {
+    margin: 0;
+  }
+
+  .title {
+    color: var(--empty-title-ink);
+    font-family: var(--font-head);
+    font-size: var(--text-5);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-5);
+    letter-spacing: var(--tracking-5);
+    text-wrap: balance;
+  }
+
+  .body {
+    text-wrap: pretty;
+  }
+
+  .actions {
+    grid-area: actions;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  @container card (inline-size >= 25rem) {
+    .empty {
+      --empty-art: var(--size-art-lg);
+      --empty-pad: var(--space-6);
+      --empty-gap: var(--space-4);
+      --empty-text: var(--text-4);
+      --empty-leading: var(--leading-4);
+
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: 'art' 'words';
+      justify-items: center;
+      text-align: center;
+    }
+
+    .empty:has(.actions) {
+      grid-template-areas: 'art' 'words' 'actions';
+    }
+
+    .words {
+      max-inline-size: var(--empty-measure);
+    }
+
+    .actions {
+      align-items: center;
+    }
+  }
+}

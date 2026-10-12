@@ -577,6 +577,63 @@
     padding: var(--space-3);
   }
 
+  /* Molecules: fixed widths, so a container lands in its compact, medium or wide range. */
+  .copy-states {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .width-tiny {
+    max-inline-size: var(--track-card);
+  }
+
+  .width-compact {
+    max-inline-size: calc(var(--track-card) + var(--space-8));
+  }
+
+  .width-medium {
+    max-inline-size: calc(var(--page-max) - var(--space-6));
+  }
+
+  /* F-size: the prototype views, and the hit areas they show on demand. */
+  .size-mock {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap-target);
+    max-inline-size: calc(var(--page-max) + var(--space-8));
+  }
+
+  .size-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: var(--gap-target);
+    max-inline-size: var(--page-max);
+  }
+
+  .size-row {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-target);
+  }
+
+  .size-row > :nth-child(2) {
+    flex: 1 1 auto;
+  }
+
+  .hits-toggle {
+    margin-block-end: var(--space-4);
+  }
+
+  [data-hits] .section :is(button, a, summary, [role='switch'], label)::after {
+    background: color-mix(in oklch, var(--live-lamp) 22%, transparent);
+    outline: var(--line-hair) dashed var(--live-lamp);
+  }
+
+  [data-hits] .section :is(input:not([type='radio'], [type='checkbox'], [type='range']), select) {
+    background: color-mix(in oklch, var(--live-lamp) 22%, transparent);
+    outline: var(--line-hair) dashed var(--live-lamp);
+  }
+
   .tooltip-sample {
     align-self: start;
     padding: var(--space-2) var(--space-3);

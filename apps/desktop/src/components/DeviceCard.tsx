@@ -54,7 +54,7 @@ export function DeviceCard({
   const badge = speakerBadge(transportState, isCasting ?? false);
 
   return (
-    <Card noPadding>
+    <Card flush>
       <div className={styles.content}>
         <div className={styles.header}>
           <Artwork kind="disc" size="md" glyph="speaker" />

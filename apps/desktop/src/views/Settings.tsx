@@ -21,13 +21,24 @@ import { speakerMonitorOverrideKey } from '../lib/speaker-monitor-setting';
 import { useTranslation } from 'react-i18next';
 import { getVersion } from '@tauri-apps/api/app';
 import { open } from '@tauri-apps/plugin-shell';
-import { Button, Card, Chip, Cluster, SegmentedControl, Select, Switch } from '@thaumic-cast/ui';
+import {
+  AddressField,
+  Button,
+  Card,
+  DescriptionList,
+  PageHeader,
+  SegmentedControl,
+  Select,
+  SettingsRow,
+  Switch,
+  type AddressResult,
+} from '@thaumic-cast/ui';
 import { PROTOCOL_VERSION } from '@thaumic-cast/protocol';
 import { createLogger, GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { hasLanguageChoice } from '../lib/language-choice';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
-import { ManualSpeakerForm } from '../components/ManualSpeakerForm';
+import { addManualSpeaker, getSpeakerErrorMessage } from '../lib/manual-speaker';
 import styles from './Settings.module.css';
 
 const log = createLogger('Settings');
@@ -66,10 +77,18 @@ export function Settings() {
   // App version for the About section
   const [appVersion, setAppVersion] = useState<string>('');
 
-  const handleSpeakerAdded = useCallback((ip: string) => {
-    // Prevent duplicates in UI (backend also prevents, but avoid UI flicker)
-    setManualIps((prev) => (prev.includes(ip) ? prev : [...prev, ip]));
-  }, []);
+  const [speakerIp, setSpeakerIp] = useState('');
+
+  const handleAddSpeaker = useCallback(
+    async (ip: string): Promise<AddressResult> => {
+      const outcome = await addManualSpeaker(ip);
+      if (!outcome.ok) return { ok: false, error: getSpeakerErrorMessage(outcome.code, t) };
+      // Prevent duplicates in UI (backend also prevents, but avoid UI flicker)
+      setManualIps((prev) => (prev.includes(outcome.ip) ? prev : [...prev, outcome.ip]));
+      return { ok: true, said: t('settings.manual_added', { address: outcome.ip }) };
+    },
+    [t],
+  );
 
   useEffect(() => {
     getAutostartEnabled()
@@ -184,86 +203,90 @@ export function Settings() {
 
   return (
     <div className={styles.settings}>
-      <h2 className={styles.pageTitle}>{t('nav.settings')}</h2>
+      <PageHeader title={t('nav.settings')} />
 
       {/* Startup Section */}
-      <Card id="startup" title={t('settings.startup')} titleLevel="h3" className={styles.section}>
-        <div className={styles.sectionContent}>
-          <Switch
-            label={t('settings.autostart')}
-            description={t('settings.autostart_description')}
-            checked={autostart ?? false}
-            onChange={handleAutostartChange}
-            disabled={autostart === null}
-          />
-        </div>
+      <Card id="startup" title={t('settings.startup')}>
+        <Switch
+          label={t('settings.autostart')}
+          description={t('settings.autostart_description')}
+          checked={autostart ?? false}
+          onChange={handleAutostartChange}
+          disabled={autostart === null}
+        />
       </Card>
 
       {/* Language Section: shown once there is a second language to pick */}
       {hasLanguageChoice(availableLanguages) && (
-        <Card
-          id="language"
-          title={t('settings.language')}
-          titleLevel="h3"
-          className={styles.section}
-        >
-          <div className={styles.sectionContent}>
-            <Select
-              label={t('settings.display_language')}
-              value={currentLanguage}
-              options={availableLanguages.map((locale) => ({
-                value: locale,
-                label: LANGUAGE_NAMES[locale],
-              }))}
-              onChange={handleLanguageChange}
-            />
-          </div>
+        <Card id="language" title={t('settings.language')}>
+          <SettingsRow
+            label={t('settings.display_language')}
+            control={
+              <Select
+                label={t('settings.display_language')}
+                hideLabel
+                value={currentLanguage}
+                options={availableLanguages.map((locale) => ({
+                  value: locale,
+                  label: LANGUAGE_NAMES[locale],
+                }))}
+                onChange={handleLanguageChange}
+              />
+            }
+          />
         </Card>
       )}
 
       {/* Appearance Section */}
-      <Card
-        id="appearance"
-        title={t('settings.appearance')}
-        titleLevel="h3"
-        className={styles.section}
-      >
-        <div className={styles.sectionContent}>
-          <div className={styles.field}>
+      <Card id="appearance" title={t('settings.appearance')}>
+        <SettingsRow
+          label={t('settings.theme')}
+          help={currentTheme === 'auto' ? t('settings.theme_auto_desc') : undefined}
+          control={(a11y) => (
             <SegmentedControl
               label={t('settings.theme')}
+              hideLabel
               value={currentTheme}
               onChange={handleThemeChange}
+              aria-describedby={a11y['aria-describedby']}
               options={[
                 { value: 'auto', label: t('settings.theme_auto'), glyph: 'contrast' },
                 { value: 'light', label: t('settings.theme_light'), glyph: 'sun' },
                 { value: 'dark', label: t('settings.theme_dark'), glyph: 'moon' },
               ]}
             />
-            {currentTheme === 'auto' && (
-              <span className={styles.hint}>{t('settings.theme_auto_desc')}</span>
-            )}
-          </div>
-        </div>
+          )}
+        />
       </Card>
 
       {/* Speakers Section */}
-      <Card id="speakers" title={t('settings.speakers')} titleLevel="h3" className={styles.section}>
-        <div className={styles.sectionContent}>
-          <Switch
-            label={t('settings.speaker_monitor')}
-            description={t('settings.speaker_monitor_description')}
-            note={monitorOverrideKey !== null ? t(monitorOverrideKey) : undefined}
-            checked={speakerMonitor?.envOverride ?? speakerMonitor?.enabled ?? false}
-            onChange={handleSpeakerMonitorChange}
-            disabled={speakerMonitor === null || speakerMonitor.envOverride !== null}
-          />
+      <Card id="speakers" title={t('settings.speakers')}>
+        <Switch
+          label={t('settings.speaker_monitor')}
+          description={t('settings.speaker_monitor_description')}
+          note={monitorOverrideKey !== null ? t(monitorOverrideKey) : undefined}
+          checked={speakerMonitor?.envOverride ?? speakerMonitor?.enabled ?? false}
+          onChange={handleSpeakerMonitorChange}
+          disabled={speakerMonitor === null || speakerMonitor.envOverride !== null}
+        />
 
-          <div className={styles.field}>
-            {headStartMs !== null && (
+        <SettingsRow
+          label={t('settings.head_start')}
+          help={t('settings.head_start_description')}
+          locked={headStart?.envOverride != null}
+          note={
+            headStart?.envOverride != null
+              ? headStart.envOverride === 0
+                ? t('settings.head_start_env_off')
+                : t('settings.head_start_env', { value: headStart.envOverride })
+              : undefined
+          }
+          control={(a11y) =>
+            headStartMs !== null && (
               <Select
                 id="settings-head-start"
                 label={t('settings.head_start')}
+                hideLabel
                 value={headStartMs}
                 options={headStartOptions(headStartMs).map(({ ms, custom }) => ({
                   value: ms,
@@ -275,83 +298,72 @@ export function Settings() {
                 }))}
                 onChange={handleHeadStartChange}
                 disabled={headStart === null || headStart.envOverride !== null}
-                aria-describedby="settings-head-start-description"
+                aria-describedby={a11y['aria-describedby']}
               />
-            )}
-            <p id="settings-head-start-description" className={styles.toggleDescription}>
-              {t('settings.head_start_description')}
-            </p>
-            {headStart?.envOverride != null && (
-              <span className={styles.hint}>
-                {headStart.envOverride === 0
-                  ? t('settings.head_start_env_off')
-                  : t('settings.head_start_env', { value: headStart.envOverride })}
-              </span>
-            )}
-          </div>
+            )
+          }
+        />
 
-          <Switch
-            label={t('settings.drift')}
-            description={t('settings.drift_description')}
-            note={driftToggle.hint ? t(driftToggle.hint.key) : undefined}
-            checked={driftToggle.checked}
-            onChange={handleDriftChange}
-            disabled={driftToggle.disabled}
-          />
+        <Switch
+          label={t('settings.drift')}
+          description={t('settings.drift_description')}
+          note={driftToggle.hint ? t(driftToggle.hint.key) : undefined}
+          checked={driftToggle.checked}
+          onChange={handleDriftChange}
+          disabled={driftToggle.disabled}
+        />
 
-          {manualIps.length > 0 && (
-            <div className={styles.field}>
-              <span className={styles.fieldLabel}>{t('settings.manual_speakers')}</span>
-              <Cluster as="ul" gap="3">
-                {manualIps.map((ip) => (
-                  <li key={ip}>
-                    <Chip
-                      label={ip}
-                      mono
-                      removeLabel={`${t('settings.remove_speaker')}: ${ip}`}
-                      onRemove={() => handleRemoveSpeaker(ip)}
-                      disabled={removingIp !== null}
-                    />
-                  </li>
-                ))}
-              </Cluster>
-            </div>
-          )}
-
-          <div className={styles.field}>
-            <label htmlFor="settings-speaker-ip" className={styles.fieldLabel}>
-              {t('settings.add_speaker')}
-            </label>
-            <ManualSpeakerForm
-              inputId="settings-speaker-ip"
-              buttonVariant="secondary"
-              onSuccess={handleSpeakerAdded}
-            />
-          </div>
-        </div>
+        <AddressField
+          kind="speaker"
+          id="settings-speaker-ip"
+          label={t('settings.add_speaker')}
+          placeholder={t('onboarding.speakers.manual_ip_placeholder')}
+          value={speakerIp}
+          onChange={setSpeakerIp}
+          onTest={handleAddSpeaker}
+          action={{
+            idle: t('onboarding.speakers.manual_add'),
+            busy: t('onboarding.speakers.manual_testing'),
+            failed: t('settings.try_again'),
+          }}
+          list={manualIps}
+          listLabel={t('settings.manual_speakers')}
+          removeLabel={(address) => t('settings.remove_speaker_address', { address })}
+          onRemove={handleRemoveSpeaker}
+          removing={removingIp !== null}
+        />
       </Card>
 
       {/* About Section */}
-      <Card id="about" title={t('settings.about')} titleLevel="h3" className={styles.section}>
-        <div className={styles.sectionContent}>
-          <div className={styles.field}>
-            <div className={styles.fieldLabel}>{t('settings.about_app')}</div>
-            <div className={styles.hint}>
-              {appVersion ? t('settings.about_version', { version: appVersion }) : '—'}
-            </div>
-            <div className={styles.hint}>
-              {t('settings.about_protocol', { version: PROTOCOL_VERSION })}
-            </div>
-          </div>
-
-          <div className={styles.field}>
-            <div>
-              <Button icon="external" onClick={handleCheckForUpdates}>
-                {t('settings.check_for_updates')}
-              </Button>
-            </div>
-            <div className={styles.hint}>{t('settings.check_for_updates_description')}</div>
-          </div>
+      <Card id="about" title={t('settings.about')}>
+        <DescriptionList
+          kind="readout"
+          rows={[
+            {
+              key: 'app',
+              term: t('settings.about_app'),
+              value: (
+                <>
+                  {appVersion ? t('settings.about_version', { version: appVersion }) : '—'}
+                  <br />
+                  {t('settings.about_protocol', { version: PROTOCOL_VERSION })}
+                </>
+              ),
+            },
+          ]}
+        />
+        <div className={styles.updates}>
+          <Button
+            kind="link"
+            icon="external"
+            onClick={handleCheckForUpdates}
+            aria-describedby="settings-updates-hint"
+          >
+            {t('settings.check_for_updates')}
+          </Button>
+          <p id="settings-updates-hint" className={styles.hint}>
+            {t('settings.check_for_updates_description')}
+          </p>
         </div>
       </Card>
     </div>

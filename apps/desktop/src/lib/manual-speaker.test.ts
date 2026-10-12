@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import en from '../locales/en.json';
-import { getSpeakerErrorMessage, probeErrorCode } from './useAddManualSpeaker';
+import { getSpeakerErrorMessage, probeErrorCode } from './manual-speaker';
 
 const strings = en as Record<string, string>;
 const t = (key: string): string => key;

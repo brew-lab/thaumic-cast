@@ -5,10 +5,10 @@ import { MediaAction } from '@thaumic-cast/protocol';
 import { getSpeakerAvailability } from '@thaumic-cast/protocol';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import {
-  Alert,
   BrandBlock,
   Button,
   IconButton,
+  Notice,
   StatusDot,
   type StatusDotState,
 } from '@thaumic-cast/ui';
@@ -333,108 +333,109 @@ function MainPopup(): JSX.Element {
         <IconButton glyph="settings" kind="tonal" label={t('settings')} onPress={openSettings} />
       </div>
 
-      {error && (
-        <Alert
-          variant="error"
-          className={styles.alert}
-          onDismiss={() => setError(null)}
-          dismissLabel={t('dismiss')}
-        >
-          {error}
-        </Alert>
-      )}
+      {/* Notices stay where they were; Phase 3 places them at their source (NoticeSlot). */}
+      <div className={styles.notices}>
+        {error && (
+          <Notice
+            tone="danger"
+            text={error}
+            onDismiss={() => setError(null)}
+            dismissLabel={t('dismiss')}
+          />
+        )}
 
-      {connectionPhase === 'reconnecting' && (
-        <Alert variant="warning" className={styles.alert}>
-          {t('warning_reconnecting')}
-        </Alert>
-      )}
+        {connectionPhase === 'reconnecting' && (
+          <Notice tone="warning" text={t('warning_reconnecting')} />
+        )}
 
-      {showMismatchWarning && companion && (
-        <Alert
-          variant="warning"
-          className={styles.alert}
-          action={t(mismatchActionKey)}
-          onAction={handleOpenReleases}
-          onDismiss={dismissMismatchWarning}
-          dismissLabel={t('dismiss')}
-        >
-          {companion.appVersion
-            ? t('version_mismatch_message', {
-                appTypeLabel: mismatchAppTypeLabel,
-                appVersion: companion.appVersion,
-              })
-            : t('version_mismatch_unknown_message')}
-        </Alert>
-      )}
+        {showMismatchWarning && companion && (
+          <Notice
+            tone="warning"
+            text={
+              companion.appVersion
+                ? t('version_mismatch_message', {
+                    appTypeLabel: mismatchAppTypeLabel,
+                    appVersion: companion.appVersion,
+                  })
+                : t('version_mismatch_unknown_message')
+            }
+            action={{ label: t(mismatchActionKey), onClick: handleOpenReleases }}
+            onDismiss={dismissMismatchWarning}
+            dismissLabel={t('dismiss')}
+          />
+        )}
 
-      {connectionPhase === 'error' && connectionError && (
-        <Alert
-          variant="error"
-          className={styles.alert}
-          action={connectionCanRetry ? t(retryLabelKey(connectionError)) : undefined}
-          onAction={connectionCanRetry ? handleRetryConnection : undefined}
-        >
-          {t(connectionError, { defaultValue: connectionError })}
-        </Alert>
-      )}
+        {connectionPhase === 'error' && connectionError && (
+          <Notice
+            tone="danger"
+            text={t(connectionError, { defaultValue: connectionError })}
+            action={
+              connectionCanRetry
+                ? { label: t(retryLabelKey(connectionError)), onClick: handleRetryConnection }
+                : undefined
+            }
+          />
+        )}
 
-      {wsConnected && !sonosLoading && speakerGroups.isEmpty && (
-        <Alert variant="warning" className={styles.alert}>
-          {t('no_speakers_found')}
-        </Alert>
-      )}
+        {wsConnected && !sonosLoading && speakerGroups.isEmpty && (
+          <Notice tone="warning" text={t('no_speakers_found')} />
+        )}
 
-      {wsConnected && networkHealth === 'degraded' && !speakerGroups.isEmpty && (
-        <Alert variant="warning" className={styles.alert}>
-          {t(`network.${networkHealthReason}`, {
-            defaultValue: t('network.speakers_not_responding'),
-          })}
-        </Alert>
-      )}
+        {wsConnected && networkHealth === 'degraded' && !speakerGroups.isEmpty && (
+          <Notice
+            tone="warning"
+            text={t(`network.${networkHealthReason}`, {
+              defaultValue: t('network.speakers_not_responding'),
+            })}
+          />
+        )}
 
-      {wsConnected && showCaptureHealthAlert && (
-        <Alert
-          variant="warning"
-          className={styles.alert}
-          action={frameDropAlert.hasAction ? t('capture_health_action_open_settings') : undefined}
-          onAction={frameDropAlert.hasAction ? openSettings : undefined}
-          onDismiss={dismissCaptureHealthAlert}
-          dismissLabel={t('dismiss')}
-        >
-          {t(frameDropAlert.key)}
-        </Alert>
-      )}
+        {wsConnected && showCaptureHealthAlert && (
+          <Notice
+            tone="warning"
+            text={t(frameDropAlert.key)}
+            action={
+              frameDropAlert.hasAction
+                ? { label: t('capture_health_action_open_settings'), onClick: openSettings }
+                : undefined
+            }
+            onDismiss={dismissCaptureHealthAlert}
+            dismissLabel={t('dismiss')}
+          />
+        )}
 
-      {wsConnected &&
-        speakerNotices.map((view) => (
-          <Alert
-            key={`notice-${view.speakerIp}`}
-            variant="warning"
-            className={styles.alert}
-            onDismiss={() => dismissSpeakerNotice(view.speakerIp)}
-            dismissLabel={t('speaker_notice_dismiss')}
-          >
-            {noticeText(view.lines)}
-          </Alert>
-        ))}
+        {wsConnected &&
+          speakerNotices.map((view) => (
+            <Notice
+              key={`notice-${view.speakerIp}`}
+              tone="warning"
+              text={noticeText(view.lines)}
+              onDismiss={() => dismissSpeakerNotice(view.speakerIp)}
+              dismissLabel={t('speaker_notice_dismiss')}
+            />
+          ))}
 
-      {/* A capture-health alert already explains late audio from this browser. */}
-      {wsConnected &&
-        !showCaptureHealthAlert &&
-        ingestGapsNotices.map((view) => (
-          <Alert
-            key={`ingest-${view.streamId}`}
-            variant="warning"
-            className={styles.alert}
-            action={view.hasRemedy ? t('ingest_gaps_action_open_settings') : undefined}
-            onAction={view.hasRemedy ? openAudioAdvancedSettings : undefined}
-            onDismiss={() => dismissIngestGapsNotice(view.streamId)}
-            dismissLabel={t('speaker_notice_dismiss')}
-          >
-            {noticeText([view.line])}
-          </Alert>
-        ))}
+        {/* A capture-health notice already explains late audio from this browser. */}
+        {wsConnected &&
+          !showCaptureHealthAlert &&
+          ingestGapsNotices.map((view) => (
+            <Notice
+              key={`ingest-${view.streamId}`}
+              tone="warning"
+              text={noticeText([view.line])}
+              action={
+                view.hasRemedy
+                  ? {
+                      label: t('ingest_gaps_action_open_settings'),
+                      onClick: openAudioAdvancedSettings,
+                    }
+                  : undefined
+              }
+              onDismiss={() => dismissIngestGapsNotice(view.streamId)}
+              dismissLabel={t('speaker_notice_dismiss')}
+            />
+          ))}
+      </div>
 
       {/* Active Casts List with Volume Controls */}
       <ActiveCastsList

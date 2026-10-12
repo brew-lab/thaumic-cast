@@ -1,7 +1,10 @@
 @layer components {
   /*
    * A-segment. The track is --radius-group with the segments --space-2 inside it, so a
-   * segment is the control height less two insets. The ring goes round the track.
+   * segment is the control height less two insets. The track is --control-sm (32) on every
+   * surface (F-size); each segment's ::after grows its target to --hit-min in the block
+   * direction, so a window and touch get 44 without a taller track. The ring goes round
+   * the track.
    */
   .group {
     min-inline-size: 0;
@@ -20,7 +23,7 @@
   }
 
   .track {
-    --seg-h: calc(var(--control-md) - 2 * var(--space-2));
+    --seg-h: calc(var(--control-sm) - 2 * var(--space-2));
     --seg-shadow: none;
 
     display: inline-grid;
@@ -61,8 +64,11 @@
       scale var(--dur-spatial) var(--ease-spatial);
   }
 
-  :where([data-density='desktop']) .segment {
-    font-size: var(--text-4-fixed);
+  .segment::after {
+    content: '';
+    position: absolute;
+    inset-block: calc(min(0rem, (var(--seg-h) - var(--hit-min)) / 2));
+    inset-inline: 0;
   }
 
   .input {

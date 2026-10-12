@@ -107,12 +107,12 @@ export function Wizard({
         <div className={styles.footer}>
           <div className={styles.footerStart}>
             {showSkip && onSkip && (
-              <Button kind="quiet" onClick={onSkip}>
+              <Button size="md" kind="quiet" onClick={onSkip}>
                 {skip}
               </Button>
             )}
           </div>
-          <Button kind="filled" onClick={onNext} disabled={nextDisabled}>
+          <Button size="md" kind="filled" onClick={onNext} disabled={nextDisabled}>
             {nextLabel}
           </Button>
         </div>
@@ -136,7 +136,7 @@ export function Wizard({
       <div className={styles.footer}>
         <div className={styles.footerStart}>
           {showSkip && onSkip && (
-            <Button kind="quiet" onClick={onSkip}>
+            <Button size="md" kind="quiet" onClick={onSkip}>
               {skip}
             </Button>
           )}
@@ -144,11 +144,11 @@ export function Wizard({
 
         <Cluster gap="3">
           {!isFirstStep && onBack && (
-            <Button kind="outline" onClick={onBack}>
+            <Button size="md" kind="outline" onClick={onBack}>
               {back}
             </Button>
           )}
-          <Button kind="filled" onClick={onNext} disabled={nextDisabled}>
+          <Button size="md" kind="filled" onClick={onNext} disabled={nextDisabled}>
             {nextLabel}
           </Button>
         </Cluster>

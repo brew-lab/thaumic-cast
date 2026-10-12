@@ -1,36 +1,39 @@
 @layer components {
+  /*
+   * C-card. One look: --radius-card, --surface, a --line-hair --outline-variant edge in
+   * light only, no shadow. It is the `card` container, and its surface is the ring's gap.
+   */
   .card {
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
-    border-radius: var(--card-radius);
-    padding-block: var(--card-padding);
-    padding-inline: var(--card-padding);
-    box-shadow: var(--card-shadow);
-    overflow: hidden;
-  }
+    --card-pad: var(--space-4);
+    --card-gap: var(--space-4);
+    --ring-gap: var(--surface);
 
-  .no-padding {
-    padding: 0;
-  }
-
-  .title {
+    container: card / inline-size;
     display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    font-size: 1rem;
-    font-weight: 600;
-    margin-block: 0 var(--space-md);
+    flex-direction: column;
+    gap: var(--card-gap);
     min-inline-size: 0;
+    margin: 0;
+    padding: var(--card-pad);
+    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    color: var(--on-surface);
   }
 
-  .title-text {
+  :where([data-density='desktop']) .card {
+    --card-pad: var(--space-5);
+  }
+
+  .flush {
+    padding: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-inline-size: 0;
   }
 
-  .icon {
-    flex-shrink: 0;
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--card-gap);
+    min-inline-size: 0;
   }
 }

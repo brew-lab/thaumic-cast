@@ -60,7 +60,7 @@
   .remove::after {
     content: '';
     position: absolute;
-    inset: calc(min(0rem, (var(--icon-lg) - var(--target-min)) / 2));
+    inset: calc(min(0rem, (var(--icon-lg) - var(--hit-min)) / 2));
   }
 
   /* The ring goes round the whole chip. */

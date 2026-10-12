@@ -1,93 +1,91 @@
-import type { ComponentChildren } from 'preact';
-import { useState, useCallback, useId } from 'preact/hooks';
+import type { ComponentChildren, JSX } from 'preact';
 import { Icon } from '../Icon';
+import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
 import styles from './Disclosure.module.css';
 
-interface DisclosureProps {
-  /** Label shown on the toggle button */
+/** Props for {@link Disclosure}. */
+export interface DisclosureProps extends DataAttributes {
+  /** The trigger's name: "Advanced", "Enter the address yourself". It never truncates. */
   label: string;
-  /** Optional hint text below the label */
-  hint?: string;
-  /** Content to show when expanded */
+  /** A one-line summary after the label, which truncates first ("Kitchen 30 · Patio 46"). */
+  summary?: string;
+  /** Open, when the caller holds the state (the popup remembers the rooms fold). */
+  open?: boolean;
+  /** Open at first, when the Disclosure holds its own state. */
+  defaultOpen?: boolean;
+  /** Called with the new state when the user opens or shuts it. */
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * sm (the default) is 32 on every surface; md is 36 in the popup and 44 in a window, for a
+   * fold that is a row of a popup list (F-size).
+   */
+  size?: 'sm' | 'md';
+  /** Disabled: 38 %, and it does not open or shut. */
+  disabled?: boolean;
+  /** The element id, for a link that opens it (`#audio-advanced`). */
+  id?: string;
+  /** The panel, shown while open. */
   children: ComponentChildren;
-  /** Whether the disclosure starts expanded (default: false) */
-  defaultExpanded?: boolean;
-  /** Controlled expanded state */
-  expanded?: boolean;
-  /** Called when expanded state changes */
-  onExpandedChange?: (expanded: boolean) => void;
 }
 
 /**
- * A collapsible disclosure/accordion component.
- * Shows a toggle button that reveals or hides content.
- *
+ * Long content folded in place (DESIGN.md M-disclosure, P-fold): always `<details>` and
+ * `<summary>`, so the expanded state, Enter and Space are native and nothing in a shut panel
+ * is focusable or read out. The trigger is quiet: a chevron that turns, the label in 600 and
+ * an optional summary that truncates before the label does. It follows the grammar as a wide
+ * control (the bevel on hover and focus, the wide press); open is not a selected state. The
+ * trigger bleeds its padding past the content edge, so the chevron lines up with the text
+ * above. Its size, not the density, sets its height; the hit area reaches 44 on a window.
  * @param props - Component props
- * @param props.label - Label shown on the toggle button
- * @param props.hint - Optional hint text below the label
- * @param props.children - Content to show when expanded
- * @param props.defaultExpanded - Whether the disclosure starts expanded
- * @param props.expanded - Controlled expanded state
- * @param props.onExpandedChange - Called when expanded state changes
- * @returns The rendered Disclosure component
- *
- * @example
- * ```tsx
- * <Disclosure label="Advanced options" hint="For power users">
- *   <p>Hidden content here</p>
- * </Disclosure>
- * ```
+ * @param props.label - The trigger's name
+ * @param props.summary - A summary after the label
+ * @param props.open - Open, when the caller holds the state
+ * @param props.defaultOpen - Open at first
+ * @param props.onOpenChange - Called with the new state
+ * @param props.size - sm or md
+ * @param props.disabled - Disabled
+ * @param props.id - The element id
+ * @param props.children - The panel
+ * @returns The disclosure
  */
 export function Disclosure({
   label,
-  hint,
+  summary,
+  open,
+  defaultOpen = false,
+  onOpenChange,
+  size = 'sm',
+  disabled = false,
+  id,
   children,
-  defaultExpanded = false,
-  expanded: controlledExpanded,
-  onExpandedChange,
-}: DisclosureProps): preact.JSX.Element {
-  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const contentId = useId();
-  const hintId = useId();
-
-  const isControlled = controlledExpanded !== undefined;
-  const expanded = isControlled ? controlledExpanded : internalExpanded;
-
-  const handleToggle = useCallback(() => {
-    const newValue = !expanded;
-    if (!isControlled) {
-      setInternalExpanded(newValue);
-    }
-    onExpandedChange?.(newValue);
-  }, [expanded, isControlled, onExpandedChange]);
-
+  ...rest
+}: DisclosureProps): JSX.Element {
   return (
-    <div className={styles.disclosure}>
-      <button
-        type="button"
-        className={styles.toggle}
-        onClick={handleToggle}
-        aria-expanded={expanded}
-        aria-controls={expanded ? contentId : undefined}
-        aria-describedby={expanded && hint ? hintId : undefined}
+    <details
+      id={id}
+      class={cx(styles.disclosure, styles[size], disabled && styles.disabled)}
+      data-size={size}
+      open={open ?? defaultOpen}
+      onToggle={(event) => {
+        const now = (event.currentTarget as HTMLDetailsElement).open;
+        if (now !== open) onOpenChange?.(now);
+      }}
+    >
+      <summary
+        class={styles.trigger}
+        aria-disabled={disabled ? 'true' : undefined}
+        onClick={(event) => {
+          if (disabled) event.preventDefault();
+        }}
+        {...dataAttributes(rest)}
       >
-        <span className={styles.label}>{label}</span>
-        <span className={styles.chevron} data-open={expanded ? '' : undefined}>
+        <span class={styles.chevron}>
           <Icon glyph="chevron-down" />
         </span>
-      </button>
-
-      {expanded && hint && (
-        <p id={hintId} className={styles.hint}>
-          {hint}
-        </p>
-      )}
-
-      {expanded && (
-        <div id={contentId} className={styles.content}>
-          {children}
-        </div>
-      )}
-    </div>
+        <span class={styles.label}>{label}</span>
+        {summary && <span class={cx(styles.summary, 'num')}>{summary}</span>}
+      </summary>
+      <div class={styles.panel}>{children}</div>
+    </details>
   );
 }

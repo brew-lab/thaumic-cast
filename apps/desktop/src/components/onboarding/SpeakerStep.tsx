@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { WizardStep, Alert, Button, Disclosure, Icon } from '@thaumic-cast/ui';
+import {
+  WizardStep,
+  AddressField,
+  Button,
+  DescriptionList,
+  Disclosure,
+  EmptyState,
+  Icon,
+  Notice,
+  type AddressResult,
+} from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import { useTranslation } from 'react-i18next';
 import { groups, fetchGroups, refreshTopology, networkHealth } from '../../state/store';
@@ -9,7 +19,7 @@ import {
   type DiscoveryCompletePayload,
   type NetworkHealthPayload,
 } from '../../lib/events';
-import { ManualSpeakerForm } from '../ManualSpeakerForm';
+import { addManualSpeaker, getSpeakerErrorMessage } from '../../lib/manual-speaker';
 
 import styles from './SpeakerStep.module.css';
 
@@ -36,6 +46,13 @@ interface SpeakerStepProps {
 export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.Element {
   const { t } = useTranslation();
   const [isSearching, setIsSearching] = useState(true);
+  const [speakerIp, setSpeakerIp] = useState('');
+
+  const handleAddSpeaker = async (ip: string): Promise<AddressResult> => {
+    const outcome = await addManualSpeaker(ip);
+    if (!outcome.ok) return { ok: false, error: getSpeakerErrorMessage(outcome.code, t) };
+    return { ok: true, said: t('settings.manual_added', { address: outcome.ip }) };
+  };
   const speakerCount = groups.value.length;
 
   useEffect(() => {
@@ -135,31 +152,52 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       glyph="speaker"
     >
       {networkHealth.value.health === 'degraded' && (
-        <Alert variant="warning">
-          {t(`network.${networkHealth.value.reason}`, {
+        <Notice
+          tone="warning"
+          text={t(`network.${networkHealth.value.reason}`, {
             defaultValue: t('network.speakers_not_responding'),
           })}
-        </Alert>
+        />
       )}
 
       {isSearching ? (
-        <Alert variant="info">{t('onboarding.speakers.searching')}</Alert>
+        <EmptyState kind="searching" body={t('onboarding.speakers.searching')} />
       ) : speakerCount > 0 ? (
-        <Alert variant="success">{t('onboarding.speakers.found', { count: speakerCount })}</Alert>
+        <DescriptionList
+          kind="checklist"
+          rows={[
+            {
+              key: 'status',
+              state: 'connected',
+              text: t('onboarding.speakers.found', { count: speakerCount }),
+            },
+          ]}
+        />
       ) : (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyTitle}>{t('onboarding.speakers.none_found')}</p>
-          <p className={styles.emptyHint}>{t('onboarding.speakers.none_found_hint')}</p>
-        </div>
+        <EmptyState
+          title={t('onboarding.speakers.none_found')}
+          body={t('onboarding.speakers.none_found_hint')}
+        />
       )}
 
       {/* Manual IP entry - shown when no speakers found */}
       {speakerCount === 0 && !isSearching && (
-        <Disclosure
-          label={t('onboarding.speakers.manual_toggle')}
-          hint={t('onboarding.speakers.manual_hint')}
-        >
-          <ManualSpeakerForm buttonVariant="secondary" />
+        <Disclosure label={t('onboarding.speakers.manual_toggle')}>
+          <AddressField
+            size="md"
+            kind="speaker"
+            label={t('settings.add_speaker')}
+            placeholder={t('onboarding.speakers.manual_ip_placeholder')}
+            value={speakerIp}
+            onChange={setSpeakerIp}
+            onTest={handleAddSpeaker}
+            action={{
+              idle: t('onboarding.speakers.manual_add'),
+              busy: t('onboarding.speakers.manual_testing'),
+              failed: t('settings.try_again'),
+            }}
+            help={t('onboarding.speakers.manual_hint')}
+          />
         </Disclosure>
       )}
 
@@ -179,7 +217,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
         })}
       </div>
 
-      <Button icon="refresh" onAction={handleScan}>
+      <Button size="md" icon="refresh" onAction={handleScan}>
         {t('onboarding.speakers.scan_button')}
       </Button>
     </WizardStep>

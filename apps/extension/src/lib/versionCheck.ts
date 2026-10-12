@@ -16,10 +16,10 @@
  * update the companion — so we treat the absence of a `protocolVersion` as
  * a mismatch.
  *
- * The Alert is dismissible per `appVersion` (`null` is its own bucket): once
+ * The Notice is dismissible per `appVersion` (`null` is its own bucket): once
  * dismissed it stays silent for that build, but if the companion rolls
  * forward — including from "unknown" to a real version — the dismissal no
- * longer matches and the Alert re-appears. Even when dismissed, the popup
+ * longer matches and the Notice re-appears. Even when dismissed, the popup
  * footer keeps a persistent "Update available" link so the user always has
  * a way back to the releases page.
  *
@@ -51,7 +51,7 @@ export interface CompanionInfo {
 /**
  * Persisted dismissal marker. `appVersion` is `null` for pre-0.4.0
  * companions (so they can be dismissed too) — when the companion later
- * advertises a real version, that bucket no longer matches and the Alert
+ * advertises a real version, that bucket no longer matches and the Notice
  * re-appears.
  */
 export interface DismissedCompanionVersion {
@@ -115,7 +115,7 @@ export function hasVersionMismatch(
 }
 
 /**
- * True when the popup should render the out-of-date *Alert*. Same as
+ * True when the popup should render the out-of-date *Notice*. Same as
  * `hasVersionMismatch` but suppressed once the user has dismissed it for
  * this `appVersion` bucket (`null` is its own bucket — see
  * `DismissedCompanionVersion`).
@@ -123,7 +123,7 @@ export function hasVersionMismatch(
  * @param companion - Most recent companion info, or null if none yet seen
  * @param dismissed - Last dismissal record persisted in chrome.storage
  * @param minProtocolVersion - Override for the minimum compatible protocol version
- * @returns `true` when the popup should render the out-of-date warning Alert
+ * @returns `true` when the popup should render the out-of-date warning Notice
  */
 export function shouldWarnAboutVersion(
   companion: CompanionInfo | null,
@@ -174,7 +174,7 @@ export function companionTypeLabelKey(appType: AppType | null | undefined): stri
 }
 
 /**
- * Resolves the i18n key for the Alert action button that prompts the user to
+ * Resolves the i18n key for the Notice action button that prompts the user to
  * update the companion (`version_mismatch_action_{desktop,server,generic}`).
  *
  * @param appType - Reported by the companion, or `null`/`undefined` when absent/unknown

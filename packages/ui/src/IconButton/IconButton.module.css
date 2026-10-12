@@ -1,8 +1,8 @@
 @layer components {
   /*
-   * A-iconbtn. The box comes from the density (T-target): sm is 1.75rem in the popup and
-   * 2.5rem on the desktop, md 2rem and 2.75rem. Nothing is ever under --target-min, and the
-   * ::after hit area grows a desktop sm to 2.75rem. 20 px is retired.
+   * A-iconbtn. One box on every surface (F-size): sm is --control-xs (28), md --control-sm
+   * (32). Touch lives in the ::after hit area, which grows the box to --hit-min (44 on a
+   * window and under touch) without drawing anything. 20 px is retired.
    */
   .icon-button {
     --ib-size: var(--control-sm);
@@ -11,7 +11,7 @@
     --ib-fg: var(--on-surface-variant);
     --ib-radius: var(--radius-control);
     --ib-bevel: var(--shape-bevel);
-    --ib-hit: var(--target-min);
+    --ib-hit: var(--hit-min);
     --ib-fill: color-mix(in oklch, var(--ib-fg) var(--layer), var(--ib-bg));
 
     position: relative;
@@ -20,8 +20,6 @@
     place-items: center;
     inline-size: var(--ib-size);
     block-size: var(--ib-size);
-    min-inline-size: var(--target-min);
-    min-block-size: var(--target-min);
     margin: 0;
     padding: 0;
     border: 0;
@@ -50,17 +48,6 @@
     --ib-size: var(--control-xs);
     --ib-icon: var(--icon-sm);
     --ib-bevel: var(--shape-bevel-short);
-  }
-
-  :where([data-density='desktop']) .sm {
-    --ib-size: var(--control-sm);
-    --ib-icon: var(--icon-md);
-    --ib-bevel: var(--shape-bevel);
-  }
-
-  :where([data-density='desktop']) .md {
-    --ib-size: var(--control-md);
-    --ib-icon: var(--icon-lg);
   }
 
   .tonal {

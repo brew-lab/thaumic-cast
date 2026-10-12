@@ -1,8 +1,10 @@
 @layer components {
   /*
-   * A-select. The <select> is the trigger; the chevron (or the Clacks) sits over its end.
-   * The trigger follows the button grammar with the wide press; open and invalid take a
-   * 2 px edge, and the padding gives it back so the value never moves.
+   * A-select. The <select> is the trigger and the hit area; the box is drawn by the
+   * control's ::before, so on a window the <select> can be --hit-min (44) tall while the box
+   * stays at its size (F-size). The chevron (or the Clacks) sits over its end. The box
+   * follows the button grammar with the wide press; open and invalid take a 2 px edge, and
+   * the padding gives it back so the value never moves.
    */
   .field {
     display: flex;
@@ -28,6 +30,8 @@
     --select-font: var(--text-3);
     --select-glyph: var(--icon-sm);
     --select-pad: calc(var(--space-4) - var(--select-edge-w) + var(--line-hair));
+    --select-shadow: none;
+    --select-fill: color-mix(in oklch, var(--select-fg) var(--layer), var(--select-bg));
     --listbox-bg: light-dark(var(--surface), var(--container-high));
 
     position: relative;
@@ -35,29 +39,47 @@
     align-items: center;
     min-inline-size: 0;
     max-inline-size: 100%;
+    transition: --layer var(--dur-effects) var(--ease-effects);
   }
 
   .sm {
     --select-h: var(--control-sm);
   }
 
-  :where([data-density='desktop']) .control {
+  :where([data-density='desktop']) .md {
     --select-font: var(--text-4-fixed);
     --select-glyph: var(--icon-md);
   }
 
-  .select {
-    --select-fill: color-mix(in oklch, var(--select-fg) var(--layer), var(--select-bg));
-
+  /* The drawn box. */
+  .control::before {
+    content: '';
     grid-area: 1 / 1;
-    min-inline-size: 0;
+    align-self: center;
     block-size: var(--select-h);
-    margin: 0;
-    padding-block: 0;
-    padding-inline: var(--select-pad) calc(var(--select-pad) + var(--select-glyph) + var(--space-3));
     border: var(--select-edge-w) solid var(--select-edge);
     border-radius: var(--select-radius);
     background: var(--select-fill);
+    box-shadow: var(--select-shadow);
+    pointer-events: none;
+    transition:
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  /* The hit area: transparent, at least --hit-min tall, centred on the box. */
+  .select {
+    grid-area: 1 / 1;
+    min-inline-size: 0;
+    block-size: calc(max(var(--select-h), var(--hit-min)));
+    margin-block: calc(min(0rem, (var(--select-h) - var(--hit-min)) / 2));
+    margin-inline: 0;
+    padding-block: 0;
+    padding-inline: calc(var(--select-pad) + var(--select-edge-w))
+      calc(var(--select-pad) + var(--select-glyph) + var(--space-3));
+    border: 0;
+    border-radius: var(--select-radius);
+    background: transparent;
     color: var(--select-fg);
     font-family: var(--font-body);
     font-size: var(--select-font);
@@ -66,10 +88,11 @@
     text-overflow: ellipsis;
     appearance: none;
     cursor: pointer;
-    transition:
-      --layer var(--dur-effects) var(--ease-effects),
-      border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+  }
+
+  /* The ring is the box's, so the native one on the taller <select> is not drawn. */
+  .select:focus-visible {
+    box-shadow: none;
   }
 
   .trail {
@@ -88,30 +111,41 @@
     transition: rotate var(--dur-effects) var(--ease-effects);
   }
 
-  /* States: the button grammar, with the wide press. */
-  .select:is(:hover, [data-force='hover']) {
+  /* States: the button grammar on the box, with the wide press. */
+  .control:has(.select:is(:hover, [data-force='hover'])) {
     --layer: var(--layer-hover);
   }
 
-  .select:is(:focus-visible, [data-force='focus']) {
+  .control:has(.select:is(:focus-visible, [data-force='focus'])) {
     --layer: var(--layer-focus);
+    --select-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
   }
 
-  .select:is(:active, [data-force='press']) {
+  .control:has(.select:is(:active, [data-force='press'])) {
     --layer: var(--layer-press);
+  }
 
+  .control:has(.select:is(:active, [data-force='press']))::before {
     border-radius: var(--radius-pressed);
     scale: var(--press-wide);
     transition-duration: var(--dur-fast);
   }
 
   @supports (corner-shape: bevel) {
-    .select:not(:disabled):is(:hover, :focus-visible, [data-force='hover'], [data-force='focus']) {
+    .control:has(
+        .select:not(:disabled):is(
+            :hover,
+            :focus-visible,
+            [data-force='hover'],
+            [data-force='focus']
+          )
+      )::before {
       border-radius: var(--shape-bevel);
       corner-shape: bevel;
     }
 
-    .select:not(:disabled):is(:active, [data-force='press']) {
+    .control:has(.select:not(:disabled):is(:active, [data-force='press']))::before {
       border-radius: var(--radius-pressed);
       corner-shape: round;
     }
@@ -136,14 +170,19 @@
     cursor: progress;
   }
 
-  .select:disabled {
+  .control:has(.select:disabled) {
     --select-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --select-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
     --select-bg: transparent;
     --layer: initial;
+  }
 
+  .control:has(.select:disabled)::before {
     border-radius: var(--select-radius);
     scale: 1;
+  }
+
+  .select:disabled {
     cursor: not-allowed;
   }
 
@@ -253,7 +292,7 @@
   }
 
   @media (forced-colors: active) {
-    .select {
+    .control::before {
       border-color: currentcolor;
     }
   }

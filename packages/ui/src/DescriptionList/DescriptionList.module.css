@@ -1,0 +1,128 @@
+@layer components {
+  /*
+   * M-dl. readout: quiet terms (--text-3, --on-surface-variant) and strong values. stat:
+   * strong terms and --text-5 values, counts tabular in a --ch-count box. From a 25rem
+   * `card` the pairs share one grid (terms max-content, values the rest); under it each
+   * pair stacks. checklist: a StatusDot in a --icon-md box and one sentence per line.
+   */
+  .list {
+    --dl-gap-col: var(--space-5);
+    --dl-gap-row: var(--space-2);
+    --dl-term: var(--text-3);
+    --dl-term-leading: var(--leading-3);
+    --dl-term-ink: var(--on-surface-variant);
+    --dl-term-weight: var(--weight-body);
+    --dl-value: var(--text-3);
+    --dl-value-leading: var(--leading-3);
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dl-gap-row) var(--dl-gap-col);
+    margin: 0;
+  }
+
+  :where([data-density='desktop']) .list {
+    --dl-term: var(--text-4-fixed);
+    --dl-term-leading: var(--leading-4);
+    --dl-value: var(--text-4-fixed);
+    --dl-value-leading: var(--leading-4);
+  }
+
+  .stat {
+    --dl-gap-row: var(--space-4);
+    --dl-term-ink: var(--on-surface);
+    --dl-term-weight: var(--weight-strong);
+    --dl-value: var(--text-5);
+    --dl-value-leading: var(--leading-5);
+  }
+
+  :where([data-density='desktop']) .stat {
+    --dl-value: var(--text-5);
+    --dl-value-leading: var(--leading-5);
+  }
+
+  .pair {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  @container card (inline-size >= 25rem) {
+    .list {
+      grid-template-columns: max-content minmax(0, 1fr);
+    }
+
+    .pair {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      column-gap: var(--dl-gap-col);
+      align-items: baseline;
+    }
+
+    .stat .pair {
+      align-items: center;
+    }
+  }
+
+  .term,
+  .value {
+    min-inline-size: 0;
+    margin: 0;
+  }
+
+  .term {
+    color: var(--dl-term-ink);
+    font-size: var(--dl-term);
+    font-weight: var(--dl-term-weight);
+    line-height: var(--dl-term-leading);
+  }
+
+  .value {
+    color: var(--on-surface);
+    font-size: var(--dl-value);
+    font-weight: var(--weight-strong);
+    line-height: var(--dl-value-leading);
+    font-variant-numeric: var(--num);
+  }
+
+  .count {
+    min-inline-size: var(--ch-count);
+    text-align: start;
+  }
+
+  .checklist {
+    --dl-check-gap: var(--space-3);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  :where([data-density='desktop']) .checklist {
+    font-size: var(--text-4);
+    line-height: var(--leading-4);
+  }
+
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--dl-check-gap);
+    min-block-size: var(--icon-lg);
+  }
+
+  .mark {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    inline-size: var(--icon-md);
+    block-size: calc(1lh);
+  }
+}

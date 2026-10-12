@@ -36,7 +36,7 @@ type Forced = 'hover' | 'focus' | 'press';
  * @param props.children - The rows (StateRow)
  * @returns The grid
  */
-function StateGrid({
+export function StateGrid({
   kinds,
   children,
 }: {
@@ -63,7 +63,7 @@ function StateGrid({
  * @param props.children - One cell per kind
  * @returns The row's cells
  */
-function StateRow({
+export function StateRow({
   state,
   children,
 }: {

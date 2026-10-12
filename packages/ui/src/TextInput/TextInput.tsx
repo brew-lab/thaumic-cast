@@ -18,11 +18,18 @@ export interface TextInputProps extends DataAttributes {
   value: string;
   /** Called with the new value as the user types. */
   onInput: (value: string) => void;
-  /** The density sets the height: sm `--control-sm`, md `--control-md`. Search defaults to sm. */
+  /**
+   * sm (the default) is 32 on every surface; md is 36 in the popup and 44 in a window, for a
+   * field that is what its step exists for (F-size). On a window the native input is the 44
+   * hit area, inside the drawn box.
+   */
   size?: 'sm' | 'md';
   /** A hint of the form; never the label. */
   placeholder?: string;
-  /** Read-only: selectable and focusable, on the container fill. */
+  /**
+   * Holds the value while its Button tests it (AddressField). It draws no read-only look: a
+   * value that is only read is text, not a box (F-size).
+   */
   readOnly?: boolean;
   /** Disabled. */
   disabled?: boolean;
@@ -120,11 +127,11 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
     <span
       class={cx(
         styles.control,
-        styles[size ?? (search ? 'sm' : 'md')],
-        readOnly && styles.readOnly,
+        styles[size ?? 'sm'],
         disabled && styles.disabled,
         invalid && styles.invalid,
       )}
+      data-size={size ?? 'sm'}
       {...dataAttributes(rest)}
     >
       {search && label && (

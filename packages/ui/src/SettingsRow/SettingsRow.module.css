@@ -1,0 +1,183 @@
+@layer components {
+  /*
+   * M-setrow. The layout follows the `card` container (F-containers), never the window.
+   * Under 25rem: 'label control' 'help help' 'note note'. From 25rem the help keeps out of
+   * the control's column. From 45rem: 'label control help' '. . note'. A wide control (over
+   * --wide-control) stacks under the help until 45rem; an action control (a Button) is
+   * centred against the label and the help. The row never tints.
+   */
+  .row {
+    --setrow-gap-col: var(--space-5);
+    --setrow-gap-row: var(--space-1);
+    --setrow-min: var(--control-md);
+    --setrow-label: var(--text-3);
+    --setrow-label-leading: var(--leading-3);
+    --setrow-label-ink: var(--on-surface);
+    --setrow-help: var(--text-2);
+    --setrow-help-leading: var(--leading-2);
+    --setrow-help-ink: var(--on-surface-variant);
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label control'
+      'help help'
+      'note note'
+      'error error'
+      'detail detail';
+    align-items: center;
+    gap: var(--setrow-gap-row) var(--setrow-gap-col);
+    min-block-size: var(--setrow-min);
+  }
+
+  :where([data-density='desktop']) .row {
+    --setrow-label: var(--text-4-fixed);
+    --setrow-label-leading: var(--leading-4);
+  }
+
+  .label,
+  .help,
+  .note,
+  .error {
+    margin: 0;
+    min-inline-size: 0;
+  }
+
+  .label {
+    grid-area: label;
+    color: var(--setrow-label-ink);
+    font-size: var(--setrow-label);
+    font-weight: var(--weight-strong);
+    line-height: var(--setrow-label-leading);
+  }
+
+  .control {
+    grid-area: control;
+    display: flex;
+    justify-content: flex-end;
+    min-inline-size: 0;
+  }
+
+  .help,
+  .note,
+  .error {
+    font-size: var(--setrow-help);
+    line-height: var(--setrow-help-leading);
+    text-wrap: pretty;
+  }
+
+  .help {
+    grid-area: help;
+    color: var(--setrow-help-ink);
+  }
+
+  .note,
+  .error {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+  }
+
+  .note {
+    grid-area: note;
+    color: var(--on-surface);
+  }
+
+  .error {
+    grid-area: error;
+    color: var(--danger-ink);
+  }
+
+  .glyph {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    block-size: calc(1lh);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--icon-sm);
+  }
+
+  .detail {
+    grid-area: detail;
+    min-inline-size: 0;
+    padding-block-start: var(--space-2);
+  }
+
+  /* A wide control stacks under the help, at its own width. */
+  .row[data-width='wide'] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'label' 'help' 'control' 'note' 'error' 'detail';
+  }
+
+  .row[data-width='wide'] .control {
+    justify-content: flex-start;
+    padding-block-start: var(--space-2);
+  }
+
+  /* An action (a Button) sits beside the label and the help, centred against both. */
+  .row[data-width='action'] {
+    grid-template-areas:
+      'label control'
+      'help control'
+      'note note'
+      'error error'
+      'detail detail';
+  }
+
+  /* A Switch is its own row: the control spans, and the slots follow it. */
+  .bare,
+  .bare[data-width] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'control' 'note' 'error' 'detail';
+  }
+
+  .bare .control {
+    display: block;
+  }
+
+  .bare .note,
+  .bare .error {
+    padding-inline-end: calc(var(--size-switch-w) + var(--setrow-gap-col));
+  }
+
+  @container card (inline-size >= 25rem) {
+    .row:not(.bare, [data-width='wide'], [data-width='action']) {
+      grid-template-areas:
+        'label control'
+        'help .'
+        'note note'
+        'error error'
+        'detail detail';
+    }
+  }
+
+  @container card (inline-size >= 45rem) {
+    .row:not(.bare),
+    .row[data-width='wide']:not(.bare) {
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      grid-template-areas:
+        'label control help'
+        '. . note'
+        '. . error'
+        'detail detail detail';
+      align-items: start;
+    }
+
+    .row[data-width='wide'] .control {
+      padding-block-start: 0;
+    }
+  }
+
+  /* Needs another setting: the name and help at 38 %, the note at full strength. */
+  .disabled {
+    --setrow-label-ink: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --setrow-help-ink: var(--setrow-label-ink);
+  }
+
+  /* Locked by an environment variable: the name stays at full strength. */
+  .locked {
+    --setrow-label-ink: var(--on-surface);
+  }
+}

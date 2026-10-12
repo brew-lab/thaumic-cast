@@ -1,59 +1,157 @@
 @layer components {
+  /*
+   * M-disclosure. A quiet trigger on <summary>: no fill at rest, the label in 600, the
+   * chevron and the summary in --on-surface-variant. It takes the grammar as a wide control
+   * (bevel on hover and focus, --press-wide), and bleeds its padding so the chevron lines up
+   * with the text above. Open turns the chevron; it is not selected, so nothing fills.
+   */
   .disclosure {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
+    --disc-h: var(--control-sm);
+    --disc-pad: var(--space-3);
+    --disc-gap: var(--space-2);
+    --disc-label: var(--text-3);
+    --disc-label-leading: var(--leading-3);
+    --disc-summary: var(--text-2);
+    --disc-icon: var(--icon-sm);
+    --disc-fg: var(--on-surface);
+    --disc-hint: var(--on-surface-variant);
+    --disc-radius: var(--radius-control);
+    --disc-shadow: none;
+    --disc-fill: color-mix(in oklch, var(--disc-fg) var(--layer), transparent);
+
+    min-inline-size: 0;
   }
 
-  .toggle {
+  /* md: the popup's list folds (36) and a window's prominent fold (44); sm is 32 everywhere. */
+  .md {
+    --disc-h: var(--control-md);
+    --disc-label: var(--text-4-fixed);
+    --disc-label-leading: var(--leading-4);
+  }
+
+  :where([data-density='desktop']) .md {
+    --disc-summary: var(--text-3);
+    --disc-icon: var(--icon-md);
+  }
+
+  .trigger {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    inline-size: 100%;
-    padding: 0;
-    background: none;
-    border: none;
-    color: var(--color-text-muted);
-    font-size: 0.875rem;
-    text-align: start;
+    gap: var(--disc-gap);
+    min-block-size: var(--disc-h);
+    margin-inline: calc(-1 * var(--disc-pad));
+    padding-inline: var(--disc-pad);
+    border-radius: var(--disc-radius);
+    background: var(--disc-fill);
+    color: var(--disc-fg);
+    box-shadow: var(--disc-shadow);
+    list-style: none;
     cursor: pointer;
-    transition: var(--transition-color);
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      --layer var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      scale var(--dur-spatial) var(--ease-spatial);
   }
 
-  .toggle:hover {
-    color: var(--color-text);
+  /* The hit area reaches --hit-min in the block direction without drawing anything. */
+  .trigger::after {
+    content: '';
+    position: absolute;
+    inset-block: calc(min(0rem, (var(--disc-h) - var(--hit-min)) / 2));
+    inset-inline: 0;
   }
 
-  .toggle:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-    border-radius: var(--radius-sm);
-  }
-
-  .label {
-    font-weight: 500;
-  }
-
-  .hint {
-    margin: 0;
-    font-size: 0.75rem;
-    color: var(--color-text-muted);
+  .trigger::-webkit-details-marker {
+    display: none;
   }
 
   .chevron {
-    flex-shrink: 0;
+    flex: none;
     display: inline-grid;
+    place-items: center;
+    color: var(--disc-hint);
+  }
+
+  .chevron > svg {
+    --icon-size: var(--disc-icon);
+
     transition: rotate var(--dur-effects) var(--ease-effects);
   }
 
-  .chevron[data-open] {
+  .disclosure[open] > .trigger .chevron > svg {
     rotate: 180deg;
   }
 
-  .content {
+  .label {
+    flex: none;
+    max-inline-size: 100%;
+    font-size: var(--disc-label);
+    font-weight: var(--weight-strong);
+    line-height: var(--disc-label-leading);
+  }
+
+  .summary {
+    flex: 1 1 0;
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--disc-hint);
+    font-size: var(--disc-summary);
+    text-align: start;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-sm);
+    gap: var(--space-3);
+    padding-block-start: var(--space-3);
+  }
+
+  /* States (F-grammar), as a wide control. */
+  .trigger:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .trigger:is(:focus-visible, [data-force='focus']) {
+    --layer: var(--layer-focus);
+    --disc-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .trigger:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+
+    border-radius: var(--radius-pressed);
+    scale: var(--press-wide);
+    transition-duration: var(--dur-fast);
+  }
+
+  @supports (corner-shape: bevel) {
+    .disclosure:not(.disabled)
+      > .trigger:is(:hover, :focus-visible, [data-force='hover'], [data-force='focus']) {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
+    }
+
+    .disclosure:not(.disabled) > .trigger:is(:active, [data-force='press']) {
+      border-radius: var(--radius-pressed);
+      corner-shape: round;
+    }
+  }
+
+  .disabled > .trigger {
+    --disc-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --disc-hint: var(--disc-fg);
+    --layer: initial;
+
+    border-radius: var(--disc-radius);
+    scale: 1;
+    cursor: not-allowed;
   }
 }

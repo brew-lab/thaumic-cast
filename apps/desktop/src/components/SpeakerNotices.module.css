@@ -1,6 +1,7 @@
-.notices {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-block-end: var(--space-5);
+@layer app {
+  .notices {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
 }

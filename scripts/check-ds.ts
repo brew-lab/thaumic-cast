@@ -27,9 +27,11 @@ export const CLEAN_PATHS = [
   /^packages\/ui\/src\/(Announcer|Cluster|Icon)\//,
   // Phase 1: the atoms.
   /^packages\/ui\/src\/(Artwork|Badge|BrandBlock|Button|Checkbox|Chip|Clacks|Divider|IconButton|Meter|NavItem|Radio|SectionHeader|SegmentedControl|Select|Slider|StatusDot|StepIndicator|Switch|TextInput|Tooltip|utils)\//,
+  // Phase 2: the molecules and Card.
+  /^packages\/ui\/src\/(AddressField|Card|ChoiceGroup|CopyField|DescriptionList|Disclosure|EmptyState|Field|Notice|NoticeLine|PageHeader|SettingsRow|Toast|WizardStep)\//,
   // Phase 1: every app file, except the layouts Phases 3 and 4 rebuild wholesale (the cast
   // card and its list, the app shells and the onboarding frames).
-  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/(Onboarding|Server)\.module\.css$)(?!extension\/src\/popup\/components\/(ActiveCastCard\.(tsx|module\.css)|ActiveCastsList\.module\.css|Onboarding\.module\.css)$)[^/]+\/src\/.*\.(tsx|css)$/,
+  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/Onboarding\.module\.css$)(?!extension\/src\/popup\/components\/(ActiveCastCard\.(tsx|module\.css)|ActiveCastsList\.module\.css|Onboarding\.module\.css)$)[^/]+\/src\/.*\.(tsx|css)$/,
 ];
 
 /** One finding: the check it breaks, where, and what. */

@@ -1,0 +1,72 @@
+@layer components {
+  /*
+   * M-wizardstep. The disc beside the title and subtitle, then the body. The title is Geist
+   * 600 in the brand ink (light): --text-6 in the popup, --text-7 on the desktop.
+   */
+  .step {
+    --wizard-title: var(--text-6);
+    --wizard-title-leading: var(--leading-6);
+    --wizard-title-tracking: var(--tracking-6);
+    --wizard-subtitle: var(--text-3);
+    --wizard-subtitle-leading: var(--leading-3);
+    --wizard-title-ink: light-dark(var(--brand-ink), var(--on-surface));
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    inline-size: 100%;
+    max-inline-size: var(--page-max);
+  }
+
+  :where([data-density='desktop']) .step {
+    --wizard-title: var(--text-7);
+    --wizard-title-leading: var(--leading-7);
+    --wizard-title-tracking: var(--tracking-7);
+    --wizard-subtitle: var(--text-4);
+    --wizard-subtitle-leading: var(--leading-4);
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .titles {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .title {
+    margin: 0;
+    color: var(--wizard-title-ink);
+    font-family: var(--font-head);
+    font-size: var(--wizard-title);
+    font-weight: var(--weight-head);
+    line-height: var(--wizard-title-leading);
+    letter-spacing: var(--wizard-title-tracking);
+  }
+
+  /* Focus moves here on a step change; it is not a control, so it shows no ring. */
+  .title:focus {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .subtitle {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--wizard-subtitle);
+    line-height: var(--wizard-subtitle-leading);
+    text-wrap: pretty;
+  }
+
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-inline-size: 0;
+  }
+}
