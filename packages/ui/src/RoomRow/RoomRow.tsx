@@ -1,4 +1,4 @@
-import type { JSX } from 'preact';
+import type { ComponentChildren, JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { useAnnouncer } from '../Announcer';
 import { Artwork } from '../Artwork';
@@ -149,7 +149,7 @@ export type RoomRowProps = RoomRowPickProps | RoomRowCastProps | RoomRowListProp
  * One row per room (DESIGN.md M-roomrow). A home theatre, a stereo pair or a zone is one
  * room. Three modes and no others: `pick` (a checkbox row, with StartLevel outside its label
  * once chosen), `cast` (a room in a running cast: its volume line, Remove, and a row line on
- * failure) and `list` (read only, inside a `<ul aria-label>`). A chosen row never reshapes or
+ * failure) and `list` (read only, inside a {@link RoomList}). A chosen row never reshapes or
  * tints; a `pick` row takes the bevel on focus and press, as its Checkbox does.
  * @param props - Component props: `mode` picks the kind
  * @returns The row
@@ -333,5 +333,29 @@ function ListRow(props: RoomRowListProps): JSX.Element {
       </span>
       {badge && <Badge tone={badge.tone} label={badge.label} />}
     </li>
+  );
+}
+
+/** Props for {@link RoomList}. */
+export interface RoomListProps {
+  /** The list's accessible name: "Rooms that answered". */
+  label: string;
+  /** The `list` rows. */
+  children: ComponentChildren;
+}
+
+/**
+ * The list that holds RoomRow `list` rows: a labelled `<ul>` with the list reset and the
+ * rows' gap (each row draws its own rule).
+ * @param props - Component props
+ * @param props.label - The list's accessible name
+ * @param props.children - The rows
+ * @returns The list
+ */
+export function RoomList({ label, children }: RoomListProps): JSX.Element {
+  return (
+    <ul class={styles.rooms} aria-label={label}>
+      {children}
+    </ul>
   );
 }
