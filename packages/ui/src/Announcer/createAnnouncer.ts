@@ -1,4 +1,4 @@
-import { ANNOUNCE_GAP_MS } from '../tokens';
+import { ANNOUNCE_GAP_MS, ANNOUNCE_HOLD_MS } from '../tokens';
 
 /** Options for {@link Announcer.say}. */
 export interface SayOptions {
@@ -64,6 +64,9 @@ export interface AnnouncerController extends Announcer {
  *   words can be said twice in a row when the caller means it.
  * - Messages queue `ANNOUNCE_GAP_MS` apart, so two results never cut each other off.
  * - A `key` that has been said is never said again.
+ * - A message is emptied from its region `ANNOUNCE_HOLD_MS` after it is written, unless
+ *   another has replaced it, so a screen reader reading the page later never meets an
+ *   old one (a room still "joining" long after it joined).
  * @param regions - The polite and assertive live regions
  * @param regions.polite - The `role="status"` region
  * @param regions.assertive - The `role="alert"` region
@@ -78,6 +81,8 @@ export function createAnnouncer(
   const saidKeys = new Set<string>();
   let isOpen = false;
   let busy = false;
+  /** Messages written so far: a message is emptied only while it is the last one. */
+  let writes = 0;
 
   const next = (): void => {
     const item = queue.shift();
@@ -91,6 +96,10 @@ export function createAnnouncer(
     clock.nextFrame(() => {
       if (!isOpen) return;
       region.textContent = item.message;
+      const written = ++writes;
+      clock.after(ANNOUNCE_HOLD_MS, () => {
+        if (writes === written) region.textContent = '';
+      });
       clock.after(ANNOUNCE_GAP_MS, next);
     });
   };

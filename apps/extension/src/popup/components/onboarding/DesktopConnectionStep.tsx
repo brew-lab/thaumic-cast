@@ -12,7 +12,6 @@ import { useTranslation } from 'react-i18next';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import { connectToServer, isServerUrl, serverAddressResult } from '../../../lib/serverTest';
-import styles from './DesktopConnectionStep.module.css';
 
 interface DesktopConnectionStepProps {
   /** Callback when connection status changes */
@@ -85,7 +84,7 @@ export function DesktopConnectionStep({
         <>
           <Notice tone="warning" text={t('onboarding.desktop.not_found')} />
 
-          <p className={styles.downloadPrompt}>{t('onboarding.desktop.download_prompt')}</p>
+          <p>{t('onboarding.desktop.download_prompt')}</p>
 
           <Cluster stack>
             <Button size="md" kind="filled" icon="external" onClick={handleDownload}>

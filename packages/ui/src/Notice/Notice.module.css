@@ -112,7 +112,7 @@
   /* Under the text, a Details that starts the row lines its words up with the text. */
   @container notice (inline-size < 25rem) {
     .actions > [aria-expanded]:first-child {
-      --btn-pull: var(--btn-pad-start);
+      --btn-pull: calc(var(--btn-pad-start) + var(--line-hair));
     }
   }
 

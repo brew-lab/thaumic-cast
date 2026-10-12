@@ -45,6 +45,12 @@ export const HealthResponseSchema = z.object({
    * Absent from companions that predate the field, which means "unknown".
    */
   browserCapture: z.boolean().optional().catch(undefined),
+  /**
+   * Whether the companion plays `START_PLAYBACK`'s `rooms` as one Sonos
+   * group, puts moved rooms back afterwards, and echoes `callId`. Absent from
+   * companions that predate it, which only know `speakerIps`.
+   */
+  regroup: z.boolean().optional().catch(undefined),
   /** The companion's limits. */
   limits: z
     .object({
@@ -162,13 +168,33 @@ export type WsStreamReadyMessage = z.infer<typeof WsStreamReadyMessageSchema>;
  * Must be sent after receiving STREAM_READY.
  */
 export const WsStartPlaybackPayloadSchema = z.object({
-  /** IP addresses of the Sonos speakers (group coordinators) to play on. */
+  /**
+   * IP addresses of the speakers to play on. With `rooms`, each room's own
+   * IP in the same order; a companion without `regroup` reads only these, as
+   * group coordinators.
+   */
   speakerIps: z.array(z.string()).optional(),
   /** Legacy single speaker, read by the companion only when `speakerIps` is absent. */
   speakerIp: z.string().optional(),
+  /**
+   * The rooms to play, as player UUIDs of room primaries, in the order chosen.
+   * A companion with `regroup` plays exactly these rooms as one Sonos group:
+   * rooms that are not named keep playing what they were. Sent to a running
+   * cast, the rooms join its group. Ignored by an older companion.
+   */
+  rooms: z.array(z.string()).optional(),
+  /**
+   * Names this request, so its `PLAYBACK_RESULTS` or `PLAYBACK_ERROR` can be
+   * told from a late reply to an earlier one. Echoed by a companion with
+   * `regroup`; an older one leaves it out of the reply.
+   */
+  callId: z.string().optional(),
   /** Initial metadata to show on the speakers. */
   metadata: StreamMetadataSchema.optional(),
-  /** Whether to join the speakers into one Sonos group for the cast. */
+  /**
+   * Whether to join the speakers into one Sonos group for the cast.
+   * @deprecated Read only when `rooms` is absent; a cast with `rooms` is always one group.
+   */
   syncSpeakers: z.boolean().default(false),
   /** Whether the client has video sync enabled (gates server-side latency monitoring). */
   videoSyncEnabled: z.boolean().default(false),
@@ -209,6 +235,8 @@ export type WsPlaybackStartedMessage = z.infer<typeof WsPlaybackStartedMessageSc
 export const WsPlaybackErrorPayloadSchema = z.object({
   /** Error message describing the failure. */
   message: z.string(),
+  /** The `callId` of the `START_PLAYBACK` this answers, when it had one. */
+  callId: z.string().optional(),
 });
 export type WsPlaybackErrorPayload = z.infer<typeof WsPlaybackErrorPayloadSchema>;
 
@@ -243,6 +271,12 @@ export type WsBrowserCaptureErrorMessage = z.infer<typeof WsBrowserCaptureErrorM
  * Contains per-speaker success/failure information.
  */
 export const WsPlaybackResultsPayloadSchema = z.object({
+  /** The `callId` of the `START_PLAYBACK` this answers, when it had one. */
+  callId: z.string().optional(),
+  /**
+   * One result per speaker. For a request with `rooms`, one per room, keyed by
+   * the room's own IP, the group's coordinator first.
+   */
   results: z.array(
     z.object({
       speakerIp: z.string(),

@@ -128,8 +128,25 @@ pub(super) fn parse_soap_args(body: &str, action: &str) -> Vec<(String, String)>
 /// The `ZoneGroupState` document for `groups`, unescaped.
 pub(super) fn zone_group_state(
     groups: &[(Arc<FakeSpeaker>, Vec<Arc<FakeSpeaker>>)],
+    satellites_of: &dyn Fn(&FakeSpeaker) -> Vec<Arc<FakeSpeaker>>,
     port: u16,
 ) -> String {
+    let device = |element: &str, speaker: &FakeSpeaker, zone: &str, extra: &str| {
+        format!(
+            concat!(
+                r#"<{element} UUID="{uuid}" "#,
+                r#"Location="http://{ip}:{port}/xml/device_description.xml" "#,
+                r#"ZoneName="{name}" Icon="x-rincon-roomicon:living" Configuration="1" "#,
+                r#"SoftwareVersion="83.1-61240" SWGen="2" BootSeq="1" WirelessMode="0"{extra}"#
+            ),
+            element = element,
+            uuid = speaker.uuid,
+            ip = speaker.ip,
+            port = port,
+            name = escape_xml(zone),
+            extra = extra
+        )
+    };
     let mut state = String::from("<ZoneGroupState><ZoneGroups>");
     for (coordinator, members) in groups {
         state.push_str(&format!(
@@ -137,18 +154,23 @@ pub(super) fn zone_group_state(
             uuid = coordinator.uuid
         ));
         for member in members {
-            state.push_str(&format!(
-                concat!(
-                    r#"<ZoneGroupMember UUID="{uuid}" "#,
-                    r#"Location="http://{ip}:{port}/xml/device_description.xml" "#,
-                    r#"ZoneName="{name}" Icon="x-rincon-roomicon:living" Configuration="1" "#,
-                    r#"SoftwareVersion="83.1-61240" SWGen="2" BootSeq="1" WirelessMode="0"/>"#
-                ),
-                uuid = member.uuid,
-                ip = member.ip,
-                port = port,
-                name = escape_xml(&member.name)
-            ));
+            let satellites = satellites_of(member);
+            if satellites.is_empty() {
+                state.push_str(&device("ZoneGroupMember", member, &member.name, "/>"));
+                continue;
+            }
+            // A home theatre: the primary lists its satellites, each named
+            // after the room and marked invisible.
+            state.push_str(&device("ZoneGroupMember", member, &member.name, ">"));
+            for satellite in satellites {
+                state.push_str(&device(
+                    "Satellite",
+                    &satellite,
+                    &member.name,
+                    r#" Invisible="1"/>"#,
+                ));
+            }
+            state.push_str("</ZoneGroupMember>");
         }
         state.push_str("</ZoneGroup>");
     }

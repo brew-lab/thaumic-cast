@@ -16,10 +16,17 @@ type StorageRecord = Record<string, unknown>;
 /**
  * Creates an in-memory replacement for one `chrome.storage` area.
  * @param data - The backing record, exposed so tests can seed and inspect it
- * @returns An object implementing the `get`/`set`/`remove`/`clear` subset used by the code
+ * @returns An object implementing the `get`/`set`/`remove`/`clear`/`onChanged` subset used by the code
  */
 function createStorageArea(data: StorageRecord): chrome.storage.StorageArea {
+  type Listener = (changes: Record<string, chrome.storage.StorageChange>) => void;
+  const listeners = new Set<Listener>();
   const area = {
+    // Fired synchronously inside `set`, before its promise settles, as Chrome may.
+    onChanged: {
+      addListener: (listener: Listener): void => void listeners.add(listener),
+      removeListener: (listener: Listener): void => void listeners.delete(listener),
+    },
     async get(keys?: string | string[] | StorageRecord | null): Promise<StorageRecord> {
       if (keys === undefined || keys === null) return { ...data };
       const names =
@@ -31,7 +38,12 @@ function createStorageArea(data: StorageRecord): chrome.storage.StorageArea {
       return result;
     },
     async set(items: StorageRecord): Promise<void> {
+      const changes: Record<string, chrome.storage.StorageChange> = {};
+      for (const [name, newValue] of Object.entries(items)) {
+        changes[name] = { oldValue: data[name], newValue };
+      }
       Object.assign(data, items);
+      for (const listener of listeners) listener(changes);
     },
     async remove(keys: string | string[]): Promise<void> {
       for (const name of typeof keys === 'string' ? [keys] : keys) delete data[name];

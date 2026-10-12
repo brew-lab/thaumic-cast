@@ -56,6 +56,26 @@ describe('parseSonosEvent', () => {
     expect(parseSonosEvent(event)).toEqual(event);
   });
 
+  it('should keep the own flag on a room’s own volume and mute', () => {
+    const volume: SonosEvent = {
+      type: 'groupVolume',
+      speakerIp: SPEAKER,
+      volume: 14,
+      own: true,
+      timestamp: NOW,
+    };
+    const mute: SonosEvent = {
+      type: 'groupMute',
+      speakerIp: SPEAKER,
+      muted: false,
+      own: true,
+      timestamp: NOW,
+    };
+
+    expect(parseSonosEvent(volume)).toEqual(volume);
+    expect(parseSonosEvent(mute)).toEqual(mute);
+  });
+
   it('should parse zoneGroupsUpdated with its nested groups', () => {
     const event: SonosEvent = {
       type: 'zoneGroupsUpdated',

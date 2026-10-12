@@ -1,7 +1,8 @@
 @layer components {
   /*
    * M-wizardstep. The disc beside the title and subtitle, then the body. The title is Geist
-   * 600 in the brand ink (light): --text-6 in the popup, --text-7 on the desktop.
+   * 600 in the brand ink (light): --text-6 in the popup, --text-7 on the desktop. In the
+   * popup the parts sit --space-4 apart (the Card's gap) and the body is --text-3.
    */
   .step {
     --wizard-title: var(--text-6);
@@ -10,10 +11,13 @@
     --wizard-subtitle: var(--text-3);
     --wizard-subtitle-leading: var(--leading-3);
     --wizard-title-ink: var(--title-ink);
+    --wizard-gap: var(--space-4);
+    --wizard-body: var(--text-3);
+    --wizard-body-leading: var(--leading-3);
 
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--wizard-gap);
     inline-size: 100%;
     max-inline-size: var(--page-max);
   }
@@ -24,11 +28,18 @@
     --wizard-title-tracking: var(--tracking-7);
     --wizard-subtitle: var(--text-4);
     --wizard-subtitle-leading: var(--leading-4);
+    --wizard-gap: var(--space-5);
+    --wizard-body: var(--text-4);
+    --wizard-body-leading: var(--leading-4);
   }
 
+  /*
+   * The disc starts with the title, not centred on the header: a title that wraps (the
+   * welcome's "Welcome to Thaumic Cast" in the popup's Card) keeps its first line by the disc.
+   */
   .header {
     display: flex;
-    align-items: center;
+    align-items: start;
     gap: var(--space-4);
   }
 
@@ -64,10 +75,28 @@
     text-wrap: pretty;
   }
 
+  /*
+   * The body: the popup's type (--text-3, as the rows and lines of the main popup) for its
+   * paragraphs, which take no margins of their own; the gap spaces them.
+   */
   .body {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
     min-inline-size: 0;
+    font-size: var(--wizard-body);
+    line-height: var(--wizard-body-leading);
+  }
+
+  .body > p {
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  /* The note: a quieter last line ("* Over your own network…"), as the subtitle is. */
+  .body > .note {
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
   }
 }

@@ -252,9 +252,6 @@ export const ExtensionSettingsSchema = z.object({
   // When enabled, Chrome sees the tab as "playing audio" and won't throttle it
   keepTabAudible: z.boolean().default(true),
 
-  // Sync speakers: groups multiple speakers for synchronized playback (default: false)
-  syncSpeakers: z.boolean().default(false),
-
   // Start no louder than: a cast turns a louder room down to this before it
   // plays, and never turns a room up (see StartVolume in the protocol).
   startCeilingEnabled: z.boolean().default(true),
@@ -287,7 +284,6 @@ const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   smoothingMigrationNotice: null,
   videoSyncEnabled: false,
   keepTabAudible: true,
-  syncSpeakers: false,
   startCeilingEnabled: true,
   startCeiling: START_CEILING_DEFAULT,
   captureMode: 'tab' as const,

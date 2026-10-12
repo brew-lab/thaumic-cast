@@ -1,22 +1,26 @@
 @layer components {
   /*
    * C-casttile. The head row (the same element compact and open), then the body. Open puts
-   * the head on the band, inset by --space-1 so its rim sits inside the card's edge. Compact
+   * the head on the band, which bleeds to the card's top and sides (the card's inner corner,
+   * no surface showing round it: MediaHeader `bleed`), adding the inset it gave up to its own
+   * padding, so nothing on it moves. Without a band (compact, or open on a cast with no artwork) the head
    * keeps the band's place, rim and padding included, with nothing drawn, so the head row's
-   * artwork and Stop sit at one spot in both forms and never move when the tile opens or
+   * artwork and Stop sit at one spot in every form and never move when the tile opens or
    * shuts. The body is inset alike in both forms; open spaces its parts --space-3 apart.
    */
   .tile {
+    --casttile-inset: var(--space-1);
+
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-1) var(--space-1) var(--space-3-5);
+    padding-block-end: var(--space-3-5);
   }
 
-  .tile:not([data-open]) > .head {
-    padding-block-start: calc(var(--line-bold) + var(--space-2-5));
-    padding-inline: calc(var(--line-bold) + var(--space-2-5))
-      calc(var(--line-bold) + var(--space-3-5));
+  .tile:not([data-band]) > .head {
+    padding-block-start: calc(var(--casttile-inset) + var(--line-bold) + var(--space-2-5));
+    padding-inline: calc(var(--casttile-inset) + var(--line-bold) + var(--space-2-5))
+      calc(var(--casttile-inset) + var(--line-bold) + var(--space-3-5));
   }
 
   .body {
@@ -24,7 +28,7 @@
     flex-direction: column;
     gap: var(--space-3);
     min-inline-size: 0;
-    padding-inline: var(--space-4);
+    padding-inline: calc(var(--casttile-inset) + var(--space-4));
   }
 
   .tile[data-open] {

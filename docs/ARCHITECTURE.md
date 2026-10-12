@@ -261,8 +261,39 @@ The topology arrives as Sonos groups. Bonded devices (a home theatre's satellite
 speaker of a stereo pair) are sent marked `invisible`, and `roomsOf()` in `packages/protocol`
 folds the groups into rooms, named by the primary's player UUID; core folds the same way
 (`services/start_volume.rs`), and `fixtures/rooms.json` holds the two to it. The extension casts to
-rooms: `lib/cast-plan.ts` turns the chosen rooms into one target per Sonos group (its
-coordinator). Until regrouping lands, a chosen room plays with its whole group.
+rooms, planned by `lib/cast-plan.ts` in the popup and the background alike.
+
+### Regrouping
+
+A companion whose `/health` says `regroup: true` plays exactly the chosen rooms as one Sonos group.
+`START_PLAYBACK` names them in `rooms` (primary UUIDs), with each room's own IP in `speakerIps` in
+the same order, and a `callId` that `PLAYBACK_RESULTS` and `PLAYBACK_ERROR` echo, so a late reply is
+never taken for a retry's. Results come back one per room, keyed by its own IP.
+
+- **The plan** (`services/regroup.rs`, pure): an exact Sonos group plays through its coordinator and
+  nothing moves; a running cast keeps its coordinator (an add or a resume); otherwise a group made
+  only of chosen rooms leads, then a chosen member, then the first chosen room. Satellites fold into
+  their room and are never named. Each moved room records its old group (`OldGroup`) on its
+  playback session, in memory only.
+- **The engine** (`StreamCoordinator::start_rooms`) holds one companion-wide regroup lock
+  (`SyncGroupManager`), reads the grouping fresh from a speaker rather than trusting the GENA cache,
+  and starts the coordinator first (standalone if it must leave its group, then its start level,
+  then play). Every other room goes standalone, gets its start level, then joins with
+  `x-rincon:`, so no coordinator that still has members is ever told to join. A room whose join
+  fails is put back at once; the others play on.
+- **The guarded restore** (Stop, Remove, a failed join; `plan_restore`) reads the grouping again and
+  puts a room back only if it is still in the cast's group, rejoining its old partners' current
+  coordinator with `rejoin_group` (`SetAVTransportURI` without Play, which the hardware plays on its
+  own). Two whole groups merged for a cast are rebuilt from a fixed anchor. Nothing is put back after
+  a source change or a takeover, and restores at shutdown get 3 s in all.
+- **The extension**: the plan names the chosen rooms that leave their groups (`leaving`) and the
+  unchosen rooms whose playing group's coordinator is chosen, whose music Sonos restarts from the
+  top (`restarting`); the CastBar says both before Cast. `ADD_ROOMS` sends the new rooms the same
+  way, and the master moves the cast's group by its volume.
+- **An older companion** (no `regroup`) gets the chosen rooms' coordinators, each playing the stream
+  on its own, so a chosen room plays with its whole group. Sending it a member's own IP would pull
+  the member out of its group with nothing to put it back. An older extension's `syncSpeakers`
+  request goes through the same engine, with the restore.
 
 The extension keeps its own record of the casts for the popup. `lib/room-sets.ts` holds Last cast
 and the saved sets in `chrome.storage.local` (never synced). `background/away-log.ts` keeps what
@@ -275,12 +306,12 @@ external emitter, which the desktop shell uses for its window.
 
 ## Settings ownership
 
-| Owner     | Settings                                                                                                                               | Where they live                                                                                                  | When they take effect             |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| Per cast  | Codec, bitrate, sample rate, channels, bit depth, smoothing (jitter buffer), frame size; speakers, sync, video sync, start level limit | Stored by the extension, resolved by `lib/audio-resolver.ts`, sent in `HANDSHAKE` and `START_PLAYBACK`           | The cast they are sent with       |
-| Companion | Speaker monitor, speaker head start, drift correction                                                                                  | `core::Config`, resolved by `companion_settings.rs`                                                              | Each speaker's next connection    |
-| Companion | Port, advertised address, topology refresh, artwork, data directory, strict stream access                                              | The server's config (`apps/server/src/config.rs`); the desktop app uses core's defaults                          | Start-up                          |
-| Client    | Companion address, theme, language, capture mode, keep tab audible, whether video sync controls show, dismissed notices                | `chrome.storage.local` in the extension (`lib/settings.ts`); the desktop window keeps its theme in local storage | Immediately, for that client only |
+| Owner     | Settings                                                                                                                      | Where they live                                                                                                  | When they take effect             |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Per cast  | Codec, bitrate, sample rate, channels, bit depth, smoothing (jitter buffer), frame size; rooms, video sync, start level limit | Stored by the extension, resolved by `lib/audio-resolver.ts`, sent in `HANDSHAKE` and `START_PLAYBACK`           | The cast they are sent with       |
+| Companion | Speaker monitor, speaker head start, drift correction                                                                         | `core::Config`, resolved by `companion_settings.rs`                                                              | Each speaker's next connection    |
+| Companion | Port, advertised address, topology refresh, artwork, data directory, strict stream access                                     | The server's config (`apps/server/src/config.rs`); the desktop app uses core's defaults                          | Start-up                          |
+| Client    | Companion address, theme, language, capture mode, keep tab audible, whether video sync controls show, dismissed notices       | `chrome.storage.local` in the extension (`lib/settings.ts`); the desktop window keeps its theme in local storage | Immediately, for that client only |
 
 The three speaker settings can each come from a flag (server only), an environment variable, a file
 or the default, in that order. `CompanionSettings::load` settles them once at start-up, records

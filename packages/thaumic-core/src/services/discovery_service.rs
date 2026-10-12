@@ -154,6 +154,14 @@ impl DiscoveryService {
         self.topology_monitor.start_renewal_task();
     }
 
+    /// Starts handing the GENA manager's own events (a lost subscription,
+    /// a state read in place of a lost event) to the event processor, as
+    /// [`Self::start_topology_monitor`] does, without the monitor's loop.
+    #[cfg(test)]
+    pub(crate) fn start_event_forwarder(&self) {
+        self.event_processor.start_event_forwarder();
+    }
+
     /// Starts the background topology monitor.
     ///
     /// This spawns tasks that:

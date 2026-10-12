@@ -180,6 +180,10 @@ pub fn create_router(state: AppState) -> Router {
 ///
 /// `browserCapture` says whether a `START_BROWSER_CAPTURE` from this caller
 /// would be accepted, so the extension can say so before a cast is tried.
+///
+/// `regroup` says that `START_PLAYBACK`'s `rooms` are played as one Sonos
+/// group, moved rooms are put back afterwards, and `callId` is echoed. An
+/// older companion leaves it out.
 async fn health_check(
     State(state): State<AppState>,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
@@ -217,6 +221,7 @@ fn health_body(app_type: AppType, max_streams: usize, browser_capture: bool) -> 
         "service": SERVICE_ID,
         "appType": app_type,
         "browserCapture": browser_capture,
+        "regroup": true,
         "limits": {
             "maxStreams": max_streams
         }
@@ -596,6 +601,7 @@ mod tests {
                     "service": SERVICE_ID,
                     "appType": "desktop",
                     "browserCapture": true,
+                    "regroup": true,
                     "limits": { "maxStreams": 10 }
                 })
             );
@@ -606,6 +612,7 @@ mod tests {
                     "service": SERVICE_ID,
                     "appType": "server",
                     "browserCapture": false,
+                    "regroup": true,
                     "limits": { "maxStreams": 4 }
                 })
             );

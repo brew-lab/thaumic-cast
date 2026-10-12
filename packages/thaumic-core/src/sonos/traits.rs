@@ -132,6 +132,14 @@ pub trait SonosPlayback: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of the speaker to unjoin
     async fn leave_group(&self, ip: &str) -> SoapResult<()>;
+
+    /// Puts a speaker back into a group, with no Play: it plays what the
+    /// group plays on its own, and a group the household paused stays paused.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the speaker to put back (it must stand alone)
+    /// * `coordinator_uuid` - UUID of the group's current coordinator
+    async fn rejoin_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()>;
 }
 
 /// Trait for Sonos topology operations.
@@ -145,6 +153,16 @@ pub trait SonosTopology: Send + Sync {
     /// # Arguments
     /// * `ip` - IP address of any Sonos speaker on the network
     async fn get_zone_group_state(&self, ip: &str) -> SoapResult<ZoneGroupSnapshot>;
+
+    /// Reads a speaker's transport state (`GetTransportInfo`), for a speaker
+    /// just subscribed to whose first event may be lost. `None` when it
+    /// cannot be read, or by a client that does not read it.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of the speaker
+    async fn read_transport_state(&self, _ip: &str) -> Option<TransportState> {
+        None
+    }
 }
 
 /// Trait for Sonos speaker discovery operations.

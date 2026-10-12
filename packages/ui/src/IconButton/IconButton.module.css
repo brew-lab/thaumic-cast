@@ -13,6 +13,7 @@
     --ib-bevel: var(--shape-bevel);
     --ib-hit: var(--hit-min);
     --ib-fill: color-mix(in oklch, var(--ib-fg) var(--layer), var(--ib-bg));
+    --ib-mark: var(--primary);
 
     position: relative;
     flex: none;
@@ -90,6 +91,7 @@
   /* Disabled: a 38 % glyph and, on tonal, a 12 % fill; the rest shape. */
   .icon-button:disabled {
     --ib-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+    --ib-mark: var(--ib-fg);
     --layer: initial;
 
     cursor: not-allowed;
@@ -99,10 +101,33 @@
     --ib-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
   }
 
+  /*
+   * The mark: a --size-dot-md dot at the block-start, inline-end corner, ringed in --surface
+   * so it reads on the tonal fill and on the page in both themes. It is drawn by the button's
+   * box, not its shape (no overflow clips it), so the octagon of focus and press passes under
+   * it; it stays inside the box, so nothing moves.
+   */
+  .mark {
+    position: absolute;
+    inset-block-start: var(--line-bold);
+    inset-inline-end: var(--line-bold);
+    inline-size: var(--size-dot-md);
+    block-size: var(--size-dot-md);
+    border-radius: var(--radius-full);
+    background: var(--ib-mark);
+    outline: var(--line-bold) solid var(--surface);
+    pointer-events: none;
+  }
+
   /* Forced colours drop the tonal fill, so the tonal kind draws its edge instead. */
   @media (forced-colors: active) {
     .tonal {
       border: var(--line-hair) solid ButtonText;
+    }
+
+    /* Kept in its own colours, as a StatusDot is, so the forced background never hides it. */
+    .mark {
+      forced-color-adjust: none;
     }
   }
 }

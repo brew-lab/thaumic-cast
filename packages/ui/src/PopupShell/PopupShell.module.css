@@ -1,7 +1,7 @@
 @layer components {
   /*
-   * L-popup. The one scroller: --popup-inline wide, at most --popup-block-max tall, a stable
-   * gutter, padding and gap --space-4. Its end padding is the bar's block size plus
+   * L-popup. The one scroller: --popup-inline wide, at most --popup-block-max tall, padding
+   * and gap --space-4. Its gutter, stable on both edges, is base.css's (`data-scroller`). Its end padding is the bar's block size plus
    * --space-3, so a focused control is never under the bar (2.4.11, technique C43).
    */
   .shell {
@@ -25,25 +25,26 @@
     padding-block-start: var(--popup-pad);
     padding-inline: var(--popup-pad);
     overflow-y: auto;
-    scrollbar-gutter: stable;
     scroll-padding-block-end: calc(var(--overlay-end, 0rem) + var(--space-3));
 
     /*
      * The bar's surface reaches the scrollbar gutter, which no child can paint: the shell's
-     * own background, fixed to its box, is --surface for the bar's height at the end.
+     * own background, fixed to its box, is --surface for the bar's height at the end. A bar
+     * holding only a Toast draws no surface, so neither does the shell.
      */
+    --popup-bar-bg: var(--surface);
+
     background-color: var(--ground);
     background-image: linear-gradient(
       to top,
-      var(--surface) var(--overlay-end, 0),
+      var(--popup-bar-bg) var(--overlay-end, 0),
       transparent var(--overlay-end, 0)
     );
     color: var(--on-surface);
   }
 
-  /* Under an end row the bar is not at the end, so the end is the page's ground. */
-  .shell:has(> .end) {
-    background-image: none;
+  .shell:has(> [data-sticky-bar][data-toast-only]) {
+    --popup-bar-bg: var(--ground);
   }
 
   /* The bar's hairline asks this scroller whether content runs under the bar. */
@@ -60,15 +61,20 @@
     min-inline-size: 0;
   }
 
-  /* Last, with no bar and no end row: the page's padding at the end, as on every other side. */
-  .content:last-child {
-    padding-block-end: var(--popup-pad);
+  /*
+   * fill (the compact Wizard): as tall as the popup can be on every step; the content takes
+   * what is left, so the bar sits at the end however short the step.
+   */
+  .fill {
+    block-size: var(--popup-block-max);
   }
 
-  /* The end row: "Update available", under the bar, only while an update exists. */
-  .end {
-    display: flex;
-    justify-content: center;
+  .fill > .content {
+    flex: 1 0 auto;
+  }
+
+  /* Last, with no bar: the page's padding at the end, as on every other side. */
+  .content:last-child {
     padding-block-end: var(--popup-pad);
   }
 }

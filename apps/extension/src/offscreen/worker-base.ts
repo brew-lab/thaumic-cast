@@ -623,6 +623,7 @@ function handleWsMessage(s: WorkerState, event: MessageEvent): void {
         s.log.info(`Playback results: ${successful}/${results.length} speakers started`);
         postToMain({
           type: 'PLAYBACK_RESULTS',
+          callId: message.payload.callId,
           results,
         });
         break;
@@ -633,6 +634,7 @@ function handleWsMessage(s: WorkerState, event: MessageEvent): void {
         postToMain({
           type: 'PLAYBACK_ERROR',
           message: message.payload.message,
+          callId: message.payload.callId,
         });
         break;
 
@@ -816,11 +818,27 @@ export function handleCommonMessage(
       return true;
 
     case 'START_PLAYBACK': {
-      const { speakerIps, metadata, syncSpeakers = false, videoSyncEnabled, startVolume } = msg;
+      const {
+        speakerIps,
+        rooms,
+        metadata,
+        syncSpeakers = false,
+        videoSyncEnabled,
+        startVolume,
+        callId,
+      } = msg;
       s.videoSync = videoSyncEnabled;
       const message: WsStartPlaybackMessage = {
         type: 'START_PLAYBACK',
-        payload: { speakerIps, metadata, syncSpeakers, videoSyncEnabled, startVolume },
+        payload: {
+          speakerIps,
+          rooms,
+          metadata,
+          syncSpeakers,
+          videoSyncEnabled,
+          startVolume,
+          callId,
+        },
       };
       sendWsMessage(s, message);
       return true;

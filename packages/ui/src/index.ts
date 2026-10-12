@@ -53,6 +53,7 @@ export * from './PopupHeader';
 export * from './PopupShell';
 export * from './RoomPicker';
 export * from './RoomRow';
+export * from './SetList';
 export * from './StartLevel';
 export * from './StickyActionBar';
 export * from './TabCard';

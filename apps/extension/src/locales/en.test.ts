@@ -133,6 +133,12 @@ describe('extension en.json', () => {
     expect(i18n.t('cast_plays_too', { count: 2, names: 'Patio and Deck' })).toBe(
       'Patio and Deck play too, as they are grouped with your rooms.',
     );
+    expect(i18n.t('cast_leaves_group', { count: 1, name: 'Kitchen' })).toBe(
+      'Kitchen leaves its Sonos group until you stop.',
+    );
+    expect(i18n.t('cast_leaves_group', { count: 2, names: 'Kitchen and Deck' })).toBe(
+      'Kitchen and Deck leave their Sonos groups until you stop.',
+    );
     expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 speaker answered.');
     expect(i18n.t('onboarding.speakers.found', { count: 2 })).toBe('2 speakers answered.');
     expect(i18n.t('ingest_gaps_message_desktop', { count: 1, suggested: 500 })).toContain(
@@ -145,5 +151,18 @@ describe('extension en.json', () => {
       'Step 2 of 4: Desktop',
     );
     expect(i18n.t('error_max_sessions', { max: 10 })).toStartWith('10 casts at once is the limit');
+    const partial = (missing: string[], rest: string[]): string =>
+      i18n.t('set_partial', {
+        count: rest.length,
+        missing: i18n.t('set_partial_missing', {
+          count: missing.length,
+          names: missing.join(' and '),
+        }),
+        rest: rest.join(' and '),
+      });
+    expect(partial(['Patio'], ['Kitchen'])).toBe('Patio is not answering; Kitchen goes alone.');
+    expect(partial(['Patio', 'Deck'], ['Kitchen', 'Study'])).toBe(
+      'Patio and Deck are not answering; Kitchen and Study go alone.',
+    );
   });
 });

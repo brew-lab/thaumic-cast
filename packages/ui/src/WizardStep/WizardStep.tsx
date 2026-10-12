@@ -16,8 +16,10 @@ export interface WizardStepProps {
   titleId?: string;
   /** The subtitle's id; the Wizard describes its dialog with it. An empty string gives none. */
   subtitleId?: string;
-  /** The step's body. */
+  /** The step's body: paragraphs (plain `<p>`, set in the step's type) and components. */
   children: ComponentChildren;
+  /** A quieter line after the body: "* Over your own network…". */
+  note?: string;
 }
 
 /**
@@ -31,6 +33,7 @@ export interface WizardStepProps {
  * @param props.titleId - The title's id
  * @param props.subtitleId - The subtitle's id
  * @param props.children - The body
+ * @param props.note - A quieter last line
  * @returns The step
  */
 export function WizardStep({
@@ -40,6 +43,7 @@ export function WizardStep({
   titleId = 'wizard-title',
   subtitleId = 'wizard-description',
   children,
+  note,
 }: WizardStepProps): JSX.Element {
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -65,7 +69,10 @@ export function WizardStep({
           )}
         </div>
       </div>
-      <div class={styles.body}>{children}</div>
+      <div class={styles.body}>
+        {children}
+        {note && <p class={styles.note}>{note}</p>}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 @layer components {
   /*
    * A-radio, drawn as the ChoiceGroup option: a label round one radio. The option takes the
-   * layer and the ring and never reshapes or scales; the radio stays round in every state.
+   * layer and the ring and, like every pressable control, the bevel on focus-visible and press
+   * (§11 call 88); nothing scales, and the radio stays round in every state.
    */
   .option {
     --radio-size: var(--size-box);
@@ -25,7 +26,10 @@
     box-shadow: var(--radio-shadow);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: --layer var(--dur-effects) var(--ease-effects);
+    transition:
+      background-color var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .box {
@@ -116,8 +120,22 @@
     outline: var(--line-bold) solid transparent;
   }
 
-  .option:is(:active, [data-force='press']) {
+  .option:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
+  }
+
+  /* The bevel on focus-visible and press (held, utils/press.ts). */
+  @supports (corner-shape: bevel) {
+    .option:not(:has(.input:disabled)):is(
+        :has(.input:focus-visible),
+        :active,
+        [data-pressing],
+        [data-force='focus'],
+        [data-force='press']
+      ) {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
+    }
   }
 
   /* Disabled, from the native state (a disabled fieldset too): the ring stays at 38 %. */

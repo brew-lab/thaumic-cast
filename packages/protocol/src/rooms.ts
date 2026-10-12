@@ -9,8 +9,9 @@
  * background both derive rooms here, so they always agree.
  *
  * A room is named by its primary's player UUID (`RINCON_…`), which survives
- * an IP change. The group fields say how the room is grouped right now, which
- * a cast to that room has to take into account until regrouping lands.
+ * an IP change. The group fields say how the room is grouped right now: a
+ * companion that regroups pulls a chosen room out of its group for the cast,
+ * and an older one casts to the room's whole group.
  */
 
 import type { SonosStateSnapshot, SpeakerAvailability, ZoneGroup } from './sonos.js';
@@ -31,7 +32,7 @@ export interface Room {
   groupId: string;
   /** That group's coordinator UUID. */
   coordinatorId: string;
-  /** That group's coordinator IP: what a cast to the room is sent to today. */
+  /** That group's coordinator IP: what a cast to the room goes to with an older companion. */
   coordinatorIp: string;
   /** Whether this room is its group's coordinator. */
   isCoordinator: boolean;
@@ -102,22 +103,27 @@ export function roomsOf(groups: readonly ZoneGroup[]): Room[] {
 }
 
 /**
- * Reads a room's level before Cast.
+ * Reads a room's level.
  *
- * A room alone in its Sonos group reads the group's live level, which is the
- * room's own. A room inside a bigger group is read by its own IP only when the
- * companion has a level for that IP that is not a group's (a member that is not
- * the coordinator, followed for a synced cast); otherwise it is not known until
- * Cast, when the companion reads it ("…", then the limit if it still cannot be
- * read).
+ * Before Cast, a room alone in its Sonos group reads the group's live level,
+ * which is the room's own. A room inside a bigger group is read by its own IP
+ * only when the companion has a level for that IP that is not a group's (a
+ * member that is not the coordinator, followed for a cast played as one
+ * group); otherwise it is not known until Cast, when the companion reads it
+ * ("…", then the limit if it still cannot be read).
+ *
+ * A room of a running cast played as one Sonos group is always read by its
+ * own IP (`own`): the companion follows each such room's own level, the
+ * coordinator's included, so the group's level is never taken for it.
  * @param room - The room
  * @param state - The Sonos state
+ * @param own - The room plays in a cast played as one Sonos group
  * @returns What the room's level reads
  */
-export function roomLevel(room: Room, state: SonosStateSnapshot): RoomLevel {
+export function roomLevel(room: Room, state: SonosStateSnapshot, own = false): RoomLevel {
   const alone = room.groupedWith.length === 0;
-  if (!alone && room.isCoordinator) return {};
-  const ip = alone ? room.coordinatorIp : room.ip;
+  if (!own && !alone && room.isCoordinator) return {};
+  const ip = own || !alone ? room.ip : room.coordinatorIp;
   const level: RoomLevel = {};
   if (state.groupVolumes[ip] !== undefined) level.now = state.groupVolumes[ip];
   if (state.groupVolumeFixed[ip] !== undefined) level.fixed = state.groupVolumeFixed[ip];
@@ -126,8 +132,8 @@ export function roomLevel(room: Room, state: SonosStateSnapshot): RoomLevel {
 }
 
 /**
- * Whether a room is free, in use, or being cast to. A cast reaches a room
- * through its group's coordinator, so that is what is asked.
+ * Whether a room is free, in use, or being cast to. A room plays what its
+ * group's coordinator plays, so that is what is asked.
  * @param room - The room
  * @param state - The Sonos state
  * @param castingIps - The speaker IPs this client is casting to
@@ -142,8 +148,7 @@ export function roomAvailability(
 }
 
 /**
- * Finds the room whose primary has a speaker IP. A cast target is a group's
- * coordinator, so this names the target's own room.
+ * Finds the room whose primary has a speaker IP: a cast target's own room.
  * @param rooms - The rooms
  * @param ip - A speaker IP
  * @returns The room, or undefined

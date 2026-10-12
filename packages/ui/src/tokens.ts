@@ -261,6 +261,9 @@ export const TOOLTIP_DELAY_MS = 500;
 export const ANNOUNCE_GAP_MS = 150;
 
 /** DESIGN.md T-motion: a timing used from script, in ms. */
+export const ANNOUNCE_HOLD_MS = 7000;
+
+/** DESIGN.md T-motion: a timing used from script, in ms. */
 export const BUSY_MIN_MS = 600;
 
 /** DESIGN.md T-motion: a timing used from script, in ms. */

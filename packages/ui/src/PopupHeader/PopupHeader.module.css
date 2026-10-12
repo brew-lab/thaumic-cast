@@ -1,7 +1,9 @@
 @layer components {
   /*
    * C-popupheader. The BrandBlock over the status line, and Settings at the end. It scrolls
-   * away with the page.
+   * away with the page. It takes the content's inline edges, as the section headings and the
+   * cards below it do: the mark starts where "Casting now" starts, and Settings ends where the
+   * cards end, so the header and main are one column.
    */
   .header {
     --popupheader-status: var(--on-surface-variant);
@@ -12,7 +14,6 @@
     gap: var(--space-4);
     min-block-size: calc(var(--size-art-lg) + var(--space-3));
     padding-block: var(--space-2-5);
-    padding-inline: var(--space-3-5);
   }
 
   .identity {

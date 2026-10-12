@@ -28,6 +28,7 @@ use crate::context::NetworkContext;
 use crate::events::{BroadcastEvent, SonosEvent, StreamEvent};
 use crate::protocol_constants::SOAP_TIMEOUT_SECS;
 use crate::services::start_volume::StartVolumeRequest;
+use crate::services::stream_coordinator::{RoomsRequest, StartLevels};
 use crate::services::{PlaybackResult, PlaybackSession, StreamCoordinator};
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::state::Config;
@@ -165,9 +166,17 @@ impl EventLog {
 /// Builder for a [`TestSystem`].
 pub(crate) struct TestSystemBuilder {
     speakers: Vec<String>,
+    /// Sonos groups to start in, each coordinator first.
+    groups: Vec<Vec<String>>,
+    /// Home theatres: a primary and the satellites bonded to it.
+    home_theatres: Vec<(String, Vec<String>)>,
     codec: AudioCodec,
     gena_timeout_secs: Option<u64>,
     soap_timeout: Duration,
+    /// Port the real router listens on; 0 picks a free one.
+    port: u16,
+    /// What the companion says it is.
+    app_info: AppInfo,
 }
 
 impl TestSystemBuilder {
@@ -181,6 +190,26 @@ impl TestSystemBuilder {
         self
     }
 
+    /// Sonos groups the household starts in, each named coordinator first,
+    /// as the user grouped them in the Sonos app before any cast.
+    pub fn groups(mut self, groups: &[&[&str]]) -> Self {
+        self.groups = groups
+            .iter()
+            .map(|group| group.iter().map(|name| (*name).to_string()).collect())
+            .collect();
+        self
+    }
+
+    /// Bonds `satellites` (speakers named in [`Self::speakers`]) to
+    /// `primary` as a home theatre: one room, its satellites invisible.
+    pub fn home_theatre(mut self, primary: &str, satellites: &[&str]) -> Self {
+        self.home_theatres.push((
+            primary.to_string(),
+            satellites.iter().map(|name| (*name).to_string()).collect(),
+        ));
+        self
+    }
+
     /// Codec streams are created with. AAC by default: it needs no prefill
     /// delay, so a fetch answers immediately.
     pub fn codec(mut self, codec: AudioCodec) -> Self {
@@ -191,6 +220,19 @@ impl TestSystemBuilder {
     /// Subscription lifetime the fake speakers grant, in seconds.
     pub fn gena_timeout_secs(mut self, secs: u64) -> Self {
         self.gena_timeout_secs = Some(secs);
+        self
+    }
+
+    /// Port the real router listens on, for a companion a browser connects
+    /// to on a known port. A free one by default.
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    /// What the companion reports as its version and kind.
+    pub fn app_info(mut self, app_info: AppInfo) -> Self {
+        self.app_info = app_info;
         self
     }
 
@@ -210,6 +252,17 @@ impl TestSystemBuilder {
         if let Some(secs) = self.gena_timeout_secs {
             fake.set_gena_timeout_secs(secs);
         }
+        for (primary, satellites) in &self.home_theatres {
+            for satellite in satellites {
+                fake.bond_satellite(primary, satellite);
+            }
+        }
+        for group in &self.groups {
+            if let Some((coordinator, members)) = group.split_first() {
+                let members: Vec<&str> = members.iter().map(String::as_str).collect();
+                fake.group(coordinator, &members);
+            }
+        }
 
         let config = Config::default();
         let network = NetworkContext::explicit(0, IpAddr::V4(Ipv4Addr::LOCALHOST));
@@ -226,7 +279,7 @@ impl TestSystemBuilder {
         // and deliver NOTIFYs to it. Bound on every address so a test that
         // moves the advertised address to another loopback address keeps
         // working.
-        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, self.port))
             .await
             .expect("bind the test server");
         let port = listener.local_addr().expect("server address").port();
@@ -236,9 +289,9 @@ impl TestSystemBuilder {
             &services,
             Arc::new(RwLock::new(config)),
             ArtworkConfig::default(),
-            AppInfo::new("0.0.0-test", AppType::Server),
+            self.app_info,
         );
-        let router = create_router(app_state);
+        let router = create_router(app_state.clone());
         let server = tokio::spawn(async move {
             axum::serve(
                 listener,
@@ -249,6 +302,9 @@ impl TestSystemBuilder {
         });
 
         let (events, collector) = EventLog::start(services.broadcast_tx.subscribe());
+        // What the GENA manager reports itself reaches the event processor,
+        // as with the monitor running.
+        services.discovery_service.start_event_forwarder();
 
         // Seed the topology the way the monitor would, through the real
         // SOAP call and parser, against the first speaker.
@@ -262,6 +318,7 @@ impl TestSystemBuilder {
 
         let system = TestSystem {
             fake,
+            app_state,
             services,
             events,
             codec: self.codec,
@@ -278,6 +335,8 @@ pub(crate) struct TestSystem {
     pub fake: Arc<FakeSonosSystem>,
     /// The production services, wired by the real bootstrap.
     pub services: BootstrappedServices,
+    /// The state the real router serves, for driving API handlers directly.
+    pub app_state: AppState,
     /// Every broadcast event emitted since the system was built.
     pub events: Arc<EventLog>,
     codec: AudioCodec,
@@ -288,9 +347,13 @@ impl TestSystem {
     pub fn builder() -> TestSystemBuilder {
         TestSystemBuilder {
             speakers: vec!["Kitchen".to_string()],
+            groups: Vec::new(),
+            home_theatres: Vec::new(),
             codec: AudioCodec::Aac,
             gena_timeout_secs: None,
             soap_timeout: Duration::from_secs(SOAP_TIMEOUT_SECS),
+            port: 0,
+            app_info: AppInfo::new("0.0.0-test", AppType::Server),
         }
     }
 
@@ -355,6 +418,48 @@ impl TestSystem {
         self.coordinator()
             .start_playback_multi(&ips, stream_id, None, &self.artwork_url(), sync)
             .await
+    }
+
+    /// Casts `stream_id` to the named rooms as one Sonos group, the way
+    /// `START_PLAYBACK` does when it carries `rooms`, with each room's start
+    /// level set from `start_volume` if one is given.
+    pub async fn start_rooms(
+        &self,
+        stream_id: &str,
+        names: &[&str],
+        start_volume: Option<&StartVolumeRequest>,
+    ) -> Vec<PlaybackResult> {
+        let rooms: Vec<String> = names.iter().map(|name| self.uuid(name)).collect();
+        let ips: Vec<String> = names.iter().map(|name| self.ip(name)).collect();
+        let start_levels = start_volume.map(|request| StartLevels {
+            volume: self.services.sonos.as_ref(),
+            request,
+        });
+        self.coordinator()
+            .start_rooms(
+                RoomsRequest {
+                    stream_id,
+                    rooms: &rooms,
+                    room_ips: &ips,
+                    metadata: None,
+                    artwork_url: &self.artwork_url(),
+                },
+                start_levels,
+            )
+            .await
+    }
+
+    /// The results of a cast in room names: `(name, success)` per result.
+    pub fn outcome(&self, results: &[PlaybackResult]) -> Vec<(String, bool)> {
+        results
+            .iter()
+            .map(|result| {
+                (
+                    self.fake.speaker_at(&result.speaker_ip).name.clone(),
+                    result.success,
+                )
+            })
+            .collect()
     }
 
     /// Every playback session the coordinator holds.

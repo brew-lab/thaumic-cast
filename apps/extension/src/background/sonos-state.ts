@@ -29,6 +29,26 @@ const log = createLogger('SonosState');
 /** Current Sonos state */
 let state: SonosStateSnapshot = createEmptySonosState();
 
+/**
+ * The speakers whose volume, and whose mute, entry is the room's own (the companion marked it
+ * `own`: followed for a room in a cast played as one Sonos group), not a group's. Such an entry
+ * stays when the speaker stops leading a group: a room that joins a cast has its own level read
+ * as it joins, often before the topology shows it no longer leading its old group.
+ */
+const ownVolumes = new Set<string>();
+const ownMutes = new Set<string>();
+
+/**
+ * Records whether a speaker's entry is its own level or a group's.
+ * @param owned - The speakers with an entry of their own
+ * @param speakerIp - The speaker
+ * @param own - Whether the new entry is the speaker's own
+ */
+function markOwn(owned: Set<string>, speakerIp: string, own: boolean): void {
+  if (own) owned.add(speakerIp);
+  else owned.delete(speakerIp);
+}
+
 /** Debounced storage for persistence, registered with manager */
 const storage = persistenceManager.register<SonosStateSnapshot>(
   {
@@ -69,28 +89,33 @@ export function getSpeakerGroups(): SpeakerGroupCollection {
  */
 export function setSonosState(newState: SonosStateSnapshot): void {
   state = newState;
+  // A snapshot does not say whose entries are their own; the next readings will.
+  ownVolumes.clear();
+  ownMutes.clear();
   storage.schedule();
 }
 
 /**
  * Drops the level entries of every speaker that led a Sonos group and no longer does: such an
  * entry was its group's volume, and kept, a room that joined another group would read its old
- * group's level as its own ("at 80 now"). A member's own entry (written for a synced cast) is
- * kept, as the companion keeps it.
+ * group's level as its own ("at 80 now"). An entry that is the room's own (`own`: a room that
+ * joined a cast, read as it joined) is kept, as the companion keeps it.
  * @param levels - Levels, mutes or fixed flags by speaker IP
  * @param before - The groups until now
  * @param after - The new groups
+ * @param own - The speakers whose entry is their own level, kept
  * @returns The entries without the stale group levels
  */
 export function dropStaleGroupLevels<T>(
   levels: Record<string, T>,
   before: readonly ZoneGroup[],
   after: readonly ZoneGroup[],
+  own: ReadonlySet<string> = new Set(),
 ): Record<string, T> {
   const leading = new Set(after.map((group) => group.coordinatorIp));
   const stale = before
     .map((group) => group.coordinatorIp)
-    .filter((ip) => !leading.has(ip) && ip in levels);
+    .filter((ip) => !leading.has(ip) && !own.has(ip) && ip in levels);
   if (stale.length === 0) return levels;
   const kept = { ...levels };
   for (const ip of stale) delete kept[ip];
@@ -107,8 +132,8 @@ export function updateGroups(groups: ZoneGroup[]): SonosStateSnapshot {
   state = {
     ...state,
     groups,
-    groupVolumes: dropStaleGroupLevels(state.groupVolumes, before, groups),
-    groupMutes: dropStaleGroupLevels(state.groupMutes, before, groups),
+    groupVolumes: dropStaleGroupLevels(state.groupVolumes, before, groups, ownVolumes),
+    groupMutes: dropStaleGroupLevels(state.groupMutes, before, groups, ownMutes),
     groupVolumeFixed: dropStaleGroupLevels(state.groupVolumeFixed, before, groups),
   };
   storage.schedule();
@@ -119,9 +144,11 @@ export function updateGroups(groups: ZoneGroup[]): SonosStateSnapshot {
  * Updates volume for a specific speaker.
  * @param speakerIp - The speaker IP address
  * @param volume - The new volume (0-100)
+ * @param own - The level is the room's own, not its group's (kept when it stops leading a group)
  * @returns The updated state
  */
-export function updateVolume(speakerIp: string, volume: number): SonosStateSnapshot {
+export function updateVolume(speakerIp: string, volume: number, own = false): SonosStateSnapshot {
+  markOwn(ownVolumes, speakerIp, own);
   state = {
     ...state,
     groupVolumes: { ...state.groupVolumes, [speakerIp]: volume },
@@ -134,9 +161,11 @@ export function updateVolume(speakerIp: string, volume: number): SonosStateSnaps
  * Updates mute state for a specific speaker.
  * @param speakerIp - The speaker IP address
  * @param muted - The new mute state
+ * @param own - The mute is the room's own, not its group's (kept when it stops leading a group)
  * @returns The updated state
  */
-export function updateMute(speakerIp: string, muted: boolean): SonosStateSnapshot {
+export function updateMute(speakerIp: string, muted: boolean, own = false): SonosStateSnapshot {
+  markOwn(ownMutes, speakerIp, own);
   state = {
     ...state,
     groupMutes: { ...state.groupMutes, [speakerIp]: muted },

@@ -3,7 +3,7 @@
  * the main config. `bun run lint:ds` runs them as a report; Phase 5 moves them into
  * stylelint.config.js as errors, once the apps are rebuilt from the design system.
  */
-import base from './stylelint.config.js';
+import base, { SCROLLBAR_PROPERTIES } from './stylelint.config.js';
 
 /** Row 1: the value properties may hold only tokens, calc() over tokens and safe literals. */
 const VALUES_FROM_TOKENS = {
@@ -38,7 +38,8 @@ const APP_ONLY = {
   'at-rule-disallowed-list': ['keyframes', 'container', 'media'],
   'declaration-no-important': true,
   // Longhands only, so every time and ease is a token.
-  'property-disallowed-list': ['transition', 'animation'],
+  // The scrollbar is styled once, in base.css (F-shift), as the main config says.
+  'property-disallowed-list': ['transition', 'animation', ...SCROLLBAR_PROPERTIES],
 };
 
 /**

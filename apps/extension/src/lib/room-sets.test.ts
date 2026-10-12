@@ -13,6 +13,9 @@ import {
   migrateSelection,
   parseRoomSets,
   recordLastCast,
+  removeRoomSet,
+  renameRoomSet,
+  restoreRoomSet,
   saveRoomSet,
   setRooms,
   type RoomSets,
@@ -127,9 +130,88 @@ describe('recordLastCast and saveRoomSet', () => {
     expect(chromeStorageData.local[ROOM_SETS_KEY]).toBeUndefined();
   });
 
+  it('should show a new set once though its storage change arrives before the save resolves', async () => {
+    // The popup shows the sets a storage change carries (another popup, the
+    // background) and then what the save resolves with. Chrome may fire the
+    // change first; the save must not add the set to what is shown again.
+    let shown: RoomSets = EMPTY_ROOM_SETS;
+    const listener = (changes: Record<string, chrome.storage.StorageChange>): void => {
+      const parsed = parseRoomSets(changes[ROOM_SETS_KEY]?.newValue);
+      if (parsed) shown = parsed;
+    };
+    chrome.storage.local.onChanged.addListener(listener);
+    try {
+      const result = await saveRoomSet('guff', [ref(KITCHEN), ref(PATIO)]);
+      if ('error' in result) throw new Error(result.error);
+      expect(shown.saved.map((s) => s.name)).toEqual(['guff']);
+      shown = result.sets;
+    } finally {
+      chrome.storage.local.onChanged.removeListener(listener);
+    }
+
+    expect(shown.saved.map((s) => s.name)).toEqual(['guff']);
+  });
+
   it('should not record an empty cast', async () => {
     await recordLastCast([]);
     expect(chromeStorageData.local[ROOM_SETS_KEY]).toBeUndefined();
+  });
+});
+
+describe('renameRoomSet, removeRoomSet and restoreRoomSet', () => {
+  /**
+   * Saves sets named in order.
+   * @param names - Their names
+   * @returns Their ids
+   */
+  async function saveAll(...names: string[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const name of names) {
+      const result = await saveRoomSet(name, [ref(KITCHEN)]);
+      if ('error' in result) throw new Error(result.error);
+      ids.push(result.set.id);
+    }
+    return ids;
+  }
+  const names = () =>
+    parseRoomSets(chromeStorageData.local[ROOM_SETS_KEY])?.saved.map((s) => s.name);
+
+  it('should rename a set, trimmed, and keep its place', async () => {
+    const [, middle] = await saveAll('Up', 'Down', 'Out');
+    const result = await renameRoomSet(middle, ' Downstairs ');
+    expect('sets' in result && result.sets.saved.map((s) => s.name)).toEqual([
+      'Up',
+      'Downstairs',
+      'Out',
+    ]);
+    expect(names()).toEqual(['Up', 'Downstairs', 'Out']);
+  });
+
+  it('should refuse an empty name and leave the set as it was', async () => {
+    const [id] = await saveAll('Up');
+    expect(await renameRoomSet(id, '  ')).toEqual({ error: 'set_name_required' });
+    expect(names()).toEqual(['Up']);
+  });
+
+  it('should remove a set at once and put it back at its place on Undo', async () => {
+    const [, middle] = await saveAll('Up', 'Down', 'Out');
+    await recordLastCast([ref(STUDY)]);
+    const { removed, sets } = await removeRoomSet(middle);
+    expect(removed?.index).toBe(1);
+    expect(sets.saved.map((s) => s.name)).toEqual(['Up', 'Out']);
+    expect(sets.lastCast).toEqual([ref(STUDY)]);
+    if (!removed) throw new Error('nothing removed');
+    expect((await restoreRoomSet(removed)).saved.map((s) => s.name)).toEqual(['Up', 'Down', 'Out']);
+    // A second Undo changes nothing.
+    await restoreRoomSet(removed);
+    expect(names()).toEqual(['Up', 'Down', 'Out']);
+  });
+
+  it('should remove nothing for a set already gone', async () => {
+    await saveAll('Up');
+    const { removed, sets } = await removeRoomSet('gone');
+    expect(removed).toBeNull();
+    expect(sets.saved.map((s) => s.name)).toEqual(['Up']);
   });
 });
 
@@ -163,6 +245,30 @@ describe('choiceOnOpen', () => {
       sessions: [{ streamId: 'x', speakerIp: KITCHEN.ip, streamUrl: '', redacted: true }],
     };
     expect(choiceOnOpen(EMPTY_ROOM_SETS, ROOMS, busy, [])).toEqual([PATIO.id]);
+  });
+
+  it('should leave out Last cast’s rooms that another tab of this browser casts to', () => {
+    const sets = { ...EMPTY_ROOM_SETS, lastCast: [ref(KITCHEN), ref(PATIO)] };
+    expect(choiceOnOpen(sets, ROOMS, idle, [KITCHEN.ip])).toEqual([PATIO.id]);
+  });
+
+  it('should choose no room another cast holds, even when Last cast is all held', () => {
+    const sets = { ...EMPTY_ROOM_SETS, lastCast: [ref(KITCHEN), ref(PATIO)] };
+    expect(choiceOnOpen(sets, ROOMS, idle, [KITCHEN.ip, PATIO.ip])).toEqual([STUDY.id]);
+    expect(
+      choiceOnOpen(
+        sets,
+        ROOMS,
+        idle,
+        ROOMS.map((r) => r.ip),
+      ),
+    ).toEqual([]);
+  });
+
+  it('should first choose a room alone in its group and playing nothing', () => {
+    const grouped = { ...KITCHEN, groupedWith: ['Patio'] };
+    const playing: SonosStateSnapshot = { ...idle, transportStates: { [PATIO.ip]: 'Playing' } };
+    expect(choiceOnOpen(EMPTY_ROOM_SETS, [grouped, PATIO, STUDY], playing, [])).toEqual([STUDY.id]);
   });
 
   it('should choose nothing with no rooms', () => {

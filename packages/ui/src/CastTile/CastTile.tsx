@@ -15,7 +15,7 @@ export interface CastTileProps {
    * What the cast plays: the subtitle is the rooms joined by " + ". Its band, transport and
    * Go to tab show only while the tile is open.
    */
-  media: Omit<MediaHeaderProps, 'size' | 'level' | 'titleId' | 'disclosure' | 'trailing'>;
+  media: Omit<MediaHeaderProps, 'size' | 'level' | 'titleId' | 'disclosure' | 'trailing' | 'bleed'>;
   /** Open in place: the band, GroupVolume, the slot, the notes and VideoSync. */
   open: boolean;
   /**
@@ -92,7 +92,12 @@ export function CastTile({
   }, [open]);
   return (
     <Card flush id={id} labelledBy={titleId}>
-      <div ref={tileRef} class={styles.tile} data-open={open ? '' : undefined}>
+      <div
+        ref={tileRef}
+        class={styles.tile}
+        data-open={open ? '' : undefined}
+        data-band={open && media.band ? '' : undefined}
+      >
         <div class={styles.head}>
           <MediaHeader
             {...media}
@@ -106,6 +111,7 @@ export function CastTile({
               }
             }
             band={open ? media.band : undefined}
+            bleed
             transport={open ? media.transport : undefined}
             onGoToTab={open ? media.onGoToTab : undefined}
             trailing={

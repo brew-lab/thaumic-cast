@@ -49,6 +49,50 @@ test('the popup is 22rem wide and at most 37.5rem tall', async ({ page }) => {
   expect(box?.height).toBeLessThanOrEqual(600.5);
 });
 
+test('the long popup keeps its content centred: the gutter is reserved on both edges', async ({
+  page,
+}) => {
+  // F-shift: classic scrollbars (Windows, and this runner) reserve a gutter; reserved on one
+  // edge only, the header and the cards sat off centre by its width.
+  const { start, end, gutter, width } = await frame(page, 'long').evaluate((root) => {
+    const shell = root.querySelector<HTMLElement>('[data-scroller]')!;
+    const outer = shell.getBoundingClientRect();
+    const main = shell.querySelector('main')!.getBoundingClientRect();
+    const style = getComputedStyle(shell);
+    return {
+      start: main.left - outer.left,
+      end: outer.right - main.right,
+      gutter: style.scrollbarGutter,
+      width: style.scrollbarWidth,
+    };
+  });
+  expect(gutter).toBe('stable both-edges');
+  expect(width).toBe('thin');
+  expect(Math.abs(start - end)).toBeLessThan(0.5);
+});
+
+test('the header and main are one column: the mark and Settings take the content edges', async ({
+  page,
+}) => {
+  const edges = await frame(page, 'long').evaluate((root) => {
+    const shell = root.querySelector<HTMLElement>('[data-scroller]')!;
+    const rect = (el: Element | null): DOMRect => el!.getBoundingClientRect();
+    const header = shell.querySelector('header')!;
+    const main = rect(shell.querySelector('main'));
+    return {
+      header: [rect(header).left, rect(header).right],
+      main: [main.left, main.right],
+      mark: rect(header.querySelector('svg')).left,
+      settings: rect(header.querySelector('button')).right,
+      heading: rect(shell.querySelector('main h2')).left,
+    };
+  });
+  expect(edges.header[0]).toBeCloseTo(edges.main[0], 1);
+  expect(edges.header[1]).toBeCloseTo(edges.main[1], 1);
+  expect(edges.mark).toBeCloseTo(edges.heading, 0);
+  expect(edges.settings).toBeCloseTo(edges.main[1], 0);
+});
+
 test('the bar follows a Toast arriving and leaving', async ({ page }) => {
   const shell = frame(page, 'long').locator('[data-scroller]');
   const overlay = (): Promise<number> =>
@@ -175,4 +219,26 @@ test('md in the popup is only the owned sizes: Cast, Add, the sets and the list 
   ];
   expect([...md].filter((n) => !allowed.some((re) => re.test(n)))).toEqual([]);
   expect([...md].some((n) => /^Cast to/.test(n))).toBe(true);
+});
+
+test('an update marks Settings, renames it and moves nothing in the header', async ({ page }) => {
+  const section = page.locator('#popup-header [data-scheme="light"]');
+  const headers = section.locator('header');
+  const plain = headers.nth(0);
+  const marked = section
+    .getByRole('button', { name: 'Settings, update available', exact: true })
+    .locator('xpath=ancestor::header');
+  await expect(marked).toHaveCount(1);
+  const [a, b] = [(await plain.boundingBox())!, (await marked.boundingBox())!];
+  expect(b.height).toBeCloseTo(a.height, 1);
+  const button = marked.getByRole('button', { name: 'Settings, update available' });
+  const plainButton = plain.getByRole('button', { name: 'Settings', exact: true });
+  const [p, m] = [(await plainButton.boundingBox())!, (await button.boundingBox())!];
+  expect(m.width).toBeCloseTo(p.width, 1);
+  expect(m.x).toBeCloseTo(p.x, 1);
+  // The words are in the name and in the Tooltip, not in colour alone.
+  await button.hover();
+  await expect(
+    marked.locator('[role="tooltip"]', { hasText: 'Settings, update available' }),
+  ).toBeVisible({ timeout: 5000 });
 });

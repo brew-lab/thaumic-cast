@@ -131,7 +131,10 @@ export const ActiveCastSchema = z.object({
   encoderConfig: EncoderConfigSchema,
   /** Timestamp when cast started */
   startedAt: z.number(),
-  /** Whether synchronized multi-speaker playback is active */
+  /**
+   * Whether the cast plays as one Sonos group: its rooms were regrouped for it by a companion
+   * that regroups (or joined by an older extension's "Play speakers as one group").
+   */
   syncSpeakers: z.boolean().default(false),
   /**
    * Whether the cast was started with video sync on. The companion decides at

@@ -330,3 +330,172 @@ async fn volume_and_topology_notifies_reach_state_and_clients() {
     })
     .await;
 }
+
+/// Proves: a room removed from a cast, whose first AVTransport event after it
+/// leads again is lost to the subscribe race, does not keep the PLAYING it
+/// reported while it followed the cast: the companion reads its transport
+/// once subscribed, records STOPPED and tells clients, so it never reads as
+/// in use with nothing playing on it.
+#[tokio::test]
+async fn a_room_leading_again_shows_its_transport_with_its_first_event_lost() {
+    within("stale transport after remove", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Patio"])
+            .build()
+            .await;
+        let (kitchen, patio) = (sys.ip("Kitchen"), sys.ip("Patio"));
+        let stream = sys.new_stream();
+        let results = sys.start_rooms(&stream, &["Kitchen", "Patio"], None).await;
+        assert!(results.iter().all(|r| r.success), "{results:?}");
+        assert_eq!(results[0].speaker_ip, kitchen);
+
+        // Joined, Patio reports the group's PLAYING before it stops leading
+        // and its AVTransport subscription goes.
+        let joined = format!("x-rincon:{}", sys.uuid("Kitchen"));
+        assert_eq!(
+            sys.fake
+                .notify_av_transport(&patio, TransportState::Playing, &joined)
+                .await,
+            200
+        );
+        sys.events
+            .wait_for_sonos(|event| {
+                matches!(event, SonosEvent::TransportState { speaker_ip, state, .. }
+                    if *speaker_ip == patio && *state == TransportState::Playing)
+            })
+            .await;
+        sys.refresh_topology().await;
+        assert!(sys
+            .fake
+            .subscription(&patio, SonosService::AVTransport)
+            .is_none());
+
+        // Removed, Patio stands alone and stopped. Its new subscription's
+        // first event never comes (the fake sends none unless told).
+        let stopped = sys
+            .coordinator()
+            .stop_playback_speaker(&stream, &patio, None)
+            .await;
+        assert_eq!(stopped, std::slice::from_ref(&patio));
+        assert_eq!(
+            sys.fake.speaker_named("Patio").transport_state(),
+            TransportState::Stopped
+        );
+        let from = sys.events.all().len();
+        sys.refresh_topology().await;
+        assert!(sys
+            .fake
+            .subscription(&patio, SonosService::AVTransport)
+            .is_some());
+
+        sys.events
+            .wait_for_sonos(|event| {
+                matches!(event, SonosEvent::TransportState { speaker_ip, state, .. }
+                    if *speaker_ip == patio && *state == TransportState::Stopped)
+            })
+            .await;
+        assert!(sys.events.all().len() > from);
+        assert_eq!(
+            sys.services
+                .sonos_state
+                .shown_transport_states()
+                .get(&patio),
+            Some(&TransportState::Stopped)
+        );
+    })
+    .await;
+}
+
+/// Proves: a room that has only ever followed another, and so has no transport
+/// state recorded, shows the music it inherits when the room it followed joins
+/// a cast and its first AVTransport event is lost: the companion reads it once
+/// subscribed and reports PLAYING, so the picker marks it in use.
+#[tokio::test]
+async fn a_room_inheriting_music_shows_it_with_its_first_event_lost() {
+    within("inherited music after a coordinator joins a cast", async {
+        let sys = TestSystem::builder()
+            .speakers(["Bathroom", "Office", "Kitchen"])
+            .groups(&[&["Bathroom", "Office"]])
+            .build()
+            .await;
+        let (bathroom, office, kitchen) = (sys.ip("Bathroom"), sys.ip("Office"), sys.ip("Kitchen"));
+        sys.fake.play_music("Bathroom", "x-sonos-spotify:track");
+
+        // Events reach the companion (Kitchen has told it it is stopped), but
+        // Office has only followed Bathroom, so nothing is recorded for it.
+        assert_eq!(
+            sys.fake
+                .notify_av_transport(&kitchen, TransportState::Stopped, "")
+                .await,
+            200
+        );
+        sys.events
+            .wait_for_sonos(|event| {
+                matches!(event, SonosEvent::TransportState { speaker_ip, .. }
+                    if *speaker_ip == kitchen)
+            })
+            .await;
+        assert!(!sys
+            .services
+            .sonos_state
+            .transport_states
+            .contains_key(&office));
+
+        // Bathroom joins a cast; Sonos hands the music to Office, which now
+        // leads its own group. Its new subscription's first event never comes.
+        let stream = sys.new_stream();
+        let results = sys.start_rooms(&stream, &["Bathroom"], None).await;
+        assert!(results.iter().all(|r| r.success), "{results:?}");
+        assert_eq!(results[0].speaker_ip, bathroom);
+        assert_eq!(sys.fake.coordinator_name_of("Office"), "Office");
+        assert_eq!(
+            sys.fake.speaker_named("Office").transport_state(),
+            TransportState::Playing
+        );
+        sys.refresh_topology().await;
+        assert!(sys
+            .fake
+            .subscription(&office, SonosService::AVTransport)
+            .is_some());
+
+        sys.events
+            .wait_for_sonos(|event| {
+                matches!(event, SonosEvent::TransportState { speaker_ip, state, .. }
+                    if *speaker_ip == office && *state == TransportState::Playing)
+            })
+            .await;
+        assert_eq!(
+            sys.services
+                .sonos_state
+                .shown_transport_states()
+                .get(&office),
+            Some(&TransportState::Playing)
+        );
+    })
+    .await;
+}
+
+/// Proves: while no speaker has reported anything, a fresh subscription is not
+/// read, so the empty cache that tells a refresh no event reaches the companion
+/// stays empty.
+#[tokio::test]
+async fn nothing_is_read_while_no_event_has_arrived() {
+    within("no read without events", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Patio"])
+            .build()
+            .await;
+        sys.refresh_topology().await;
+        assert!(sys
+            .fake
+            .subscription(&sys.ip("Kitchen"), SonosService::AVTransport)
+            .is_some());
+        assert!(!sys
+            .fake
+            .calls()
+            .iter()
+            .any(|call| call.action == "GetTransportInfo"));
+        assert!(sys.services.sonos_state.transport_states.is_empty());
+    })
+    .await;
+}

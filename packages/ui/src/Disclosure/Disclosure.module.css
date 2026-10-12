@@ -129,8 +129,10 @@
    * content to auto (interpolate-size, which base.css allows; WebKit cannot, so there the
    * height opens and shuts at once while the content still fades). The fold, the fade and
    * the turn share --dur-change (--dur-effects, 0 under reduced motion), and
-   * content-visibility flips at the end. The clip reaches past the edge by the ring, so a
-   * focused control inside is never cut off.
+   * content-visibility flips at the end. Only the height clips, and the clip reaches past the
+   * edge by the ring, so a focused control inside is never cut off; the sides never clip, so a
+   * flush Button inside ("Add a room"), whose surface reaches back past the text column by its
+   * pull, keeps its whole surface (A-button `flush`).
    */
   @supports selector(::details-content) {
     .disclosure::details-content {
@@ -148,7 +150,7 @@
   @supports selector(::details-content) and (interpolate-size: allow-keywords) {
     .disclosure::details-content {
       block-size: 0;
-      overflow: clip;
+      overflow: visible clip;
       overflow-clip-margin: calc(2 * var(--line-bold));
       transition:
         block-size var(--dur-change) var(--ease-effects),

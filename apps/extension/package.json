@@ -24,8 +24,9 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
-    "@preact/preset-vite": "^2.10.5",
     "@crxjs/vite-plugin": "^2.4.0",
+    "@playwright/test": "^1.63.0",
+    "@preact/preset-vite": "^2.10.5",
     "@types/chrome": "^0.2.2",
     "typescript": "^7.0.2",
     "vite": "^8.0.8"

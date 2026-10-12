@@ -1,7 +1,7 @@
 /*
  * The base layer (DESIGN.md F-pipeline, T-focus, F-shift, F-utils, T-motion): the theme
  * switch, the accent colour of any native control, the focus ring, forced colours, reduced
- * motion, prose links and the scrollbar colour.
+ * motion, prose links and the scrollbar (its width, colours and gutter).
  * With tokens.css and webkit-fallbacks.css, one of the three files that hold raw values.
  */
 @layer reset {
@@ -26,13 +26,32 @@
     interpolate-size: allow-keywords;
 
     /*
-     * F-shift: the scrollbar colour, set here once; nothing sets its own. Each page scroller
-     * sets scrollbar-gutter: stable (the popup and options documents, the desktop main, the
-     * full Wizard's content), so a scrollbar arriving never narrows the content on Windows.
-     * A popover or a short list does not: classic scrollbars reserve the gutter even when
-     * nothing overflows (§11 call 81).
+     * F-shift: the scrollbar, styled here once; nothing else styles one (stylelint). Every
+     * scroller is thin, with an --outline thumb on a transparent track (Safari before 18.2
+     * ignores scrollbar-width and draws its own). scrollbar-color inherits; the width does
+     * not, so it is set on every element below.
      */
     scrollbar-color: var(--outline) transparent;
+  }
+
+  * {
+    scrollbar-width: thin;
+  }
+
+  /*
+   * A page scroller (`data-scroller`: the popup's PopupShell and body, the options document,
+   * the desktop main, the full Wizard's content) reserves its gutter on both edges, so a
+   * scrollbar arriving never narrows the content on Windows and the content stays centred
+   * between equal margins. A page scroller holding another (the popup body round the
+   * PopupShell) gives the gutter to the inner one. A popover or a short list is not a page
+   * scroller: classic scrollbars reserve the gutter even when nothing overflows (§11 call 81).
+   */
+  :where([data-scroller]) {
+    scrollbar-gutter: stable both-edges;
+  }
+
+  :where([data-scroller]:has([data-scroller])) {
+    scrollbar-gutter: auto;
   }
 
   :root[data-theme='light'] {
@@ -43,10 +62,18 @@
     color-scheme: dark;
   }
 
-  /* The surface: the ground, its ink and the body face (T-type). */
+  /*
+   * The surface: the ground, its ink and the body face (T-type). The root carries the ground
+   * too: a root page scroller's gutters belong to <html>, and Chromium does not paint a body
+   * background propagated to the canvas into them, so they showed white beside it.
+   */
+  :root,
+  body {
+    background: var(--ground);
+  }
+
   body {
     margin: 0;
-    background: var(--ground);
     color: var(--on-surface);
     font-family: var(--font-body);
     font-weight: var(--weight-body);

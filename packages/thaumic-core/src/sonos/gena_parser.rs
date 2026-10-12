@@ -124,6 +124,7 @@ pub fn parse_group_rendering_events(ip: &str, body: &str) -> Vec<SonosEvent> {
             speaker_ip: ip.to_string(),
             volume,
             fixed: output_fixed,
+            own: false,
             timestamp,
         });
     }
@@ -132,6 +133,7 @@ pub fn parse_group_rendering_events(ip: &str, body: &str) -> Vec<SonosEvent> {
         events.push(SonosEvent::GroupMute {
             speaker_ip: ip.to_string(),
             muted,
+            own: false,
             timestamp,
         });
     }
@@ -145,8 +147,9 @@ pub fn parse_group_rendering_events(ip: &str, body: &str) -> Vec<SonosEvent> {
 /// Extracts Volume and Mute attributes with `channel="Master"` only,
 /// ignoring per-speaker channels like LF/RF from stereo pairs.
 ///
-/// Reuses GroupVolume/GroupMute event types since the payload is identical
-/// and the extension already handles these events.
+/// Reuses the GroupVolume/GroupMute event types, marked `own`: the level is
+/// the room's own, not its group's, so a client keeps it when the room stops
+/// leading a group.
 ///
 /// # Arguments
 /// * `ip` - The speaker IP address
@@ -181,6 +184,7 @@ pub fn parse_rendering_control_events(ip: &str, body: &str) -> Vec<SonosEvent> {
             speaker_ip: ip.to_string(),
             volume,
             fixed: None, // RenderingControl doesn't report OutputFixed
+            own: true,
             timestamp,
         });
     }
@@ -189,6 +193,7 @@ pub fn parse_rendering_control_events(ip: &str, body: &str) -> Vec<SonosEvent> {
         events.push(SonosEvent::GroupMute {
             speaker_ip: ip.to_string(),
             muted,
+            own: true,
             timestamp,
         });
     }
@@ -278,11 +283,13 @@ mod tests {
                 speaker_ip,
                 volume,
                 fixed,
+                own,
                 ..
             } => {
                 assert_eq!(speaker_ip, "192.168.1.100");
                 assert_eq!(*volume, 42);
                 assert_eq!(*fixed, None); // RenderingControl doesn't report OutputFixed
+                assert!(*own, "a RenderingControl level is the room's own");
             }
             _ => panic!("Expected GroupVolume event"),
         }
@@ -290,10 +297,14 @@ mod tests {
         // Check mute event
         match &events[1] {
             SonosEvent::GroupMute {
-                speaker_ip, muted, ..
+                speaker_ip,
+                muted,
+                own,
+                ..
             } => {
                 assert_eq!(speaker_ip, "192.168.1.100");
                 assert!(!*muted);
+                assert!(*own, "a RenderingControl mute is the room's own");
             }
             _ => panic!("Expected GroupMute event"),
         }

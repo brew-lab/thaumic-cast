@@ -13,12 +13,15 @@
 
 import { mock } from 'bun:test';
 import type { SonosStateSnapshot, StartVolume } from '@thaumic-cast/protocol';
+import type { PlaybackRequest } from '../lib/messages';
 
 /** The arguments of one `startPlayback` call. */
 export interface StartPlaybackCall {
   tabId: number;
   speakerIps: string[];
   startVolume: StartVolume | undefined;
+  /** The rooms, when the request names them (a companion that regroups). */
+  rooms?: string[];
 }
 
 /** Calls the mocked broker received, oldest first. */
@@ -29,6 +32,8 @@ export const brokerCalls = {
   syncedStates: [] as SonosStateSnapshot[],
   /** Calls to `startPlayback`. */
   startedPlayback: [] as StartPlaybackCall[],
+  /** Tab ids passed to `startCapture`. */
+  startedCapture: [] as number[],
 };
 
 /** One speaker's answer to a `startPlayback` call. */
@@ -54,11 +59,16 @@ export function resetBrokerCalls(): void {
   brokerCalls.stoppedTabs.length = 0;
   brokerCalls.syncedStates.length = 0;
   brokerCalls.startedPlayback.length = 0;
+  brokerCalls.startedCapture.length = 0;
   brokerReplies.playbackResult = undefined;
 }
 
 mock.module('../background/offscreen-broker', () => ({
   offscreenBroker: {
+    async startCapture(tabId: number): Promise<{ success: boolean; streamId: string }> {
+      brokerCalls.startedCapture.push(tabId);
+      return { success: true, streamId: `stream-${tabId}` };
+    },
     async stopSession(tabId: number): Promise<void> {
       brokerCalls.stoppedTabs.push(tabId);
     },
@@ -67,13 +77,15 @@ mock.module('../background/offscreen-broker', () => ({
     },
     async startPlayback(
       tabId: number,
-      speakerIps: string[],
-      _metadata?: unknown,
-      _syncSpeakers?: boolean,
-      _videoSyncEnabled?: boolean,
-      startVolume?: StartVolume,
+      request: PlaybackRequest,
     ): Promise<{ success: boolean; results: PlaybackResult[] } | undefined> {
-      brokerCalls.startedPlayback.push({ tabId, speakerIps, startVolume });
+      const { speakerIps, startVolume, rooms } = request;
+      brokerCalls.startedPlayback.push({
+        tabId,
+        speakerIps,
+        startVolume,
+        ...(rooms ? { rooms } : {}),
+      });
       const answer = brokerReplies.playbackResult;
       if (!answer) return undefined;
       const results = speakerIps.map(answer);

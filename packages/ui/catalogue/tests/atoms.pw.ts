@@ -197,6 +197,40 @@ test('an IconButton exposes pressed and busy', async ({ page }) => {
   await expect(section.locator('button[aria-busy="true"]').first()).toBeVisible();
 });
 
+test('a marked IconButton draws its dot at the corner, unclipped, in every state', async ({
+  page,
+}) => {
+  for (const scheme of ['light', 'dark']) {
+    const group = page
+      .locator(`#icon-button [data-scheme="${scheme}"]`)
+      .getByRole('group', { name: 'Marked' });
+    const buttons = group.locator('button');
+    await expect(buttons).toHaveCount(5);
+    for (const button of await buttons.all()) {
+      const dot = button.locator('span[aria-hidden="true"]').last();
+      const [box, mark] = [(await button.boundingBox())!, (await dot.boundingBox())!];
+      // Inside the button's box, at its block-start, inline-end corner: nothing moves.
+      expect(mark.x + mark.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+      expect(mark.y).toBeGreaterThanOrEqual(box.y - 0.5);
+      expect(mark.x).toBeGreaterThan(box.x + box.width / 2);
+      expect(mark.y + mark.height).toBeLessThan(box.y + box.height / 2);
+      // Nothing clips it: the shape of focus and press is the button's own radius and corner
+      // shape, which clip nothing while the button shows its overflow and has no clip path.
+      const clip = await button.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { overflow: style.overflow, clipPath: style.clipPath };
+      });
+      expect(clip).toEqual({ overflow: 'visible', clipPath: 'none' });
+      expect(await dot.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toMatch(
+        /(\/ 0\)|, 0\))$/,
+      );
+    }
+    await expect(
+      group.getByRole('button', { name: 'Settings, update available' }).first(),
+    ).toBeVisible();
+  }
+});
+
 test('the tooltip waits for the delay on hover, then stays while hovered', async ({ page }) => {
   const scheme = light(page, 'tooltip');
   const trigger = scheme.getByRole('button', { name: 'Settings' });

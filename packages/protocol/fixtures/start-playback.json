@@ -2,6 +2,8 @@
   "type": "START_PLAYBACK",
   "payload": {
     "speakerIps": ["192.168.1.10", "192.168.1.11"],
+    "rooms": ["RINCON_000E58A0B1C2D01400", "RINCON_000E58A0B1C3D01400"],
+    "callId": "4f1c2a:2",
     "syncSpeakers": false,
     "videoSyncEnabled": false,
     "startVolume": {

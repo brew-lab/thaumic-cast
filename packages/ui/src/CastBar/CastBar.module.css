@@ -1,7 +1,8 @@
 @layer components {
   /*
-   * C-castbar. The failure line, the md Button full width (or Cancel and Add), and one
-   * polite line, always reserved, so the bar never jumps when it fills.
+   * C-castbar. The failure line, the polite line (drawn only while it has something to
+   * say: no empty slot), then the md Button full width (or Cancel and Add). The line opens
+   * in place above Cast, so nothing jumps.
    */
   .bar {
     --castbar-line: var(--on-surface-variant);
@@ -25,12 +26,50 @@
     min-inline-size: 0;
   }
 
+  /*
+   * The line sits above Cast in every state (§11 call 90), so it is always in one place.
+   * It opens in place as a fold does: its block size runs from 0 to its words (and the gap
+   * above Cast with it, the margin taking the bar's gap back), so whatever it moves, a
+   * short popup's Cast going down or a tall popup's rooms going up, moves smoothly, while
+   * the words fade in from --space-2 below. It is a flex item that clips, so its automatic
+   * minimum is its words' height: min-block-size 0 lets the block size start from 0 (without
+   * it the line snapped open and only the fade moved). Without interpolate-size (Chrome
+   * before 129, WebKit) it opens at once and only the words fade.
+   */
   .line {
-    min-block-size: calc(1lh);
+    min-block-size: 0;
     margin: 0;
+    overflow: clip;
     color: var(--castbar-line);
     font-size: var(--text-2);
     line-height: var(--leading-2);
     text-wrap: pretty;
+    transition:
+      opacity var(--dur-effects) var(--ease-effects),
+      translate var(--dur-effects) var(--ease-effects),
+      block-size var(--dur-change) var(--ease-effects),
+      margin-block-end var(--dur-change) var(--ease-effects);
+  }
+
+  @starting-style {
+    .line {
+      opacity: 0;
+      translate: 0 var(--space-2);
+    }
+  }
+
+  @supports (interpolate-size: allow-keywords) {
+    @starting-style {
+      .line {
+        margin-block-end: calc(-1 * var(--space-3));
+        block-size: 0;
+      }
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .line {
+      transition: none;
+    }
   }
 }

@@ -371,7 +371,7 @@ const ICON_KINDS: { title: string; props: IconButtonProps }[] = [
 ];
 
 /**
- * IconButton: quiet and tonal, every state, both densities, the desktop Tooltip.
+ * IconButton: quiet and tonal, every state, the mark, both densities, the desktop Tooltip.
  * @returns The specimen
  */
 export function IconButtonSpecimen(): JSX.Element {
@@ -412,6 +412,24 @@ export function IconButtonSpecimen(): JSX.Element {
           ))}
         </StateRow>
       </StateGrid>
+      <p class="label">
+        Marked (something waits behind it: Settings while an update exists): rest, hover,
+        focus-visible, active, and with the Tooltip. The name says it too.
+      </p>
+      <Cluster role="group" aria-label="Marked">
+        <IconButton glyph="settings" label="Settings, update available" kind="tonal" mark />
+        {FORCED.map((f) => (
+          <IconButton
+            key={f}
+            glyph="settings"
+            label={`Settings, update available (${f})`}
+            kind="tonal"
+            mark
+            data-force={f}
+          />
+        ))}
+        <IconButton glyph="settings" label="Settings, update available" kind="tonal" mark tooltip />
+      </Cluster>
       <p class="label">
         Desktop density: the same sm 1.75rem and md 2rem boxes, hit areas to 2.75rem, with the
         Tooltip

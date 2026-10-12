@@ -1,8 +1,9 @@
 @layer components {
   /*
-   * A-check. The row is one control (a label round one input): it takes the state layer on
-   * its 8 px corner and carries the ring, because the box is under 24 px. Only the box
-   * reshapes.
+   * A-check. The row is one control (a label round one input): it takes the state layer and
+   * carries the ring, because the box is under 24 px. It rests on its 8 px corner and, like
+   * every pressable control, takes the bevel on focus-visible and press (§11 call 88); the box
+   * takes its small bevel with it. Shaped, it fades the painted colour, not --layer (call 79).
    */
   .row {
     --check-size: var(--size-box);
@@ -26,7 +27,10 @@
     box-shadow: var(--check-shadow);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: --layer var(--dur-effects) var(--ease-effects);
+    transition:
+      background-color var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .box {
@@ -140,8 +144,22 @@
     --layer: var(--layer-press);
   }
 
-  /* The box takes the bevel on focus-visible and press (held, utils/press.ts); nothing scales. */
+  /*
+   * The row and its box take the bevel on focus-visible and press (held, utils/press.ts);
+   * nothing scales.
+   */
   @supports (corner-shape: bevel) {
+    .row:not(:has(.input:disabled)):is(
+        :has(.input:focus-visible),
+        :active,
+        [data-pressing],
+        [data-force='focus'],
+        [data-force='press']
+      ) {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
+    }
+
     .row:not(:has(.input:disabled)):is(
         :has(.input:focus-visible),
         :active,

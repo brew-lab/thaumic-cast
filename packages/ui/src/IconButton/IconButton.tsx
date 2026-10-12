@@ -27,6 +27,12 @@ export interface IconButtonProps extends DataAttributes {
   disabled?: boolean;
   /** Show the name in a Tooltip on hover and focus (the desktop; DESIGN.md A-iconbtn). */
   tooltip?: boolean;
+  /**
+   * Something waits behind the button (Settings while an update exists): a small `--primary`
+   * dot at its block-start, inline-end corner, outside the shaped surface. Never alone: the
+   * name says it too ("Settings, update available").
+   */
+  mark?: boolean;
   /** The action. */
   onPress?: (event: MouseEvent) => void;
   /** Keyboard handling, e.g. Delete on a chip's remove button. */
@@ -41,6 +47,8 @@ export interface IconButtonProps extends DataAttributes {
  * The icon-only action (DESIGN.md A-iconbtn). Quiet or tonal, never filled. The box is
  * 28 or 32 on every surface, and an `::after` hit area grows it to `--hit-min` (44 in a
  * window and under touch). Mute keeps one name; `aria-pressed` carries its state and the glyph swaps.
+ * A `mark` dot sits at the corner, outside the shape the focus and the press draw, so neither
+ * clips it and nothing moves.
  * @param props - Component props
  * @param props.glyph - The glyph
  * @param props.label - The accessible name
@@ -51,6 +59,7 @@ export interface IconButtonProps extends DataAttributes {
  * @param props.busy - Busy
  * @param props.disabled - Disabled
  * @param props.tooltip - Show the name in a Tooltip
+ * @param props.mark - Something waits behind the button: the corner dot
  * @param props.onPress - The action
  * @param props.onKeyDown - Keyboard handling
  * @returns The button
@@ -65,6 +74,7 @@ export function IconButton({
   busy = false,
   disabled = false,
   tooltip = false,
+  mark = false,
   onPress,
   onKeyDown,
   ...rest
@@ -91,6 +101,7 @@ export function IconButton({
       {...dataAttributes(rest)}
     >
       {busy ? <Clacks size="sm" /> : <Icon glyph={shown} />}
+      {mark && <span class={styles.mark} aria-hidden="true" />}
     </button>
   );
   return tooltip ? <Tooltip content={label}>{button}</Tooltip> : button;

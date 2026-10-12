@@ -10,6 +10,8 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::stream::AudioCodec;
 
+use super::regroup::OldGroup;
+
 /// Composite key for playback sessions: (stream_id, speaker_ip).
 /// Allows multiple speakers to receive the same stream (multi-group casting).
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -73,12 +75,11 @@ pub struct PlaybackSession {
     /// Set for both coordinators (self UUID) and slaves (coordinator UUID).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coordinator_uuid: Option<String>,
-    /// Original group coordinator UUID before joining the streaming group.
-    /// For slaves: the UUID of the coordinator they were grouped with before streaming.
-    /// None if the speaker was already standalone or is a coordinator.
-    /// Used to restore group membership after streaming ends.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub original_coordinator_uuid: Option<String>,
+    /// The Sonos group this room was in before the cast moved it, for putting
+    /// it back when it leaves the cast. `None` for a room that stood alone.
+    /// In memory only: never serialised.
+    #[serde(skip)]
+    pub(crate) old_group: Option<OldGroup>,
 }
 
 /// Result of starting playback on a single speaker.
@@ -132,6 +133,35 @@ pub(crate) struct PlaybackSessionStore {
     /// start lock for its whole life, so a speaker never has two admissions at
     /// once and no refcount is needed.
     pending_starts: DashSet<PlaybackSessionKey>,
+    /// Speakers the companion is moving off the stream itself (a stop, a
+    /// promotion, a put-back), counted per address so overlapping holders
+    /// nest. A speaker it switches to its queue or out of a group reports a
+    /// new track in a NOTIFY; while it is held here that is the companion's
+    /// own doing, not the household changing the source (see
+    /// [`Self::release`]).
+    releasing: DashMap<String, usize>,
+}
+
+/// Held while the companion moves speakers off a stream itself; see
+/// [`PlaybackSessionStore::release`]. Withdraws its hold on drop.
+pub(crate) struct ReleasingGuard<'a> {
+    store: &'a PlaybackSessionStore,
+    ips: Vec<String>,
+}
+
+impl Drop for ReleasingGuard<'_> {
+    fn drop(&mut self) {
+        for ip in &self.ips {
+            if let dashmap::mapref::entry::Entry::Occupied(mut entry) =
+                self.store.releasing.entry(ip.clone())
+            {
+                *entry.get_mut() -= 1;
+                if *entry.get() == 0 {
+                    entry.remove();
+                }
+            }
+        }
+    }
 }
 
 /// Held for the duration of one speaker's start sequence.
@@ -173,7 +203,33 @@ impl PlaybackSessionStore {
             ip_index: DashMap::new(),
             speaker_starts: DashMap::new(),
             pending_starts: DashSet::new(),
+            releasing: DashMap::new(),
         }
+    }
+
+    /// Marks `ips` as being moved off their stream by the companion itself,
+    /// until the guard drops.
+    ///
+    /// A stop or promotion switches speakers to their queue, out of the
+    /// cast's group or back into an old one, and each reports the new track
+    /// in a NOTIFY that may land before its session is removed or updated.
+    /// While held, [`Self::is_releasing`] is true for those speakers, so the
+    /// source-change check ignores them: ending their sessions (and, for a
+    /// coordinator, its followers' and the stream) would race the very
+    /// teardown that caused the NOTIFY. Hold it until each speaker's session
+    /// is removed or rewritten, so a late NOTIFY finds no stale expectation.
+    pub(crate) fn release(&self, ips: impl IntoIterator<Item = String>) -> ReleasingGuard<'_> {
+        let ips: Vec<String> = ips.into_iter().collect();
+        for ip in &ips {
+            *self.releasing.entry(ip.clone()).or_insert(0) += 1;
+        }
+        ReleasingGuard { store: self, ips }
+    }
+
+    /// Whether the companion is moving `speaker_ip` off its stream right now
+    /// (see [`Self::release`]).
+    pub fn is_releasing(&self, speaker_ip: &str) -> bool {
+        self.releasing.contains_key(speaker_ip)
     }
 
     /// Acquires this speaker's start lock, waiting for any in-flight start.
@@ -494,12 +550,12 @@ mod tests {
             role: GroupRole::Coordinator,
             coordinator_ip: None,
             coordinator_uuid: Some("RINCON_XXX".to_string()),
-            original_coordinator_uuid: None,
+            old_group: None,
         };
 
         assert_eq!(session.role, GroupRole::Coordinator);
         assert!(session.coordinator_ip.is_none());
-        assert!(session.original_coordinator_uuid.is_none());
+        assert!(session.old_group.is_none());
     }
 
     #[test]
@@ -512,7 +568,7 @@ mod tests {
             role: GroupRole::Slave,
             coordinator_ip: Some("192.168.1.100".to_string()),
             coordinator_uuid: Some("RINCON_XXX".to_string()),
-            original_coordinator_uuid: None,
+            old_group: None,
         };
 
         assert_eq!(session.role, GroupRole::Slave);
@@ -520,8 +576,16 @@ mod tests {
         assert!(session.stream_url.starts_with("x-rincon:"));
     }
 
+    fn old_group(coordinator: &str) -> Option<OldGroup> {
+        Some(OldGroup {
+            coordinator_uuid: coordinator.to_string(),
+            partners: vec![coordinator.to_string()],
+            kept: false,
+        })
+    }
+
     #[test]
-    fn playback_session_slave_stores_original_coordinator() {
+    fn playback_session_stores_the_group_it_left() {
         let session = PlaybackSession {
             stream_id: "stream1".to_string(),
             speaker_ip: "192.168.1.101".to_string(),
@@ -530,34 +594,10 @@ mod tests {
             role: GroupRole::Slave,
             coordinator_ip: Some("192.168.1.100".to_string()),
             coordinator_uuid: Some("RINCON_STREAMING".to_string()),
-            original_coordinator_uuid: Some("RINCON_ORIGINAL".to_string()),
+            old_group: old_group("RINCON_ORIGINAL"),
         };
 
-        assert_eq!(session.role, GroupRole::Slave);
-        assert_eq!(
-            session.original_coordinator_uuid,
-            Some("RINCON_ORIGINAL".to_string())
-        );
-    }
-
-    #[test]
-    fn playback_session_coordinator_can_have_original_group() {
-        let session = PlaybackSession {
-            stream_id: "stream1".to_string(),
-            speaker_ip: "192.168.1.101".to_string(),
-            stream_url: "http://server:8080/stream/abc".to_string(),
-            codec: AudioCodec::Aac,
-            role: GroupRole::Coordinator,
-            coordinator_ip: None,
-            coordinator_uuid: Some("RINCON_KITCHEN".to_string()),
-            original_coordinator_uuid: Some("RINCON_LIVING".to_string()),
-        };
-
-        assert_eq!(session.role, GroupRole::Coordinator);
-        assert_eq!(
-            session.original_coordinator_uuid,
-            Some("RINCON_LIVING".to_string())
-        );
+        assert_eq!(session.old_group, old_group("RINCON_ORIGINAL"));
     }
 
     #[test]
@@ -570,7 +610,7 @@ mod tests {
             role: GroupRole::Coordinator,
             coordinator_ip: None,
             coordinator_uuid: Some("RINCON_XXX".to_string()),
-            original_coordinator_uuid: None,
+            old_group: None,
         };
 
         let json = serde_json::to_value(&session).unwrap();
@@ -591,13 +631,15 @@ mod tests {
             role: GroupRole::Slave,
             coordinator_ip: Some("192.168.1.100".to_string()),
             coordinator_uuid: Some("RINCON_XXX".to_string()),
-            original_coordinator_uuid: Some("RINCON_ORIGINAL".to_string()),
+            old_group: old_group("RINCON_ORIGINAL"),
         };
 
         let json = serde_json::to_value(&session).unwrap();
         assert_eq!(json["role"], "slave");
         assert_eq!(json["coordinatorIp"], "192.168.1.100");
-        assert_eq!(json["originalCoordinatorUuid"], "RINCON_ORIGINAL");
+        // The group it left stays in memory: it is never sent.
+        assert!(json.get("oldGroup").is_none(), "{json}");
+        assert!(json.get("originalCoordinatorUuid").is_none(), "{json}");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -619,7 +661,7 @@ mod tests {
                 GroupRole::Slave => Some("192.168.1.100".to_string()),
             },
             coordinator_uuid: Some("RINCON_100".to_string()),
-            original_coordinator_uuid: None,
+            old_group: None,
         }
     }
 

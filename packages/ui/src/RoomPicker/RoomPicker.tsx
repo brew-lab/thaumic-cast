@@ -25,7 +25,7 @@ export interface PickerSet {
   name: string;
   /** last (`history`), saved (`bookmark`) or everywhere (`home`, from 3 rooms). */
   kind: 'last' | 'saved' | 'everywhere';
-  /** A trailing word or count: "Saved", "3 rooms". */
+  /** The room count at the row's end: "3 rooms". */
   trail?: string;
   /** Reads pressed while the choice equals the set. */
   pressed: boolean;

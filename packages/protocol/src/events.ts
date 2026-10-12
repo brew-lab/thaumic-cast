@@ -39,12 +39,20 @@ export const SonosEventSchema = z.discriminatedUnion('type', [
     speakerIp: z.string(),
     volume: z.number(),
     fixed: z.boolean().optional(),
+    /**
+     * The level is the room's own (followed for a room in a cast played as one Sonos group), not
+     * its group's: it stays the room's level when the room stops leading a group, as a room that
+     * joins a cast does. Absent for a group's level, and from an older companion.
+     */
+    own: z.boolean().optional(),
     timestamp: z.number(),
   }),
   z.object({
     type: z.literal('groupMute'),
     speakerIp: z.string(),
     muted: z.boolean(),
+    /** The mute is the room's own, not its group's (as for `groupVolume`). */
+    own: z.boolean().optional(),
     timestamp: z.number(),
   }),
   z.object({

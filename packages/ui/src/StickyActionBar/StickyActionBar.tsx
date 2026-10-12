@@ -30,7 +30,8 @@ export function scrollerOf(el: Element): HTMLElement {
 
 /**
  * The bar at the end of the one scroller (DESIGN.md L-bar): sticky to the end, on
- * `--surface`, at `--z-sticky`, holding the Toast and then the actions. It measures itself
+ * `--surface`, at `--z-sticky`, holding the Toast and then the actions. Holding only a Toast
+ * it draws no surface: the Toast sits on the page's ground. It measures itself
  * and publishes its block size as `--overlay-end` on its scroller, which sets
  * its end scroll padding to `--overlay-end` plus `--space-3`, so a focused
  * control is never under it (WCAG 2.4.11). Its hairline shows only while content runs under
@@ -59,7 +60,12 @@ export function StickyActionBar({ toast, children }: StickyActionBarProps): JSX.
     };
   }, []);
   return (
-    <div ref={ref} class={styles.bar} data-sticky-bar="">
+    <div
+      ref={ref}
+      class={styles.bar}
+      data-sticky-bar=""
+      data-toast-only={children ? undefined : ''}
+    >
       <span class={styles.rule}>
         <Divider />
       </span>

@@ -218,11 +218,19 @@ export const StartPlaybackMessageSchema = z.object({
   type: z.literal('START_PLAYBACK'),
   payload: z.object({
     tabId: TabIdSchema,
-    /** Target speaker IP addresses (multi-group support). */
+    /**
+     * Target speaker IP addresses: with `rooms`, each room's own IP in the same order;
+     * otherwise Sonos group coordinators.
+     */
     speakerIps: z.array(SpeakerIpSchema),
+    /**
+     * The rooms to play as one Sonos group (player UUIDs), sent only to a companion that
+     * regroups. Sent for a running cast, they join its group.
+     */
+    rooms: z.array(RoomIdSchema).optional(),
     /** Optional initial metadata to display on Sonos. */
     metadata: StreamMetadataSchema.optional(),
-    /** Whether to synchronize multi-speaker playback (default: false). */
+    /** Whether to join the speakers into one Sonos group (older companions; ignored with `rooms`). */
     syncSpeakers: z.boolean().default(false),
     /** Whether the client has video sync enabled (gates server-side latency monitoring). */
     videoSyncEnabled: z.boolean().default(false),
@@ -231,6 +239,28 @@ export const StartPlaybackMessageSchema = z.object({
   }),
 });
 export type StartPlaybackMessage = z.infer<typeof StartPlaybackMessageSchema>;
+
+/** What one START_PLAYBACK asks of a cast's stream: its payload without the tab. */
+export type PlaybackRequest = Omit<z.input<typeof StartPlaybackMessageSchema>['payload'], 'tabId'>;
+
+/** How long a plain START_PLAYBACK may take before it counts as failed (ms). */
+export const PLAYBACK_TIMEOUT_MS = 15_000;
+
+/**
+ * How long a START_PLAYBACK that regroups rooms may take (ms). The companion queues it behind
+ * any other regroup or Stop, reads the grouping fresh, and makes rooms leave their groups before
+ * they join, each step with its own speaker timeout, so it can take far longer than a plain start.
+ */
+export const REGROUP_PLAYBACK_TIMEOUT_MS = 60_000;
+
+/**
+ * The time a START_PLAYBACK may take before it counts as failed.
+ * @param request - The request; one that carries rooms regroups them
+ * @returns The timeout in milliseconds
+ */
+export function playbackTimeoutMs(request: Pick<PlaybackRequest, 'rooms'>): number {
+  return request.rooms ? REGROUP_PLAYBACK_TIMEOUT_MS : PLAYBACK_TIMEOUT_MS;
+}
 
 export const StartPlaybackResponseSchema = z.object({
   /** Overall success (at least one speaker started). */
@@ -338,6 +368,10 @@ export type ActiveCastsChangedMessage = z.infer<typeof ActiveCastsChangedMessage
 export const ExtensionResponseSchema = z.object({
   success: z.boolean(),
   streamId: z.string().optional(),
+  /** START_CAST: the tab the cast was registered for. */
+  tabId: TabIdSchema.optional(),
+  /** START_CAST: the chosen rooms that did not start, in a cast that started elsewhere. */
+  notJoined: z.array(RoomIdSchema).optional(),
   error: z.string().optional(),
   /** Values for the placeholders in `error`'s text, when `error` is an i18n key. */
   errorParams: z.record(z.string(), z.union([z.string(), z.number()])).optional(),

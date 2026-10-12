@@ -2,7 +2,7 @@
  * The desktop shell, until Phase 4's DesktopShell owns it: the rail and main. The rail is
  * narrow below a 45rem window and wide from it (DESIGN.md C-rail). Main is the `content`
  * container, so fluid type and space follow the column, not the window, and it is the one
- * scroller, with a stable gutter. Its track is minmax(0, 1fr), so a long unbreakable string
+ * scroller (`data-scroller`: base.css gives it the balanced stable gutter). Its track is minmax(0, 1fr), so a long unbreakable string
  * in a view cannot widen it.
  */
 @layer app {
@@ -26,7 +26,6 @@
     container: content / inline-size;
     min-inline-size: 0;
     overflow-y: auto;
-    scrollbar-gutter: stable;
   }
 
   .not-found {

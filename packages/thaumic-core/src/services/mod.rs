@@ -6,6 +6,7 @@
 pub mod discovery_service;
 pub mod gena_event_processor;
 pub mod playback_session_store;
+pub(crate) mod regroup;
 pub mod speaker_monitor;
 pub(crate) mod start_volume;
 pub mod stream_coordinator;

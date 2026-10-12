@@ -133,6 +133,11 @@ async fn every_call_of_the_sonos_traits_is_answered() {
         assert_eq!(snapshot.groups.len(), 1, "{:?}", snapshot.groups);
         assert_eq!(snapshot.groups[0].members.len(), 2);
         sonos.leave_group(&office).await.expect("leave_group");
+        sonos
+            .rejoin_group(&office, &kitchen_uuid)
+            .await
+            .expect("rejoin_group");
+        sonos.leave_group(&office).await.expect("leave_group");
 
         sonos
             .set_group_volume(&kitchen, 40)

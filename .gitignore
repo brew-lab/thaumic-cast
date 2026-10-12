@@ -65,3 +65,6 @@ docs/guff.md
 conductor/
 # Local scratch for logs and captures handed over during debugging
 tmp/
+
+# The real-extension check's screenshots
+apps/extension/real-ext/shots/

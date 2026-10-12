@@ -37,6 +37,11 @@ export interface VolumeLineProps {
   disabled?: boolean;
   /** Something after the value: the Remove button. */
   trailing?: ComponentChildren;
+  /**
+   * Keep the Remove slot, empty, when there is no trailing control: the master above a cast's
+   * rooms, so its Slider shares the rows' columns.
+   */
+  slot?: boolean;
   /** The words. */
   strings: VolumeLineStrings;
 }
@@ -55,6 +60,7 @@ export interface VolumeLineProps {
  * @param props.onMute - Mutes or unmutes
  * @param props.disabled - Inert for now
  * @param props.trailing - A trailing control
+ * @param props.slot - Keep the empty Remove slot
  * @param props.strings - The words
  * @returns The line
  */
@@ -67,6 +73,7 @@ export function VolumeLine({
   onMute,
   disabled = false,
   trailing,
+  slot = false,
   strings,
 }: VolumeLineProps): JSX.Element {
   const control = useVolumeControl(volume, muted, onVolume, () => onMute(!muted));
@@ -93,7 +100,7 @@ export function VolumeLine({
           onPointerUp={control.pointerUp}
         />
       </span>
-      {trailing}
+      {trailing ?? (slot && <span class={styles.reserve} aria-hidden="true" />)}
     </div>
   );
 }

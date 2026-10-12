@@ -1,8 +1,0 @@
-@layer app {
-  .download-prompt {
-    margin: 0;
-    color: var(--on-surface-variant);
-    font-size: var(--text-3);
-    line-height: var(--leading-3);
-  }
-}

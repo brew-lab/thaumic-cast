@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { ANNOUNCE_GAP_MS } from '../tokens';
+import { ANNOUNCE_GAP_MS, ANNOUNCE_HOLD_MS } from '../tokens';
 import { createAnnouncer, type AnnouncerClock, type LiveRegion } from './createAnnouncer';
 
 /** A clock the test steps by hand: frames and timers run only when flushed. */
@@ -52,6 +52,20 @@ describe('createAnnouncer', () => {
     expect(polite.textContent).toBe('');
     clock.frame();
     expect(polite.textContent).toBe('Copied');
+  });
+
+  it('should empty the region ANNOUNCE_HOLD_MS after the last message', () => {
+    const { polite, clock, announcer } = setup();
+    announcer.open();
+    announcer.say('Office is joining…');
+    clock.frame();
+    clock.elapse(ANNOUNCE_HOLD_MS - 1000);
+    announcer.say('Office joined the cast.');
+    clock.frame();
+    clock.elapse(1000);
+    expect(polite.textContent).toBe('Office joined the cast.');
+    clock.elapse(ANNOUNCE_HOLD_MS);
+    expect(polite.textContent).toBe('');
   });
 
   it('should space queued messages ANNOUNCE_GAP_MS apart', () => {

@@ -74,10 +74,6 @@ export function AdvancedSection({
     await onUpdate({ keepTabAudible: !settings.keepTabAudible });
   }, [settings.keepTabAudible, onUpdate]);
 
-  const handleSyncSpeakersToggle = useCallback(async () => {
-    await onUpdate({ syncSpeakers: !settings.syncSpeakers });
-  }, [settings.syncSpeakers, onUpdate]);
-
   const handleStartCeilingToggle = useCallback(async () => {
     await onUpdate({ startCeilingEnabled: !settings.startCeilingEnabled });
   }, [settings.startCeilingEnabled, onUpdate]);
@@ -141,13 +137,6 @@ export function AdvancedSection({
             />
           )
         }
-      />
-
-      <Switch
-        label={t('sync_speakers_enable')}
-        description={t('sync_speakers_description')}
-        checked={settings.syncSpeakers}
-        onChange={handleSyncSpeakersToggle}
       />
 
       {isWindows && captureToggle.visible && (

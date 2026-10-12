@@ -1,3 +1,9 @@
+/**
+ * The scrollbar is one foundation in packages/ui/src/base.css (DESIGN.md F-shift): its width,
+ * its colours and the balanced gutter of every page scroller. Nothing else styles one.
+ */
+export const SCROLLBAR_PROPERTIES = ['/^scrollbar-/'];
+
 export default {
   extends: ['stylelint-config-standard'],
   plugins: ['stylelint-use-logical'],
@@ -32,6 +38,9 @@ export default {
     'color-no-hex': true,
     'color-named': 'never',
     'function-disallowed-list': ['rgb', 'rgba', 'hsl', 'hsla', 'hwb', 'lab', 'lch', 'color'],
+    // The scrollbar is styled once, in base.css (F-shift).
+    'property-disallowed-list': SCROLLBAR_PROPERTIES,
+    'selector-pseudo-element-disallowed-list': ['/scrollbar/'],
     // Consistent naming (kebab-case)
     'selector-class-pattern': [
       '^[a-z][a-z0-9]*(-[a-z0-9]+)*$',
@@ -45,6 +54,14 @@ export default {
       // order the cascade needs, not the order of specificity.
       files: ['packages/ui/src/**/*.module.css'],
       rules: { 'no-descending-specificity': null },
+    },
+    {
+      // The one place the scrollbar is styled (F-shift).
+      files: ['packages/ui/src/base.css'],
+      rules: {
+        'property-disallowed-list': null,
+        'selector-pseudo-element-disallowed-list': null,
+      },
     },
   ],
 };

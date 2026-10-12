@@ -1,8 +1,11 @@
 import type { ComponentChildren } from 'preact';
 import { Button } from '../Button';
+import { Card } from '../Card';
 import { Cluster } from '../Cluster';
 import { IconButton } from '../IconButton';
+import { PopupShell } from '../PopupShell';
 import { StepIndicator, type StepOfLabel } from '../StepIndicator';
+import { StickyActionBar } from '../StickyActionBar';
 import styles from './Wizard.module.css';
 
 interface WizardLabels {
@@ -37,7 +40,10 @@ interface WizardProps {
   stepLabels?: string[];
   /** Words the step indicator's accessible name (for i18n); English when omitted */
   stepOfLabel?: StepOfLabel;
-  /** Use compact layout with icon-only back button in header (for popups) */
+  /**
+   * The popup's form: a PopupShell as tall as the popup can be, Back (icon only) and the step
+   * indicator in its header row, the step in a Card, and Skip and Carry on in a StickyActionBar.
+   */
   compact?: boolean;
 }
 
@@ -83,39 +89,49 @@ export function Wizard({
   const showBackInHeader = compact && !isFirstStep && onBack;
 
   if (compact) {
+    // The popup's onboarding (L-wizard compact) is the main popup's frame: a PopupShell as
+    // tall as the popup can be, so it never changes size from one step to the next. Its
+    // header row (Back and the step indicator) takes the PopupHeader's block size, the step
+    // sits in a Card on the cards' edges, and Skip and Carry on sit in the StickyActionBar,
+    // as the main popup's Cast does.
     return (
-      <div
-        className={[styles.wizard, styles.compact].join(' ')}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="wizard-title"
-      >
-        <div className={styles.header}>
-          <div className={styles.back}>
-            {showBackInHeader && <IconButton glyph="chevron-start" label={back} onPress={onBack} />}
-          </div>
-          <div class={styles.indicator}>
-            <StepIndicator
-              current={currentStep}
-              total={totalSteps}
-              labels={stepLabels}
-              stepOfLabel={stepOfLabel}
-            />
-          </div>
-        </div>
-        <div className={styles.content}>{children}</div>
-        <div className={styles.footer}>
-          <div className={styles.footerStart}>
-            {showSkip && onSkip && (
-              <Button size="md" kind="quiet" flush onClick={onSkip}>
-                {skip}
-              </Button>
-            )}
-          </div>
-          <Button size="md" kind="filled" onClick={onNext} disabled={nextDisabled}>
-            {nextLabel}
-          </Button>
-        </div>
+      <div className={styles.frame} role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <PopupShell
+          fill
+          header={
+            <div className={styles.header}>
+              <div className={styles.back}>
+                {showBackInHeader && (
+                  <IconButton kind="tonal" glyph="chevron-start" label={back} onPress={onBack} />
+                )}
+              </div>
+              <StepIndicator
+                current={currentStep}
+                total={totalSteps}
+                labels={stepLabels}
+                stepOfLabel={stepOfLabel}
+              />
+            </div>
+          }
+          bar={
+            <StickyActionBar>
+              <div className={styles.actions}>
+                <div className={styles.footerStart}>
+                  {showSkip && onSkip && (
+                    <Button size="md" kind="quiet" flush onClick={onSkip}>
+                      {skip}
+                    </Button>
+                  )}
+                </div>
+                <Button size="md" kind="filled" onClick={onNext} disabled={nextDisabled}>
+                  {nextLabel}
+                </Button>
+              </div>
+            </StickyActionBar>
+          }
+        >
+          <Card>{children}</Card>
+        </PopupShell>
       </div>
     );
   }
@@ -131,7 +147,10 @@ export function Wizard({
         />
       </div>
 
-      <div className={styles.content}>{children}</div>
+      {/* The full Wizard's one scroller; the compact one is as tall as its step. */}
+      <div className={styles.content} data-scroller="">
+        {children}
+      </div>
 
       <div className={styles.footer}>
         <div className={styles.footerStart}>

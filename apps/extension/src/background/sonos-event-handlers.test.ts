@@ -11,6 +11,7 @@ import { resetChromeStub, tabMessages } from '../test-support/chrome-stub';
 // test-support/offscreen-broker-mock.ts.
 import { brokerCalls as broker, resetBrokerCalls } from '../test-support/offscreen-broker-mock';
 import { notificationService } from './notification-service';
+import { clearConnectionState, setDesktopApp } from './connection-state';
 import { clearAllSessions, getSession, hasSession, registerSession } from './session-manager';
 import { handleSonosEvent, onSourcePlaybackStarted, stopCastForTab } from './sonos-event-handlers';
 import { resetVideoSyncService } from './video-sync/service';
@@ -351,6 +352,91 @@ describe('sonos events', () => {
     expect(notifications).toEqual([{ type: 'WS_STATE_CHANGED', state: getSonosState() }]);
   });
 
+  it('should keep an added room’s own level when the topology then shows it joined', async () => {
+    // Kitchen casts; Office, alone at 60, is added. The companion reads Office's own level as
+    // it joins (RenderingControl, marked own), before the topology shows Office no longer
+    // leading its own group. The level must survive that topology update.
+    const kitchen = freshIp();
+    const office = freshIp();
+    const member = (uuid: string, ip: string, zoneName: string) => ({ uuid, ip, zoneName });
+    const alone = (uuid: string, ip: string, name: string) => ({
+      id: `${uuid}:1`,
+      name,
+      coordinatorUuid: uuid,
+      coordinatorIp: ip,
+      members: [member(uuid, ip, name)],
+    });
+    await handleSonosEvent(
+      sonosEvent({
+        type: 'zoneGroupsUpdated',
+        groups: [alone('RINCON_K', kitchen, 'Kitchen'), alone('RINCON_O', office, 'Office')],
+      }),
+    );
+    await handleSonosEvent(sonosEvent({ type: 'groupVolume', speakerIp: office, volume: 60 }));
+    await handleSonosEvent(sonosEvent({ type: 'groupMute', speakerIp: office, muted: true }));
+
+    await handleSonosEvent(
+      sonosEvent({ type: 'groupVolume', speakerIp: office, volume: 14, own: true }),
+    );
+    await handleSonosEvent(
+      sonosEvent({ type: 'groupMute', speakerIp: office, muted: false, own: true }),
+    );
+    await handleSonosEvent(
+      sonosEvent({
+        type: 'zoneGroupsUpdated',
+        groups: [
+          {
+            ...alone('RINCON_K', kitchen, 'Kitchen'),
+            members: [member('RINCON_K', kitchen, 'Kitchen'), member('RINCON_O', office, 'Office')],
+          },
+        ],
+      }),
+    );
+
+    expect(getSonosState().groupVolumes[office]).toBe(14);
+    expect(getSonosState().groupMutes[office]).toBe(false);
+  });
+
+  it('should still drop a group’s level when its leader joins another group', async () => {
+    const kitchen = freshIp();
+    const patio = freshIp();
+    const alone = (uuid: string, ip: string, name: string) => ({
+      id: `${uuid}:1`,
+      name,
+      coordinatorUuid: uuid,
+      coordinatorIp: ip,
+      members: [{ uuid, ip, zoneName: name }],
+    });
+    await handleSonosEvent(
+      sonosEvent({
+        type: 'zoneGroupsUpdated',
+        groups: [alone('RINCON_K', kitchen, 'Kitchen'), alone('RINCON_P', patio, 'Patio')],
+      }),
+    );
+    // Patio's own level was followed once (an earlier cast), then its group's level came back.
+    await handleSonosEvent(
+      sonosEvent({ type: 'groupVolume', speakerIp: patio, volume: 30, own: true }),
+    );
+    await handleSonosEvent(sonosEvent({ type: 'groupVolume', speakerIp: patio, volume: 80 }));
+
+    await handleSonosEvent(
+      sonosEvent({
+        type: 'zoneGroupsUpdated',
+        groups: [
+          {
+            ...alone('RINCON_K', kitchen, 'Kitchen'),
+            members: [
+              { uuid: 'RINCON_K', ip: kitchen, zoneName: 'Kitchen' },
+              { uuid: 'RINCON_P', ip: patio, zoneName: 'Patio' },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(getSonosState().groupVolumes[patio]).toBeUndefined();
+  });
+
   it('should debounce transport state and keep only the last value per speaker', async () => {
     const speakerIp = freshIp();
 
@@ -404,6 +490,42 @@ describe('sonos events', () => {
       tabId: 1,
       speakerIp,
       reason: 'speaker_stopped',
+    });
+  });
+
+  it('should keep the Stopped a removed speaker reported just before its playbackStopped', async () => {
+    // Remove stops the room (a Stopped transport) and then ends its session
+    // (playbackStopped) well inside the transport debounce. The room is no
+    // longer this cast's, so the picker reads its transport: a lost Stopped
+    // leaves it Playing, and it reads as in use when nothing plays on it.
+    const removed = freshIp();
+    const kept = freshIp();
+    registerOwnCast(1, 'own-stream', [removed, kept]);
+    await handleSonosEvent(
+      sonosEvent({ type: 'transportState', speakerIp: removed, state: 'Playing' }),
+    );
+    await Bun.sleep(600);
+    notifications.length = 0;
+
+    await handleSonosEvent(
+      sonosEvent({ type: 'transportState', speakerIp: removed, state: 'Stopped' }),
+    );
+    await handleSonosEvent(
+      streamEvent({
+        type: 'playbackStopped',
+        streamId: 'own-stream',
+        speakerIp: removed,
+        reason: 'user_removed',
+      }),
+    );
+    await Bun.sleep(600);
+
+    expect(getSession(1)?.speakerIps).toEqual([kept]);
+    expect(getSonosState().transportStates[removed]).toBe('Stopped');
+    expect(notifications).toContainEqual({
+      type: 'TRANSPORT_STATE_UPDATE',
+      speakerIp: removed,
+      state: 'Stopped',
     });
   });
 
@@ -515,5 +637,62 @@ describe('resuming a cast from the tab', () => {
     expect(broker.startedPlayback).toEqual([
       { tabId: 7, speakerIps: [speakerIp], startVolume: undefined },
     ]);
+  });
+
+  it('should name the rooms of a regrouped cast again, with no start volume', async () => {
+    const [kitchen, patio] = [freshIp(), freshIp()];
+    setDesktopApp('http://localhost:49400', 10, 'desktop', undefined, true);
+    registerSession(
+      8,
+      'stream-rooms',
+      [kitchen, patio],
+      ['Kitchen', 'Patio'],
+      ENCODER,
+      true,
+      'tab',
+      false,
+      {
+        ids: ['RINCON_PATIO', 'RINCON_KITCHEN'],
+        targets: { RINCON_PATIO: patio, RINCON_KITCHEN: kitchen },
+      },
+    );
+
+    await onSourcePlaybackStarted(8);
+
+    expect(broker.startedPlayback).toEqual([
+      {
+        tabId: 8,
+        speakerIps: [patio, kitchen],
+        rooms: ['RINCON_PATIO', 'RINCON_KITCHEN'],
+        startVolume: undefined,
+      },
+    ]);
+    clearConnectionState();
+  });
+
+  it('should resume a joined cast by its speakers when the companion cannot regroup', async () => {
+    const [kitchen, patio] = [freshIp(), freshIp()];
+    setDesktopApp('http://localhost:49400', 10, 'desktop', undefined, false);
+    registerSession(
+      9,
+      'stream-old',
+      [kitchen, patio],
+      ['Kitchen', 'Patio'],
+      ENCODER,
+      true,
+      'tab',
+      false,
+      {
+        ids: ['RINCON_KITCHEN'],
+        targets: { RINCON_KITCHEN: kitchen },
+      },
+    );
+
+    await onSourcePlaybackStarted(9);
+
+    expect(broker.startedPlayback).toEqual([
+      { tabId: 9, speakerIps: [kitchen, patio], startVolume: undefined },
+    ]);
+    clearConnectionState();
   });
 });

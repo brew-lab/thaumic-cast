@@ -2,7 +2,6 @@ import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
 import { WizardStep, Notice } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
-import styles from './ReadyStep.module.css';
 
 /**
  * Final onboarding step confirming setup is complete.
@@ -20,11 +19,11 @@ export function ReadyStep(): preact.JSX.Element {
       subtitle={t('onboarding.ready.subtitle')}
       glyph="check"
     >
-      <p className={styles.introText}>
+      <p>
         {t('onboarding.ready.intro', { maxStreams: maxStreams ?? DEFAULT_MAX_CONCURRENT_STREAMS })}
       </p>
 
-      <p className={styles.performanceText}>{t('onboarding.ready.performance_body')}</p>
+      <p>{t('onboarding.ready.performance_body')}</p>
 
       <Notice tone="warning" text={t('onboarding.ready.battery_warning')} />
     </WizardStep>

@@ -1,0 +1,18 @@
+{
+  "type": "PLAYBACK_RESULTS",
+  "payload": {
+    "callId": "4f1c2a:2",
+    "results": [
+      {
+        "speakerIp": "192.168.1.10",
+        "success": true,
+        "streamUrl": "http://192.168.1.2:49400/stream/4f1c2a/live"
+      },
+      {
+        "speakerIp": "192.168.1.11",
+        "success": false,
+        "error": "Failed to join group: timed out"
+      }
+    ]
+  }
+}

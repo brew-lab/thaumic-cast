@@ -47,6 +47,7 @@ export {
   type StartPlaybackMessage,
   StartPlaybackResponseSchema,
   type StartPlaybackResponse,
+  type PlaybackRequest,
   OffscreenMetadataMessageSchema,
   type OffscreenMetadataMessage,
 

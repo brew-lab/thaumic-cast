@@ -64,7 +64,8 @@ pub enum SonosEvent {
         next_uri: Option<String>,
         timestamp: u64,
     },
-    /// Group volume changed (from coordinator).
+    /// A volume changed: a Sonos group's (GroupRenderingControl, from its
+    /// coordinator) or, with `own`, one room's (RenderingControl).
     GroupVolume {
         #[serde(rename = "speakerIp")]
         speaker_ip: String,
@@ -72,13 +73,23 @@ pub enum SonosEvent {
         /// Whether the output is fixed (line-level, cannot be adjusted).
         #[serde(skip_serializing_if = "Option::is_none")]
         fixed: Option<bool>,
+        /// The level is the room's own (RenderingControl, followed for a
+        /// room in a cast played as one Sonos group), not a group's: it
+        /// stays the room's level when the room stops leading a group, as a
+        /// room that joins a cast does. Sent only when true.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        own: bool,
         timestamp: u64,
     },
-    /// Group mute state changed (from coordinator).
+    /// A mute changed: a Sonos group's or, with `own`, one room's (as for
+    /// [`SonosEvent::GroupVolume`]).
     GroupMute {
         #[serde(rename = "speakerIp")]
         speaker_ip: String,
         muted: bool,
+        /// The mute is the room's own, not a group's. Sent only when true.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        own: bool,
         timestamp: u64,
     },
     /// Source changed (current URI doesn't match expected stream).
@@ -161,6 +172,16 @@ impl GenaSubscriptionManager {
     #[must_use]
     pub fn get_subscribed_ips(&self, service: SonosService) -> Vec<String> {
         self.store.get_subscribed_ips(service)
+    }
+
+    /// Hands `event` to the event processor as if a NOTIFY had carried it:
+    /// it is recorded, acted on and broadcast the same way. For a state the
+    /// companion read itself because the event that should have carried it
+    /// was lost. Dropped with a warning if the channel is full.
+    pub(crate) fn report(&self, event: SonosEvent) {
+        if let Err(e) = self.event_tx.try_send(event) {
+            log::warn!("[GENA] Could not hand a read state to the event processor: {e}");
+        }
     }
 
     /// Emits a SubscriptionLost event to the event channel.

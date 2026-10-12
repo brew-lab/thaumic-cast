@@ -1,10 +1,14 @@
 import type { JSX } from 'preact';
-import { useCallback } from 'preact/hooks';
+import { useCallback, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, DescriptionList, type DescriptionRow } from '@thaumic-cast/ui';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
 import type { ConnectionStatus } from '../../popup/hooks/useConnectionStatus';
+
+/** The About card's id, which the popup's marked Settings opens (`#about`). */
+export const ABOUT_ID = 'about';
+const ABOUT_HASH = `#${ABOUT_ID}`;
 
 /**
  * About section showing extension information and — when the extension is
@@ -22,6 +26,18 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
 
   const handleOpenReleases = useCallback(() => {
     chrome.tabs.create({ url: GITHUB_RELEASES_URL });
+  }, []);
+
+  // Opened from the popup's marked Settings (`#about`): the card is drawn after the settings
+  // load, too late for the browser's own jump, so it is brought into view here.
+  useEffect(() => {
+    /** Brings About into view when the fragment names it. */
+    const reveal = (): void => {
+      if (location.hash === ABOUT_HASH) document.getElementById(ABOUT_ID)?.scrollIntoView();
+    };
+    reveal();
+    window.addEventListener('hashchange', reveal);
+    return () => window.removeEventListener('hashchange', reveal);
   }, []);
 
   const isConnected = connection.phase === 'connected';
@@ -70,7 +86,7 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
   ];
 
   return (
-    <Card title={t('about_section_title')}>
+    <Card id={ABOUT_ID} title={t('about_section_title')}>
       <DescriptionList kind="readout" rows={rows} />
     </Card>
   );

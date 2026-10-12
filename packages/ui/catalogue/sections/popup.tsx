@@ -16,6 +16,9 @@ import { CastTile, type CastTileProps } from '../../src/CastTile';
 import { CastBar, type CastBarProps } from '../../src/CastBar';
 import { NoticeSlot, type NoticeSlotItem } from '../../src/NoticeSlot';
 import { PopupHeader, type PopupConnection } from '../../src/PopupHeader';
+import { BrandBlock } from '../../src/BrandBlock';
+import { IconButton } from '../../src/IconButton';
+import { StatusDot } from '../../src/StatusDot';
 import { MediaHeader, artBand, type MediaHeaderProps } from '../../src/MediaHeader';
 import { RoomRow, type RoomRowCastProps, type RoomRowPickProps } from '../../src/RoomRow';
 import { StartLevel } from '../../src/StartLevel';
@@ -864,8 +867,8 @@ const STATUS: Record<PopupConnection, string> = {
 };
 
 /**
- * PopupHeader: connected (desktop app and server), casting (the lit mark), checking,
- * reconnecting and not connected. Never a count.
+ * PopupHeader: connected (desktop app and server), casting (the lit mark), an update marked
+ * on Settings, checking, reconnecting and not connected. Never a count.
  * @returns The specimen
  */
 export function PopupHeaderSpecimen(): JSX.Element {
@@ -873,6 +876,7 @@ export function PopupHeaderSpecimen(): JSX.Element {
     connection: PopupConnection,
     live = false,
     text = STATUS[connection],
+    update = false,
   ): JSX.Element => (
     <PopupHeader
       name="Thaumic Cast"
@@ -886,20 +890,108 @@ export function PopupHeaderSpecimen(): JSX.Element {
       live={live}
       onSettings={noop}
       settingsLabel="Settings"
+      updateLabel={update ? 'Settings, update available' : undefined}
+    />
+  );
+  // On the popup's ground at its row width, as the popup draws it: not inside a card.
+  return (
+    <div class="popup-specimens">
+      <div class="popup-specimen popup-ground">
+        <p class="label">connected (desktop app, server), casting, an update on Settings</p>
+        <div class="stack">
+          {head('connected')}
+          {head('connected', false, 'Connected to the server')}
+          {head('connected', true)}
+          {head('connected', false, STATUS.connected, true)}
+        </div>
+      </div>
+      <div class="popup-specimen popup-ground">
+        <p class="label">checking, reconnecting, not connected</p>
+        <div class="stack">
+          {head('checking')}
+          {head('reconnecting', true)}
+          {head('disconnected')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------- Update available */
+
+/**
+ * Option 1, drawn for comparison only and not built: "Update available" as a link under the
+ * status words. It is the PopupHeader's layout with a third line in the identity column.
+ * @returns The header
+ */
+function HeaderWithUpdateLine(): JSX.Element {
+  return (
+    <header class="option-header">
+      <div class="option-identity">
+        <BrandBlock name="Thaumic Cast" lit={false} heading={false} />
+        <p class="option-status">
+          <StatusDot state="connected" />
+          <span>Connected to the desktop app</span>
+        </p>
+        <span class="option-line">
+          <Button kind="link" icon="external" onClick={noop}>
+            Update available
+          </Button>
+        </span>
+      </div>
+      <IconButton kind="tonal" glyph="settings" label="Settings" onPress={noop} />
+    </header>
+  );
+}
+
+/**
+ * "Update available" in the PopupHeader (owner call 3): option 2, the mark on Settings, is
+ * built; option 1, a second status line, is drawn beside it for comparison. Both in a real
+ * popup frame, before and after the version check lands.
+ * @returns The specimen
+ */
+export function UpdateAvailableSpecimen(): JSX.Element {
+  const shell = (header: JSX.Element): JSX.Element => (
+    <div class="popup-frame">
+      <PopupShell
+        header={header}
+        bar={
+          <StickyActionBar>
+            <Bar label="Cast to 1 room" />
+          </StickyActionBar>
+        }
+      >
+        <Tab />
+      </PopupShell>
+    </div>
+  );
+  const marked = (update: boolean): JSX.Element => (
+    <PopupHeader
+      name="Thaumic Cast"
+      connection="connected"
+      statusText="Connected to the desktop app"
+      live={false}
+      onSettings={noop}
+      settingsLabel="Settings"
+      updateLabel={update ? 'Settings, update available' : undefined}
     />
   );
   return (
     <div class="popup-specimens">
-      <PopupColumn label="connected (desktop app, server), casting">
-        {head('connected')}
-        {head('connected', false, 'Connected to the server')}
-        {head('connected', true)}
-      </PopupColumn>
-      <PopupColumn label="checking, reconnecting, not connected">
-        {head('checking')}
-        {head('reconnecting', true)}
-        {head('disconnected')}
-      </PopupColumn>
+      <div class="popup-specimen" data-option="2">
+        <p class="label">
+          option 2, built: a mark on Settings, named "Settings, update available", with its Tooltip;
+          it opens Settings at About. Nothing moves when it appears.
+        </p>
+        {shell(marked(true))}
+      </div>
+      <div class="popup-specimen" data-option="1">
+        <p class="label">
+          option 1, not built: a second status line. The header grows by a line when the version
+          check lands, under the pointer, or keeps an empty line on every open.
+        </p>
+        {shell(<HeaderWithUpdateLine />)}
+      </div>
     </div>
   );
 }
@@ -926,14 +1018,14 @@ function Bar(props: Partial<CastBarProps> & { label: string }): JSX.Element {
 }
 
 /**
- * CastBar: nothing chosen, ready with the interim line and the replace hint, busy, failed,
- * add mode, and not connected.
+ * CastBar: nothing chosen, ready with no line, one line, and the three (leaves, restarts, the
+ * replace hint), an older companion's "plays too", busy, failed, add mode, and not connected.
  * @returns The specimen
  */
 export function CastBarSpecimen(): JSX.Element {
   return (
     <div class="popup-specimens">
-      <PopupColumn label="nothing chosen; ready, no line and one line; a grouped partner plays too">
+      <PopupColumn label="nothing chosen; ready, no line and one line; leaves, restarts and the hint; an older companion">
         <Bar
           label="Cast"
           disabled
@@ -941,6 +1033,14 @@ export function CastBarSpecimen(): JSX.Element {
         />
         <Bar label="Cast to 1 room" />
         <Bar label="Cast to 4 rooms" lines={['Whatever the speaker is playing will stop.']} />
+        <Bar
+          label="Cast to 2 rooms"
+          lines={[
+            'Kitchen leaves its Sonos group until you stop.',
+            'Music in Patio starts again from the top.',
+            'Whatever the speaker is playing will stop.',
+          ]}
+        />
         <Bar
           label="Cast to 3 rooms"
           lines={[
@@ -1116,7 +1216,7 @@ function Picker({
       id: 'evenings',
       name: 'Evenings',
       kind: 'saved',
-      trail: 'Saved',
+      trail: '1 room',
       pressed: same(chosen, ['Living Room']),
     },
     {
@@ -1293,7 +1393,7 @@ export function TabCardSpecimen(): JSX.Element {
  * A CastTile holding its own open state, volume fold and add list.
  * @param props - The tile's starting state
  * @param props.title - The media title
- * @param props.seed - The artwork seed
+ * @param props.seed - The artwork seed; none for a cast with no artwork (and no band)
  * @param props.rooms - The rooms
  * @param props.open - Open at first
  * @param props.single - A single cast: no chevron
@@ -1313,7 +1413,7 @@ function Tile({
   sync = false,
 }: {
   title: string;
-  seed: readonly [number, number, number];
+  seed?: readonly [number, number, number];
   rooms: string[];
   open?: boolean;
   single?: boolean;
@@ -1330,11 +1430,11 @@ function Tile({
   const props: CastTileProps = {
     media: {
       kind: 'tab',
-      art: poster(seed),
+      art: seed && poster(seed),
       title,
       subtitle: names.join(' + '),
       playing: true,
-      band: artBand(seed),
+      band: seed && artBand(seed),
       transport,
       onGoToTab: noop,
       strings: MEDIA,
@@ -1384,7 +1484,8 @@ function Tile({
 
 /**
  * CastTile: a single cast open with no chevron; several rooms open with video sync and a
- * tile note; compact tiles with and without a slot line; the red guard.
+ * tile note; compact tiles with and without a slot line; the red guard; a cast with no
+ * artwork, open and compact.
  * @returns The specimen
  */
 export function CastTileSpecimen(): JSX.Element {
@@ -1422,6 +1523,13 @@ export function CastTileSpecimen(): JSX.Element {
         <p class="label">the red guard: Stop off the band</p>
         <Tile title="Film title" seed={SEEDS.red} rooms={['TV Room']} open />
       </div>
+      <div class="popup-specimen popup-ground" data-specimen="no-art">
+        <p class="label">no artwork, so no band: the head row sits where it does compact</p>
+        <div class="stack">
+          <Tile title="Tone title" rooms={['Kitchen', 'Office']} open />
+          <Tile title="Hum title" rooms={['Study']} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -1430,8 +1538,8 @@ export function CastTileSpecimen(): JSX.Element {
 
 /**
  * PopupShell and StickyActionBar: an idle popup that fits, and a long one that scrolls with
- * the banner, the away line, two casts, the TabCard, a Toast in the bar and the end row.
- * Each frame is the real popup size (22rem by at most 37.5rem).
+ * the banner, the away line, two casts, the TabCard and a Toast in the bar, with an update
+ * marked on Settings. Each frame is the real popup size (22rem by at most 37.5rem).
  * @returns The specimen
  */
 export function PopupShellSpecimen(): JSX.Element {
@@ -1444,6 +1552,7 @@ export function PopupShellSpecimen(): JSX.Element {
       live={live}
       onSettings={noop}
       settingsLabel="Settings"
+      updateLabel={live ? 'Settings, update available' : undefined}
     />
   );
   return (
@@ -1464,9 +1573,7 @@ export function PopupShellSpecimen(): JSX.Element {
         </div>
       </div>
       <div class="popup-specimen">
-        <p class="label">
-          long: one scroller; the bar sticks, with its hairline, and the end row follows
-        </p>
+        <p class="label">long: one scroller; the bar sticks, with its hairline, at the end</p>
         <div class="popup-frame" data-frame="long">
           <PopupShell
             header={header(true)}
@@ -1504,14 +1611,9 @@ export function PopupShellSpecimen(): JSX.Element {
               >
                 <Bar
                   label="Cast to 2 rooms"
-                  lines={['Patio plays too, as it is grouped with Kitchen.']}
+                  lines={['Patio leaves its Sonos group until you stop.']}
                 />
               </StickyActionBar>
-            }
-            end={
-              <Button kind="link" icon="external" href="#popup-shell">
-                Update available
-              </Button>
             }
           >
             <SectionHeader kind="live" level={2} title="Casting now" />
@@ -1569,7 +1671,7 @@ export function PopupFramesSpecimen(): JSX.Element {
         {() => (
           <Bar
             label="Cast to 2 rooms"
-            lines={['Patio plays too, as it is grouped with Kitchen.']}
+            lines={['Patio leaves its Sonos group until you stop.']}
             failure={{ lead: 'The cast did not start', onDismiss: noop }}
           />
         )}

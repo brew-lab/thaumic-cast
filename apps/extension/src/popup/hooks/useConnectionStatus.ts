@@ -39,6 +39,8 @@ export interface ConnectionStatus {
   appType: AppType | null;
   /** Whether the companion says it can capture the whole browser (null when it does not say). */
   browserCapture: boolean | null;
+  /** Whether the companion plays the chosen rooms as one Sonos group (null when not known). */
+  regroup: boolean | null;
   /** Companion app semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
   appVersion: string | null;
   /** Wire-protocol semver from `INITIAL_STATE` (null on pre-0.4.0 builds). */
@@ -60,6 +62,7 @@ interface ConnectionState {
   networkHealthReason: string | null;
   appType: AppType | null;
   browserCapture: boolean | null;
+  regroup: boolean | null;
   appVersion: string | null;
   protocolVersion: string | null;
   companionAudio: CompanionAudio | null;
@@ -87,6 +90,7 @@ const initialState: ConnectionState = {
   networkHealthReason: null,
   appType: null,
   browserCapture: null,
+  regroup: null,
   appVersion: null,
   protocolVersion: null,
   companionAudio: null,
@@ -126,6 +130,7 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         networkHealthReason,
         appType,
         browserCapture,
+        regroup,
         appVersion,
         protocolVersion,
         companionAudio,
@@ -142,6 +147,7 @@ function connectionReducer(state: ConnectionState, action: ConnectionAction): Co
         networkHealthReason: networkHealthReason ?? null,
         appType: appType ?? null,
         browserCapture: browserCapture ?? null,
+        regroup: regroup ?? null,
         appVersion: appVersion ?? null,
         protocolVersion: protocolVersion ?? null,
         companionAudio: companionAudio ?? null,

@@ -1682,6 +1682,10 @@ mod tests {
         async fn leave_group(&self, _: &str) -> SoapResult<()> {
             Ok(())
         }
+
+        async fn rejoin_group(&self, _: &str, _: &str) -> SoapResult<()> {
+            Ok(())
+        }
     }
 
     /// Collects what clients are sent.
@@ -1752,7 +1756,7 @@ mod tests {
                 role: GroupRole::Coordinator,
                 coordinator_ip: None,
                 coordinator_uuid: Some("RINCON_COORD".to_string()),
-                original_coordinator_uuid: None,
+                old_group: None,
             });
             state.record_transport_state(COORDINATOR, TransportState::Playing);
             if with_member {
@@ -1764,7 +1768,7 @@ mod tests {
                     role: GroupRole::Slave,
                     coordinator_ip: Some(COORDINATOR.to_string()),
                     coordinator_uuid: Some("RINCON_COORD".to_string()),
-                    original_coordinator_uuid: None,
+                    old_group: None,
                 });
                 state.record_transport_state(MEMBER, TransportState::Playing);
             }

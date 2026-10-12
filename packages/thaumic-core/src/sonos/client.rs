@@ -155,12 +155,22 @@ impl SonosPlayback for SonosClientImpl {
     async fn leave_group(&self, ip: &str) -> SoapResult<()> {
         grouping::leave_group(&self.client, ip, self.speaker_port).await
     }
+
+    async fn rejoin_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        grouping::rejoin_group(&self.client, ip, self.speaker_port, coordinator_uuid).await
+    }
 }
 
 #[async_trait]
 impl SonosTopology for SonosClientImpl {
     async fn get_zone_group_state(&self, ip: &str) -> SoapResult<ZoneGroupSnapshot> {
         zone_groups::get_zone_group_state(&self.client, ip, self.speaker_port).await
+    }
+
+    async fn read_transport_state(&self, ip: &str) -> Option<TransportState> {
+        playback::get_transport_info(&self.client, ip, self.speaker_port)
+            .await
+            .ok()
     }
 }
 

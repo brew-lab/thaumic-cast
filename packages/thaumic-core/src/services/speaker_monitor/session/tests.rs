@@ -261,6 +261,10 @@ mod polling {
         async fn leave_group(&self, _: &str) -> SoapResult<()> {
             Ok(())
         }
+
+        async fn rejoin_group(&self, _: &str, _: &str) -> SoapResult<()> {
+            Ok(())
+        }
     }
 
     struct NoEvents;

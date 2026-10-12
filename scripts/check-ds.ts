@@ -38,8 +38,8 @@ export const CLEAN_PATHS = [
   // Phase 3: the popup's molecules, components and shells.
   /^packages\/ui\/src\/(CastBar|CastTile|TabCard|GroupVolume|MediaHeader|NoticeSlot|PopupHeader|PopupShell|StickyActionBar|RoomPicker|RoomRow|StartLevel|VideoSync)\//,
   // Every app file (Phase 1; the popup since Phase 3), except the layouts Phase 4 rebuilds
-  // wholesale: the desktop shell and the two onboarding frames.
-  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/Onboarding\.module\.css$)(?!extension\/src\/popup\/components\/Onboarding\.module\.css$)[^/]+\/src\/.*\.(tsx|css)$/,
+  // wholesale: the desktop shell and the desktop onboarding frame.
+  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/Onboarding\.module\.css$)[^/]+\/src\/.*\.(tsx|css)$/,
 ];
 
 /** One finding: the check it breaks, where, and what. */

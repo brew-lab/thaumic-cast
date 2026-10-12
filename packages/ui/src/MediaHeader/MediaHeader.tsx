@@ -83,6 +83,11 @@ export interface MediaHeaderProps extends DataAttributes {
    * moves off the band, under it at the inline end.
    */
   band?: MediaBand;
+  /**
+   * The band reaches its card's top and sides (the open CastTile): it takes the card's inner
+   * corner and adds the tile's inset to its padding, so nothing on it moves.
+   */
+  bleed?: boolean;
   /** The words. */
   strings: MediaHeaderStrings;
 }
@@ -108,6 +113,7 @@ export interface MediaHeaderProps extends DataAttributes {
  * @param props.onGoToTab - Go to tab
  * @param props.trailing - The head's end slot
  * @param props.band - The artwork-seeded band
+ * @param props.bleed - The band reaches its card's edges
  * @param props.strings - The words
  * @returns The header
  */
@@ -125,6 +131,7 @@ export function MediaHeader({
   onGoToTab,
   trailing,
   band,
+  bleed = false,
   strings,
   ...rest
 }: MediaHeaderProps): JSX.Element {
@@ -174,7 +181,7 @@ export function MediaHeader({
   return (
     <div class={styles.root}>
       <div
-        class={cx(styles.media, styles[size], band && styles.band)}
+        class={cx(styles.media, styles[size], band && styles.band, band && bleed && styles.bleed)}
         style={band ? { '--art-h': band.hue, '--art-c': band.chroma } : undefined}
       >
         <div class={styles.head}>

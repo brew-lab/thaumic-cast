@@ -1,23 +1,25 @@
 /*
- * The popup's global CSS. The theme switch, the body defaults and the focus ring are in
- * @thaumic-cast/ui/base.css.
+ * The popup's global CSS. The theme switch, the body defaults, the focus ring and the
+ * scrollbar are in @thaumic-cast/ui/base.css.
  *
  * The PopupShell is the one scroller (L-popup): it is as wide as the popup and at most as
- * tall, with its own stable gutter, so the document itself never scrolls and keeps no
- * gutter. Until Phase 4's WizardShell, the onboarding frame scrolls the document, so the
- * document keeps a stable gutter while no shell is on the page.
+ * tall, with its own gutter. The onboarding's compact Wizard is a PopupShell too, as tall as
+ * the popup can be. The body is marked a page scroller too (`data-scroller` on
+ * <body>), and base.css gives its gutter to the frame inside it. Never the document: Chromium
+ * sizes a popup to the body's width and leaves the document's gutters out of it, so a gutter on
+ * the root pushed the page off the popup's end by its width. The document never scrolls.
  */
 @layer app {
-  :root {
-    scrollbar-gutter: stable;
-  }
-
-  :root:has([data-scroller]) {
-    scrollbar-gutter: auto;
-  }
-
   body {
     container: app / inline-size;
     inline-size: var(--popup-inline);
+  }
+
+  /*
+   * The document never scrolls, not even by the fraction of a pixel the shell's height rounds
+   * up to: a classic scrollbar would arrive for it.
+   */
+  :root {
+    overflow: clip;
   }
 }

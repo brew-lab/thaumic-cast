@@ -31,11 +31,13 @@ export interface CastTileViewProps extends Omit<
   fineTuneOpen?: boolean;
   /** Opens or shuts video sync's Fine-tune. */
   onFineTuneChange?: (open: boolean) => void;
+  /** The popup is open over the cast's own tab, so there is no Go to tab. */
+  onItsTab?: boolean;
 }
 
 /**
  * One running cast as a CastTile: what it plays (its artwork-seeded band, the
- * transport and Go to tab), Stop, and video sync when the cast has it. The
+ * transport and, from another tab, Go to tab), Stop, and video sync when the cast has it. The
  * rest of the tile (volume, slot, notes) comes from the popup.
  * @param props - Component props
  * @param props.cast - The cast
@@ -45,6 +47,7 @@ export interface CastTileViewProps extends Omit<
  * @param props.words - The words
  * @param props.fineTuneOpen - Video sync's Fine-tune is open
  * @param props.onFineTuneChange - Opens or shuts it
+ * @param props.onItsTab - The popup is open over the cast's tab
  * @returns The tile
  */
 export function CastTileView({
@@ -55,6 +58,7 @@ export function CastTileView({
   words,
   fineTuneOpen,
   onFineTuneChange,
+  onItsTab = false,
   ...tile
 }: CastTileViewProps): JSX.Element {
   const { t } = words;
@@ -103,9 +107,12 @@ export function CastTileView({
         playing,
         band: dominant ? artBand(dominant.oklch) : undefined,
         transport,
-        onGoToTab: () => {
-          chrome.tabs.update(cast.tabId, { active: true });
-        },
+        // Go to tab only from another tab: on the cast's own tab it would go nowhere.
+        onGoToTab: onItsTab
+          ? undefined
+          : () => {
+              chrome.tabs.update(cast.tabId, { active: true });
+            },
         strings: words.media,
       }}
       stop={{

@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { resetChromeStub } from '../test-support/chrome-stub';
-import { clearConnectionState, getConnectionState, setDesktopApp } from './connection-state';
+import {
+  clearConnectionState,
+  getConnectionState,
+  setDesktopApp,
+  setRegroup,
+} from './connection-state';
 
 const DESKTOP = 'http://localhost:49400';
 const SERVER = 'http://192.168.1.20:49400';
@@ -50,5 +55,30 @@ describe('the capture capability in the connection state', () => {
     clearConnectionState();
 
     expect(getConnectionState().browserCapture).toBeNull();
+  });
+});
+
+describe('whether the companion regroups', () => {
+  it('should be unknown until a companion answers, then what it said', () => {
+    expect(getConnectionState().regroup).toBeNull();
+    setDesktopApp(DESKTOP, 10, 'desktop', undefined, true);
+    expect(getConnectionState().regroup).toBe(true);
+  });
+
+  it('should drop to false when an older companion answers at the same address', () => {
+    setDesktopApp(DESKTOP, 10, 'desktop', undefined, true);
+    setDesktopApp(DESKTOP, 10, 'desktop', undefined, false);
+    expect(getConnectionState().regroup).toBe(false);
+    setDesktopApp(DESKTOP, 10, 'desktop', undefined, true);
+    setRegroup(false);
+    expect(getConnectionState().regroup).toBe(false);
+  });
+
+  it('should be kept with no answer from the same companion, and forgotten for another', () => {
+    setDesktopApp(DESKTOP, 10, 'desktop', undefined, true);
+    setDesktopApp(DESKTOP, 10);
+    expect(getConnectionState().regroup).toBe(true);
+    setDesktopApp(SERVER, 10, 'server');
+    expect(getConnectionState().regroup).toBeNull();
   });
 });
