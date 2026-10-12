@@ -125,22 +125,30 @@ test('tabbing through the long popup never leaves focus under the bar (2.4.11)',
   let reachedBar = false;
   for (let i = 0; i < 60; i++) {
     await page.keyboard.press('Tab');
-    const where = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement | null;
-      const shell = el?.closest<HTMLElement>('[data-scroller]');
-      if (!el || !shell) return null;
-      const bar = shell.querySelector<HTMLElement>('[data-sticky-bar]')!;
-      if (bar.contains(el) || !shell.contains(el)) return { done: bar.contains(el) };
-      const r = el.getBoundingClientRect();
-      const b = bar.getBoundingClientRect();
-      const s = shell.getBoundingClientRect();
-      return {
-        done: false,
-        name: el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 30) ?? el.tagName,
-        under: r.bottom > b.top + 0.5,
-        above: r.top < s.top - 0.5,
-      };
-    });
+    const locate = () =>
+      page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        const shell = el?.closest<HTMLElement>('[data-scroller]');
+        if (!el || !shell) return null;
+        const bar = shell.querySelector<HTMLElement>('[data-sticky-bar]')!;
+        if (bar.contains(el) || !shell.contains(el)) return { done: bar.contains(el) };
+        const r = el.getBoundingClientRect();
+        const b = bar.getBoundingClientRect();
+        const s = shell.getBoundingClientRect();
+        return {
+          done: false,
+          name: el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 30) ?? el.tagName,
+          under: r.bottom > b.top + 0.5,
+          above: r.top < s.top - 0.5,
+        };
+      });
+    // Where focus comes to rest: a slow runner can draw the scroll to it a frame late, so a
+    // control that still sits under the bar after a second counts as hidden.
+    let where = await locate();
+    for (let t = 0; where && !where.done && (where.under || where.above) && t < 10; t++) {
+      await page.waitForTimeout(100);
+      where = await locate();
+    }
     if (!where || where.done) {
       reachedBar = Boolean(where?.done);
       break;
