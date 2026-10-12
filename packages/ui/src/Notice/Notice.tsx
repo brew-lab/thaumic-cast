@@ -66,6 +66,11 @@ export interface NoticeProps {
    * Nothing is said for what is already there on open.
    */
   announce?: boolean;
+  /**
+   * Its place in a list of notices (1 for the first), for the entrance stagger where the
+   * browser has no `sibling-index()`. Leave it out for a notice on its own.
+   */
+  index?: number;
 }
 
 /**
@@ -87,6 +92,7 @@ export interface NoticeProps {
  * @param props.dismissLabel - The X's name
  * @param props.also - Banner only: one more condition
  * @param props.announce - Say it on arrival
+ * @param props.index - Its place in a list of notices
  * @returns The notice
  */
 export function Notice({
@@ -100,6 +106,7 @@ export function Notice({
   dismissLabel = 'Dismiss',
   also,
   announce = true,
+  index,
 }: NoticeProps): JSX.Element {
   const id = useId();
   const nameId = lead ? `${id}-lead` : `${id}-text`;
@@ -122,7 +129,9 @@ export function Notice({
   const Root = kind === 'banner' ? 'div' : 'section';
   return (
     <Root
-      class={cx(styles.notice, styles[tone], styles[kind], onDismiss && styles.dismissible)}
+      class={cx(styles.notice, styles[kind], onDismiss && styles.dismissible)}
+      data-tone={tone}
+      style={index === undefined ? undefined : { '--i': index }}
       role={kind === 'banner' ? 'region' : undefined}
       aria-labelledby={lead || text ? nameId : undefined}
     >

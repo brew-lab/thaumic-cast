@@ -61,6 +61,11 @@ export interface NoticeLineProps {
   announce?: boolean;
   /** Say it urgently: a room's failure line and the CastBar line only (S6, S8). */
   urgent?: boolean;
+  /**
+   * Its place in a list of notices (1 for the first), for the entrance stagger where the
+   * browser has no `sibling-index()`. Leave it out for a notice on its own.
+   */
+  index?: number;
 }
 
 /**
@@ -81,6 +86,7 @@ export interface NoticeLineProps {
  * @param props.dismissLabel - The X's name
  * @param props.announce - Say it on arrival
  * @param props.urgent - Say it urgently
+ * @param props.index - Its place in a list of notices
  * @returns The line
  */
 export function NoticeLine({
@@ -96,6 +102,7 @@ export function NoticeLine({
   dismissLabel = 'Dismiss',
   announce = true,
   urgent = false,
+  index,
 }: NoticeLineProps): JSX.Element {
   const id = useId();
   const [ownOpen, setOwnOpen] = useState(false);
@@ -105,6 +112,8 @@ export function NoticeLine({
   useEffect(() => {
     if (announce && said) say(said.message, { urgent: said.urgent });
   }, [announce, said?.message, said?.urgent, say]);
+
+  const stagger = index === undefined ? undefined : { '--i': index };
 
   const toggle = (): void => {
     const next = !open;
@@ -129,7 +138,7 @@ export function NoticeLine({
 
   if (opensTile) {
     return (
-      <div class={cx(styles.line, styles[tone])}>
+      <div class={styles.line} data-tone={tone} style={stagger}>
         <button
           type="button"
           class={styles.opener}
@@ -148,7 +157,9 @@ export function NoticeLine({
 
   return (
     <div
-      class={cx(styles.line, styles[tone], onDismiss && styles.dismissible)}
+      class={cx(styles.line, onDismiss && styles.dismissible)}
+      data-tone={tone}
+      style={stagger}
       role={srPrefix ? 'group' : undefined}
       aria-label={srPrefix ? `${srPrefix} ${lead}` : undefined}
     >

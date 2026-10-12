@@ -15,10 +15,14 @@
     margin: 0;
   }
 
+  /*
+   * Stacked, the field's hit area and the Button's each reach past their boxes; the rows
+   * keep --gap-target apart so the hit areas never overlap (T-target).
+   */
   .line {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--address-gap);
+    gap: var(--gap-target) var(--address-gap);
     align-items: center;
   }
 
@@ -30,6 +34,15 @@
     .speaker .line {
       grid-template-columns: minmax(0, var(--address-control-max)) auto;
       justify-content: start;
+    }
+  }
+
+  /* Where the IP field grows with its text (15ch to 20ch), its column follows it. */
+  @supports (field-sizing: content) {
+    @container field (inline-size >= 25rem) {
+      .speaker .line {
+        grid-template-columns: minmax(0, max-content) auto;
+      }
     }
   }
 
@@ -65,9 +78,9 @@
     line-height: var(--leading-3);
   }
 
+  /* The latency is end-aligned in its --ch-ms box (F-shift), so a new reading never shifts. */
   .detail {
     min-inline-size: var(--ch-ms);
     color: var(--on-surface-variant);
-    text-align: start;
   }
 }

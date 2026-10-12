@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { Icon } from '../Icon';
 import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
+import { usePress } from '../utils/press';
 import styles from './Chip.module.css';
 
 /** Props for {@link Chip}. */
@@ -37,8 +38,9 @@ function focusNeighbour(from: HTMLElement): void {
 
 /**
  * A removable value (DESIGN.md A-chip), input kind only: the desktop's speakers added by
- * address. The × is a 1.5rem square with the small bevel on hover and focus, and its hit
- * area grows to the desktop target. Focus rings the whole chip on its unchanged corner.
+ * address. The × is a 1.5rem square: hover is colour, focus-visible and a press take the
+ * small bevel, and its hit area grows to the desktop target. Focus rings the whole chip on
+ * its unchanged corner.
  * Delete or Backspace removes the chip and moves focus to the next one.
  * @param props - Component props
  * @param props.label - The words
@@ -56,6 +58,7 @@ export function Chip({
   disabled = false,
   ...rest
 }: ChipProps): JSX.Element {
+  const press = usePress();
   const remove = (button: HTMLElement): void => {
     focusNeighbour(button);
     onRemove();
@@ -66,6 +69,7 @@ export function Chip({
       <button
         type="button"
         class={styles.remove}
+        {...press}
         aria-label={removeLabel}
         disabled={disabled}
         onClick={(event) => remove(event.currentTarget as HTMLElement)}

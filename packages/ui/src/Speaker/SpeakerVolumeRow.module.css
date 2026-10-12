@@ -35,14 +35,6 @@
     gap: var(--space-3);
   }
 
-  .value {
-    min-inline-size: var(--ch-volume);
-    color: var(--on-surface);
-    font-size: var(--text-3);
-    font-weight: var(--weight-strong);
-    line-height: var(--leading-3);
-  }
-
   .fixed {
     color: var(--on-surface);
     font-size: var(--text-3);

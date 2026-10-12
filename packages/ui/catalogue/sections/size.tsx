@@ -134,6 +134,7 @@ function SettingsMock(): JSX.Element {
       <Card title="Appearance" level={3}>
         <SettingsRow
           label="Theme"
+          controlWidth="wide"
           help="Light or dark, whichever the system is set to."
           control={(a11y) => (
             <SegmentedControl

@@ -3,7 +3,7 @@
    * M-toast. The inverse surface; the action, the glyph and the ring take the semantic
    * tokens that read as the other theme's inks on it (--primary-container is the light
    * purple in light and the deep one in dark; --outline-variant likewise). No tones and no
-   * shadow (it is in flow). The text wraps to two lines at most.
+   * shadow (it is in flow). The text wraps and is never cut off: it has to be read.
    */
   .toast {
     --toast-bg: var(--inverse-surface);
@@ -24,6 +24,9 @@
     color: var(--toast-fg);
     font-size: var(--text-3);
     line-height: var(--leading-3);
+    transition:
+      opacity var(--dur-effects) var(--ease-effects),
+      translate var(--dur-effects) var(--ease-effects);
   }
 
   :where([data-density='desktop']) .toast {
@@ -46,11 +49,7 @@
     flex: 1 1 0;
     min-inline-size: 0;
     margin: 0;
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    padding-block: var(--space-1);
     text-wrap: pretty;
   }
 
@@ -75,6 +74,25 @@
   @media (forced-colors: active) {
     .toast {
       border: var(--line-hair) solid CanvasText;
+    }
+  }
+
+  /*
+   * F-shift: it arrives in flow with an entrance that moves nothing around it (opacity and
+   * translate only); there is one at a time, so nothing staggers. Without @starting-style it
+   * simply appears.
+   */
+
+  @starting-style {
+    .toast {
+      opacity: 0;
+      translate: 0 var(--space-2);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast {
+      transition: none;
     }
   }
 }

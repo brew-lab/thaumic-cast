@@ -114,14 +114,7 @@ export function Speakers() {
             >
               {t('speakers.scan')}
             </Button>
-            <Button
-              size="md"
-              kind="filled"
-              danger
-              icon="stop"
-              onAction={stopAll}
-              labels={{ busy: t('speakers.stopping') }}
-            >
+            <Button size="md" kind="filled" danger icon="stop" onAction={stopAll}>
               {t('speakers.stop_all')}
             </Button>
           </Cluster>

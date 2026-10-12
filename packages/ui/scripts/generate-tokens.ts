@@ -17,6 +17,7 @@ import { format } from 'prettier';
 import { hexToOklchCss } from './oklch';
 import {
   CHROME,
+  COMPONENT_PAIRS,
   CONTAINER_BREAKPOINTS_REM,
   DENSITY,
   FLUID_RAMP,
@@ -77,7 +78,9 @@ function fluid(min: number, max: number): string {
   return `clamp(${rem(min)}, ${base}rem + ${k}cqi, ${rem(max)})`;
 }
 
-/** The status sets as token groups: `--{set}-container`, `--on-{set}-container`, `--{set}-ink`.
+/**
+ * The status sets as token groups: `--{set}-container`, `--on-{set}-container`, `--{set}-ink`,
+ * and `--{set}-glyph` (the on-container colour in light, the ink in dark).
  * @returns The status token group
  */
 function statusGroup(): TokenGroup {
@@ -86,8 +89,38 @@ function statusGroup(): TokenGroup {
     tokens[`${set}-container`] = v.container;
     tokens[`on-${set}-container`] = v.on;
     tokens[`${set}-ink`] = v.ink;
+    tokens[`${set}-glyph`] = { light: `var(--on-${set}-container)`, dark: `var(--${set}-ink)` };
   }
   return { title: 'T-colour: status sets (in light, glyphs take the on-container colour)', tokens };
+}
+
+/** The tone tokens a component reads, in the order a `[data-tone]` block maps them. */
+export const TONE_TOKENS = [
+  'tone-container',
+  'on-tone-container',
+  'tone-glyph',
+  'tone-ink',
+] as const;
+
+/**
+ * The `[data-tone]` blocks: one per status set, mapping the set onto the `--tone-*` tokens. A
+ * component sets `data-tone` on the element that carries the tone and reads `--tone-*` only,
+ * as one of two pairs: on its container (container, on-container, glyph) or on a surface (the
+ * ink). They hold no theme pair, so webkit-fallbacks.css need not repeat them.
+ * @returns The CSS rules
+ */
+function toneBlocks(): string {
+  return Object.keys(STATUS_SETS)
+    .map((set) => {
+      const [container, on, glyph, ink] = TONE_TOKENS;
+      return `  [data-tone='${set}'] {
+    --${container}: var(--${set}-container);
+    --${on}: var(--on-${set}-container);
+    --${glyph}: var(--${set}-glyph);
+    --${ink}: var(--${set}-ink);
+  }`;
+    })
+    .join('\n\n');
 }
 
 /** The type tokens: sizes, line heights and Geist tracking.
@@ -156,6 +189,7 @@ function rootGroups(): TokenGroup[] {
     primitiveGroup(),
     SEMANTIC_COLORS,
     statusGroup(),
+    COMPONENT_PAIRS,
     LIVE,
     PLAIN[0],
     typeGroup(),
@@ -206,6 +240,18 @@ function renderCss(): string {
   initial-value: 0%;
 }
 
+/*
+ * T-motion: the colours a change of state cross-fades (a segment's choice, a Button's
+ * failed fill), registered so they transition instead of snapping. Where registration is
+ * missing they switch at once.
+ */
+${['seg-bg', 'seg-fg', 'btn-bg', 'btn-fg']
+  .map(
+    (n) =>
+      `@property --${n} {\n  syntax: '<color>';\n  inherits: true;\n  initial-value: transparent;\n}`,
+  )
+  .join('\n\n')}
+
 /* T-colour: the live gradient's hue drift, in degrees. */
 @property --live-shift {
   syntax: '<number>';
@@ -213,17 +259,17 @@ function renderCss(): string {
   initial-value: 0;
 }
 
-/* T-motion: one Clacks shutter, 1 while open (driven by the clack keyframes). */
-@property --clack-open {
-  syntax: '<number>';
-  inherits: false;
-  initial-value: 0;
-}
-
 @layer tokens {
   :root {
 ${block(rootGroups(), cssValue).replace(/^/gm, '  ')}
   }
+
+  /*
+   * T-colour: the tones. Components never read a status set by name; they set data-tone and
+   * read --tone-container, --on-tone-container and --tone-glyph (on the container) or
+   * --tone-ink (on a surface).
+   */
+${toneBlocks()}
 
   /* T-target and T-size: [data-density] sets control heights; container queries never do. */
   :root,
@@ -269,8 +315,9 @@ function renderFallbacks(): string {
   return `/*
  * ${HEADER}
  *
- * Desktop only. The desktop's floor is the system WebKit on macOS 13 (Safari 16.0) and
- * WebKitGTK 2.44, which have no light-dark(). This file repeats every themed token per theme.
+ * Desktop only. The desktop's floor is the system WebKit on macOS 13 with Safari 16.4 and
+ * WebKitGTK 2.44, which have no light-dark(). This file repeats every themed token per theme,
+ * the component pairs included, so no module writes light-dark() (check-ds rejects it).
  * Import it after tokens.css; the extension (Chrome 125) never loads it.
  */
 
@@ -314,6 +361,7 @@ function renderTs(): string {
       }
     }
   }
+  names.push(...TONE_TOKENS.map((n) => `--${n}`));
   names.push(...Object.keys(DENSITY).map((n) => `--${n}`));
   const timings = Object.entries(TIMINGS)
     .map(

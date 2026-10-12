@@ -2,8 +2,8 @@
   /* A-brand. The mark is --brand-ink in light and --primary in dark; never magenta. */
   .brand {
     --brand-mark: var(--icon-lg);
-    --brand-mark-ink: light-dark(var(--brand-ink), var(--primary));
-    --brand-name-ink: light-dark(var(--brand-ink), var(--on-surface));
+    --brand-mark-ink: var(--mark-ink);
+    --brand-name-ink: var(--title-ink);
 
     display: flex;
     align-items: center;
@@ -11,10 +11,34 @@
     min-inline-size: 0;
   }
 
+  /*
+   * The wide rail: the mark sits on the name's line, centred on the name's letters (the name
+   * is trimmed to its caps, F-textbox), and the version runs under the name. A grid puts the
+   * mark and the name in one row, so the version never pulls the mark off the name.
+   */
   .rail {
     --brand-mark: calc(var(--icon-lg) + var(--space-3));
 
-    gap: var(--space-4);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0 var(--space-4);
+  }
+
+  .rail .words {
+    display: contents;
+  }
+
+  .rail .mark {
+    grid-area: 1 / 1;
+  }
+
+  .rail .name {
+    grid-area: 1 / 2;
+  }
+
+  .rail .version {
+    grid-area: 2 / 2;
+    min-block-size: calc(var(--text-2) * var(--leading-2));
   }
 
   .mark {
@@ -31,10 +55,11 @@
     block-size: 100%;
   }
 
+  /* The name is trimmed to its letters (F-textbox), so the gap gives the version its room. */
   .words {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-3);
     min-inline-size: 0;
   }
 
@@ -65,10 +90,11 @@
   /* The narrow rail: the mark alone, centred; the words stay for screen readers. */
   @container app (inline-size < 45rem) {
     .rail {
+      grid-template-columns: auto;
       justify-content: center;
     }
 
-    .rail .words {
+    .rail :is(.name, .version) {
       position: absolute;
       inline-size: var(--line-hair);
       block-size: var(--line-hair);

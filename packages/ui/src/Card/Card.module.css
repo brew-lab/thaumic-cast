@@ -15,7 +15,7 @@
     min-inline-size: 0;
     margin: 0;
     padding: var(--card-pad);
-    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
+    border: var(--line-hair) solid var(--card-edge);
     border-radius: var(--radius-card);
     background: var(--surface);
     color: var(--on-surface);
@@ -25,9 +25,13 @@
     --card-pad: var(--space-5);
   }
 
+  /*
+   * No padding, and no clipping: overflow would cut off a child's focus ring at the card's
+   * edge. A part that paints to the edge (the artwork band) rounds its own corners with
+   * --radius-card.
+   */
   .flush {
     padding: 0;
-    overflow: hidden;
   }
 
   .body {
@@ -35,5 +39,31 @@
     flex-direction: column;
     gap: var(--card-gap);
     min-inline-size: 0;
+  }
+
+  /*
+   * F-grid: settings rows subgrid their card. While the body holds settings rows
+   * ([data-setrow]: SettingsRow, Switch), it is the grid they share: a label track and an
+   * auto control track, so every row's control sits in one column, and from a 45rem card a
+   * help track. Everything else in the body spans the row. Under 25rem each row keeps its
+   * own tracks: one shared column as wide as the widest control would squeeze every label.
+   * SettingsSection (Phase 4) takes this over.
+   */
+  @container card (inline-size >= 25rem) {
+    .body:has(> [data-setrow]) {
+      display: grid;
+      grid-template-columns: minmax(min-content, 1fr) auto;
+      gap: var(--card-gap) var(--space-5);
+    }
+
+    .body:has(> [data-setrow]) > * {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @container card (inline-size >= 45rem) {
+    .body:has(> [data-setrow]) {
+      grid-template-columns: minmax(min-content, 1fr) auto minmax(0, 1fr);
+    }
   }
 }

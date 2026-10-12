@@ -7,7 +7,6 @@ import {
   DescriptionList,
   Disclosure,
   EmptyState,
-  Icon,
   Notice,
   type AddressResult,
 } from '@thaumic-cast/ui';
@@ -20,8 +19,6 @@ import {
   type NetworkHealthPayload,
 } from '../../lib/events';
 import { addManualSpeaker, getSpeakerErrorMessage } from '../../lib/manual-speaker';
-
-import styles from './SpeakerStep.module.css';
 
 const log = createLogger('SpeakerStep');
 
@@ -163,6 +160,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       {isSearching ? (
         <EmptyState kind="searching" body={t('onboarding.speakers.searching')} />
       ) : speakerCount > 0 ? (
+        // The found rooms are checklist lines under the count, as in the popup.
         <DescriptionList
           kind="checklist"
           rows={[
@@ -171,6 +169,18 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
               state: 'connected',
               text: t('onboarding.speakers.found', { count: speakerCount }),
             },
+            ...groups.value.flatMap((group) => {
+              const coordinator = group.members.find((m) => m.uuid === group.coordinatorUuid);
+              if (!coordinator) return [];
+              const extra = group.members.length - 1;
+              return [
+                {
+                  key: group.coordinatorUuid,
+                  state: 'connected' as const,
+                  text: extra > 0 ? `${coordinator.zoneName} +${extra}` : coordinator.zoneName,
+                },
+              ];
+            }),
           ]}
         />
       ) : (
@@ -200,22 +210,6 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           />
         </Disclosure>
       )}
-
-      <div className={styles.speakerList}>
-        {groups.value.map((group) => {
-          const coordinator = group.members.find((m) => m.uuid === group.coordinatorUuid);
-          if (!coordinator) return null;
-          return (
-            <div key={group.coordinatorUuid} className={styles.speakerItem}>
-              <Icon glyph="speaker" />
-              <span>{coordinator.zoneName}</span>
-              {group.members.length > 1 && (
-                <span className={`${styles.memberCount} num`}>+{group.members.length - 1}</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
 
       <Button size="md" icon="refresh" onAction={handleScan}>
         {t('onboarding.speakers.scan_button')}

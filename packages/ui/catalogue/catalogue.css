@@ -173,24 +173,68 @@
   .status-sets {
     display: flex;
     flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  /* One set: its four tokens, the two samples (the two pairs) and what reads each. */
+  .status-set {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .status-tokens {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--track-option)), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .status-samples {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--track-option)), 1fr));
     gap: var(--space-2);
   }
 
-  .status-set {
+  .status-sample {
     display: flex;
     gap: var(--space-3);
     align-items: center;
+    margin: 0;
     padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-notice);
-    background: var(--set-bg);
-    color: var(--set-fg);
     font-size: var(--text-3);
     line-height: var(--leading-3);
   }
 
   .status-glyph {
     display: inline-flex;
-    color: light-dark(var(--set-fg), var(--set-ink));
+  }
+
+  .status-sample.on-container {
+    background: var(--tone-container);
+    color: var(--on-tone-container);
+  }
+
+  .status-sample.on-container .status-glyph {
+    color: var(--tone-glyph);
+  }
+
+  .status-sample.on-surface {
+    border: var(--line-hair) solid var(--outline-variant);
+    background: var(--surface);
+    color: var(--tone-ink);
+  }
+
+  .status-readers {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
   }
 
   .live-band {
@@ -208,18 +252,24 @@
       var(--live-stop-4),
       var(--live-stop-5)
     );
-    background: linear-gradient(
-      90deg in oklch,
-      oklch(from var(--live-from) l c calc(h + var(--live-shift))),
-      oklch(from var(--live-to) l c calc(h + var(--live-shift)))
-    );
     background-clip: text;
     color: transparent;
-    animation-name: drift;
-    animation-duration: var(--dur-drift);
-    animation-timing-function: var(--ease-effects);
-    animation-iteration-count: infinite;
-    animation-direction: alternate;
+  }
+
+  /* The OKLCH ramp and its drift only where relative colour exists (SectionHeader does the same). */
+  @supports (color: oklch(from red l c h)) {
+    .live-band {
+      background-image: linear-gradient(
+        90deg in oklch,
+        oklch(from var(--live-from) l c calc(h + var(--live-shift))),
+        oklch(from var(--live-to) l c calc(h + var(--live-shift)))
+      );
+      animation-name: drift;
+      animation-duration: var(--dur-drift);
+      animation-timing-function: var(--ease-effects);
+      animation-iteration-count: infinite;
+      animation-direction: alternate;
+    }
   }
 
   .ladders {
@@ -342,9 +392,10 @@
     align-items: center;
   }
 
+  /* Tall enough that --radius-dialog draws its corners, not a circle. */
   .shape {
-    inline-size: var(--size-art-lg);
-    block-size: var(--size-art-lg);
+    inline-size: calc(var(--size-art-lg) * 2);
+    block-size: calc(var(--size-art-lg) * 1.5);
     border-radius: var(--shape-radius);
     background: var(--primary-container);
     box-shadow: inset 0 0 0 var(--line-hair) var(--primary);
@@ -360,6 +411,23 @@
 
       corner-shape: bevel;
     }
+  }
+
+  /* Hover is colour; focus adds the ring to the bevel; press is the bevel and 12 %. */
+  .shape.hovered {
+    background: color-mix(in oklch, var(--primary) var(--layer-hover), var(--primary-container));
+  }
+
+  .shape.focused {
+    background: color-mix(in oklch, var(--primary) var(--layer-focus), var(--primary-container));
+    box-shadow:
+      inset 0 0 0 var(--line-hair) var(--primary),
+      0 0 0 var(--line-bold) var(--ring-gap),
+      0 0 0 calc(2 * var(--line-bold)) var(--focus);
+  }
+
+  .shape.pressed {
+    background: color-mix(in oklch, var(--primary) var(--layer-press), var(--primary-container));
   }
 
   .lines {
@@ -390,6 +458,7 @@
 
   .overlay-demo {
     inline-size: var(--track-card);
+    min-block-size: calc(var(--size-art-lg) * 2);
     padding: var(--space-5);
     border-radius: var(--radius-dialog);
     background: var(--surface);
@@ -487,13 +556,19 @@
   }
 
   /* Atoms */
+
+  /*
+   * The block padding holds the largest hit area's overhang (a 28 IconButton reaching 44 in
+   * a window), so the grid never grows a vertical scrollbar of its own.
+   */
   .state-grid {
     display: grid;
     grid-template-columns: max-content repeat(var(--cols), max-content);
     gap: var(--space-3) var(--space-4);
-    align-items: center;
+    place-items: center start;
     overflow-x: auto;
-    padding: var(--space-2);
+    padding-block: var(--space-3);
+    padding-inline: var(--space-2);
   }
 
   .state-grid > .label {
@@ -505,7 +580,7 @@
     --ring-gap: var(--surface);
 
     padding: var(--space-4);
-    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
+    border: var(--line-hair) solid var(--card-edge);
     border-radius: var(--radius-card);
     background: var(--surface);
   }
@@ -537,6 +612,15 @@
     align-items: center;
   }
 
+  /* Meter: a RoomCard's width, and the narrowest a Meter takes. */
+  .meter-list {
+    max-inline-size: var(--track-card);
+  }
+
+  .meter-narrow {
+    max-inline-size: var(--track-option);
+  }
+
   .fill-demo {
     --ring-gap: var(--primary);
 
@@ -551,16 +635,27 @@
     font-weight: var(--weight-strong);
   }
 
-  .slider-row {
-    display: flex;
-    gap: var(--space-3);
+  /* Clacks beside words: the words form one column whatever the Clacks' size. */
+  .clacks-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--space-3) var(--space-4);
     align-items: center;
   }
 
-  .value-box {
-    min-inline-size: var(--ch-ms);
-    white-space: nowrap;
-    font-weight: var(--weight-strong);
+  /* The popup's line: its inline size less its padding (L-popup). */
+  .popup-column {
+    inline-size: calc(var(--popup-inline) - 2 * var(--space-4));
+    max-inline-size: 100%;
+  }
+
+  /* A specimen that centres itself in its row (StepIndicator) drawn at its own width. */
+  .fit {
+    inline-size: fit-content;
+  }
+
+  .flush-demo {
+    padding: var(--space-4);
   }
 
   .plain-fieldset {
@@ -595,6 +690,135 @@
     max-inline-size: calc(var(--page-max) - var(--space-6));
   }
 
+  /*
+   * F-containers: frames of a fixed width per range (compact 22, medium 36, wide 52rem),
+   * never wider than the panel; the readout says when the window squeezes one.
+   */
+  .frames {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-5);
+  }
+
+  .frame {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    inline-size: calc(var(--frame-rem) * 1rem);
+    max-inline-size: 100%;
+  }
+
+  .frame-box {
+    min-inline-size: 0;
+  }
+
+  /* The rail in a window: the `app` container the rail's queries read. */
+  .rail-window {
+    container: app / inline-size;
+    display: grid;
+    grid-template-columns: var(--rail-narrow) minmax(0, 1fr);
+    min-block-size: calc(var(--size-nav) * 5);
+    border: var(--line-hair) solid var(--outline-variant);
+    border-radius: var(--radius-control);
+    background: var(--ground);
+  }
+
+  .rail-window[data-rail='wide'] {
+    grid-template-columns: var(--rail-wide) minmax(0, 1fr);
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding-block: var(--space-5);
+    padding-inline: var(--space-3);
+    background: var(--container);
+  }
+
+  .rail > :first-child {
+    margin-block-end: var(--space-5);
+    padding-inline: var(--space-3);
+  }
+
+  .rail-main {
+    margin: 0;
+    padding: var(--space-5);
+    color: var(--on-surface-variant);
+  }
+
+  /* F-fluid: three containers on the 400 to 960 px ramp, each step drawn and measured. */
+  .ramps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-6);
+    padding: var(--space-2);
+  }
+
+  .ramp {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    inline-size: calc(var(--ramp-px) * 1px);
+    max-inline-size: 100%;
+  }
+
+  /* The box is the container at exactly the width it names: the edge is an outline. */
+  .ramp-box {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    outline: var(--line-hair) dashed var(--outline);
+    outline-offset: var(--space-2);
+  }
+
+  .ramp-type {
+    margin: 0;
+    font-family: var(--font-head);
+    font-size: var(--step);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-4);
+  }
+
+  .ramp-px {
+    color: var(--on-surface-variant);
+    font-family: var(--font-body);
+    font-size: var(--text-2);
+    font-weight: var(--weight-body);
+  }
+
+  .ramp-space-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .ramp-space {
+    inline-size: var(--step);
+    block-size: var(--space-3);
+    border-radius: var(--radius-pressed);
+    background: var(--primary);
+  }
+
+  /* A frame to drag through every range: a `card`-ranged box with a live width readout. */
+  .resizable {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    inline-size: calc(var(--page-max) - var(--space-6));
+    min-inline-size: calc(var(--track-card) - var(--space-4));
+    max-inline-size: 100%;
+    padding: var(--space-3);
+    overflow: auto;
+    resize: inline;
+    border: var(--line-hair) dashed var(--outline);
+    border-radius: var(--radius-control);
+  }
+
   /* F-size: the prototype views, and the hit areas they show on demand. */
   .size-mock {
     display: flex;
@@ -624,6 +848,19 @@
     margin-block-end: var(--space-4);
   }
 
+  /* The press-states section: a row per state, its name beside the controls. */
+  .press-states {
+    display: grid;
+    grid-template-columns: minmax(6rem, max-content) 1fr;
+    gap: var(--space-4) var(--space-5);
+    align-items: center;
+  }
+
+  /* The live rows, grouped so the tests find them apart from the forced ones. */
+  .press-states > [data-live] {
+    display: contents;
+  }
+
   [data-hits] .section :is(button, a, summary, [role='switch'], label)::after {
     background: color-mix(in oklch, var(--live-lamp) 22%, transparent);
     outline: var(--line-hair) dashed var(--live-lamp);
@@ -634,13 +871,97 @@
     outline: var(--line-hair) dashed var(--live-lamp);
   }
 
-  .tooltip-sample {
-    align-self: start;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-control);
-    background: var(--inverse-surface);
-    color: var(--on-inverse-surface);
-    box-shadow: var(--shadow-overlay);
-    font-size: var(--text-2);
+  /* Room above the shown tooltip, so it lands inside its section's screenshot. */
+  .tooltip-stage {
+    padding-block-start: var(--space-8);
+    padding-inline-start: var(--space-8);
+  }
+
+  /* A section out of view pauses its animations (main.tsx), so the page keeps its frames. */
+  .section[data-offscreen] * {
+    animation-play-state: paused;
+  }
+
+  /*
+   * Button states (sections/button-states.tsx): the real Button changing state, on every
+   * kind and in context. This only lays the specimen out.
+   */
+  .states-controls {
+    display: grid;
+    gap: var(--space-2);
+    max-inline-size: var(--track-card);
+  }
+
+  .states-host {
+    display: contents;
+  }
+
+  .states-matrix {
+    display: grid;
+    grid-template-columns: auto repeat(3, minmax(0, 1fr));
+    gap: var(--space-3) var(--space-5);
+    align-items: center;
+  }
+
+  .states-row {
+    display: contents;
+  }
+
+  .states-blocks {
+    display: grid;
+    grid-template-columns: auto repeat(4, minmax(0, 1fr));
+    gap: var(--space-3) var(--space-5);
+    align-items: start;
+  }
+
+  /* Each Button alone on its line, the lines a target gap apart. */
+  .states-lines {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .states-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-5);
+  }
+
+  .states-contexts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
+    gap: var(--space-5) var(--space-6);
+    align-items: start;
+  }
+
+  .states-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-3);
+    align-items: center;
+  }
+
+  .states-field[data-capped] {
+    grid-template-columns: minmax(0, calc(var(--ch-ip) + 2 * var(--space-4))) auto;
+    justify-content: start;
+  }
+
+  .states-narrow {
+    max-inline-size: var(--track-card);
+  }
+
+  .states-value {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--gap-target);
+    margin: 0;
+  }
+
+  /* Slow it down five times: every change in the specimen, never under reduced motion. */
+  @media (prefers-reduced-motion: no-preference) {
+    html[data-states-slow] .states {
+      --dur-change: calc(5 * var(--dur-effects));
+      --dur-shape: calc(5 * var(--dur-effects));
+    }
   }
 }

@@ -107,7 +107,7 @@ export function Wizard({
         <div className={styles.footer}>
           <div className={styles.footerStart}>
             {showSkip && onSkip && (
-              <Button size="md" kind="quiet" onClick={onSkip}>
+              <Button size="md" kind="quiet" flush onClick={onSkip}>
                 {skip}
               </Button>
             )}
@@ -136,7 +136,7 @@ export function Wizard({
       <div className={styles.footer}>
         <div className={styles.footerStart}>
           {showSkip && onSkip && (
-            <Button size="md" kind="quiet" onClick={onSkip}>
+            <Button size="md" kind="quiet" flush onClick={onSkip}>
               {skip}
             </Button>
           )}

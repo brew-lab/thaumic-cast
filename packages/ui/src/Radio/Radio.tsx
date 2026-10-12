@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from 'preact';
-import { cx, dataAttributes, type DataAttributes } from '../utils/cx';
+import { dataAttributes, type DataAttributes } from '../utils/cx';
 import styles from './Radio.module.css';
 
 /** Props for {@link Radio}. */
@@ -51,7 +51,7 @@ export function Radio({
   ...rest
 }: RadioProps): JSX.Element {
   return (
-    <label class={cx(styles.option, disabled && styles.disabled)} {...dataAttributes(rest)}>
+    <label class={styles.option} {...dataAttributes(rest)}>
       <span class={styles.box}>
         <input
           type="radio"

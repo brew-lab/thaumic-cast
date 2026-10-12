@@ -15,7 +15,7 @@ export interface BrandBlockProps {
    * readers).
    */
   kind?: 'header' | 'rail';
-  /** The rail's version line, e.g. "Version 0.12.0". */
+  /** The rail's version line, e.g. "Version 0.12.0"; its line is kept while it is unknown. */
   version?: string;
   /** Render the name as the page's `h1` (the popup, which has no other). */
   heading?: boolean;
@@ -47,7 +47,8 @@ export function BrandBlock({
       </span>
       <span class={styles.words}>
         <Name class={styles.name}>{name}</Name>
-        {kind === 'rail' && version && <span class={cx(styles.version, 'num')}>{version}</span>}
+        {/* The rail keeps the version's line while it loads, so the nav below never moves. */}
+        {kind === 'rail' && <span class={cx(styles.version, 'num')}>{version}</span>}
       </span>
     </div>
   );

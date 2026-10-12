@@ -11,6 +11,7 @@
     --switch-edge: var(--line-hair);
     --switch-thumb: calc(var(--switch-h) - 2 * var(--switch-inset) - 2 * var(--switch-edge));
     --switch-travel: calc(var(--switch-w) - var(--switch-h));
+    --switch-dur-stretch: var(--dur-fast);
     --switch-track-bg: transparent;
     --switch-track-edge: var(--outline);
     --switch-thumb-bg: var(--on-surface-variant);
@@ -18,47 +19,138 @@
     --switch-thumb-ink: var(--surface);
     --switch-label: var(--on-surface);
     --switch-hint: var(--on-surface-variant);
+    --switch-label-size: var(--text-3);
+    --switch-label-leading: var(--leading-3);
 
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-2) var(--space-4);
+    grid-template-columns: minmax(min-content, 1fr) auto;
+
+    /* The name line is always a control tall, so a description coming or going moves nothing. */
+    grid-template-rows: minmax(var(--control-md), auto);
+    gap: var(--space-1) var(--space-4);
     align-items: center;
     min-block-size: var(--control-md);
   }
 
+  /* The same type as a SettingsRow, since a Switch is its own settings row (M-setrow). */
+  :where([data-density='desktop']) .row {
+    --switch-label-size: var(--text-4-fixed);
+    --switch-label-leading: var(--leading-4);
+  }
+
+  /*
+   * F-grid: in a settings grid the row takes the shared tracks: the words in the label
+   * track, the switch at the end of the control track, in line with every other row's
+   * control, with the settings grid's column gap. A Switch-only SettingsRow always hands
+   * its tracks on; a Card body shares its tracks from 25rem (under it each row keeps its own).
+   */
+  [data-settings-grid='row'] > .row {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    column-gap: var(--space-5);
+  }
+
+  @container card (inline-size >= 25rem) {
+    [data-settings-grid='card'] > .row {
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      column-gap: var(--space-5);
+    }
+  }
+
+  /*
+   * The label is the whole row's target but draws no box of its own: its parts are placed
+   * on the row's grid like a SettingsRow's. The name sits on the switch's line; the
+   * description and the note run under it (across the row under 25rem of the card, clear of
+   * the switch's column from 25rem), and from 45rem, in a settings grid, in the help track.
+   */
   .text {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+    display: contents;
     color: var(--switch-label);
+  }
+
+  .head,
+  .description,
+  .note {
+    grid-column: 1 / -1;
+    min-inline-size: 0;
     cursor: pointer;
   }
 
+  .head {
+    grid-row: 1;
+    grid-column: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    color: var(--switch-label);
+  }
+
   .label {
-    font-size: var(--text-4-fixed);
+    font-size: var(--switch-label-size);
     font-weight: var(--weight-strong);
-    line-height: var(--leading-4);
+    line-height: var(--switch-label-leading);
   }
 
   .description,
   .note {
-    font-size: var(--text-3);
-    line-height: var(--leading-3);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    text-wrap: pretty;
   }
 
   .description {
+    grid-row: 2;
     color: var(--switch-hint);
   }
 
   /* Why a row is locked, or when it applies: read at full strength, even when disabled. */
   .note {
+    grid-row: 3;
     color: var(--on-surface);
+  }
+
+  @container card (inline-size >= 25rem) {
+    .description,
+    .note {
+      grid-column: 1;
+    }
+  }
+
+  @container card (inline-size >= 45rem) {
+    [data-settings-grid] > .row {
+      grid-template-rows: none;
+      align-items: start;
+    }
+
+    [data-settings-grid] > .row > .text > :is(.head, .description) {
+      padding-block-start: calc(max(0rem, (var(--switch-h) - 1lh) / 2));
+    }
+
+    [data-settings-grid] > .row > .text > .description {
+      grid-row: 1;
+      grid-column: 3;
+    }
+
+    [data-settings-grid] > .row > .text > .note {
+      grid-row: 2;
+      grid-column: 3;
+    }
+
+    [data-settings-grid] > .row > .message {
+      grid-row: 3;
+      grid-column: 3;
+    }
   }
 
   .track {
     --switch-fill: color-mix(in oklch, var(--switch-thumb-bg) var(--layer), var(--switch-track-bg));
 
     position: relative;
+    grid-row: 1;
+    grid-column: 2;
+    justify-self: end;
     flex: none;
     inline-size: var(--switch-w);
     block-size: var(--switch-h);
@@ -95,8 +187,10 @@
     color: var(--switch-thumb-ink);
     transition:
       inset-inline-start var(--dur-spatial) var(--ease-spatial),
-      inline-size var(--dur-fast) var(--ease-effects),
+      inline-size var(--switch-dur-stretch) var(--ease-effects),
+      margin-inline-start var(--switch-dur-stretch) var(--ease-effects),
       border-radius var(--dur-shape) var(--ease-effects),
+      corner-shape var(--dur-shape) var(--ease-effects),
       background-color var(--dur-effects) var(--ease-effects);
   }
 
@@ -121,78 +215,114 @@
     --layer: var(--layer-focus);
   }
 
-  .track:is(:active, [data-force='press']) {
+  .track:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
   }
 
-  /* Pressed: the thumb stretches by --space-2 and takes the squarer corner. */
-  .track:not(:disabled, [aria-busy='true']):is(:active, [data-force='press']) .thumb {
-    --switch-thumb-radius: var(--radius-thumb-pressed);
-
+  /*
+   * Pressed (held for the morph, utils/press.ts): the thumb stretches by --space-2 inside the
+   * track, which never changes size, and with corner-shape takes the bevel (below); without
+   * it the corner stays (colour and the ring carry the state). On, it stretches back towards
+   * the start: a negative start margin on the stretch's own clock, so its end edge stays put
+   * while only the travel takes the spring. Under reduced motion a press does not stretch
+   * (it darkens), and busy's wider thumb comes at once.
+   */
+  .track:not(:disabled, [aria-busy='true']):is(:active, [data-pressing], [data-force='press'])
+    .thumb {
     inline-size: calc(var(--switch-thumb) + var(--space-2));
   }
 
-  .track[aria-checked='true']:not(:disabled):is(:active, [data-force='press']) .thumb {
-    inset-inline-start: calc(var(--switch-inset) + var(--switch-travel) - var(--space-2));
+  .track[aria-checked='true']:not(:disabled, [aria-busy='true']):is(
+      :active,
+      [data-pressing],
+      [data-force='press']
+    )
+    .thumb {
+    margin-inline-start: calc(-1 * var(--space-2));
   }
 
-  @supports (corner-shape: bevel) {
-    .track:not(:disabled, [aria-busy='true']):is(
-        :hover,
-        :focus-visible,
-        [data-force='hover'],
-        [data-force='focus']
-      )
+  @media (prefers-reduced-motion: reduce) {
+    .row {
+      --switch-dur-stretch: var(--dur-change);
+    }
+
+    .track:not(:disabled, [aria-busy='true']):is(:active, [data-pressing], [data-force='press'])
       .thumb {
+      inline-size: var(--switch-thumb);
+      margin-inline-start: 0;
+    }
+  }
+
+  /*
+   * The thumb takes the bevel on focus-visible (busy too) and press; hover is colour. The
+   * press that makes it busy plays out its hold; one that starts while busy is never held.
+   */
+  @supports (corner-shape: bevel) {
+    .track:not(:disabled):is(:focus-visible, [data-pressing], [data-force='focus']) .thumb,
+    .track:not(:disabled, [aria-busy='true']):is(:active, [data-force='press']) .thumb {
       --switch-thumb-radius: var(--shape-bevel-thumb);
 
       corner-shape: bevel;
     }
-
-    .track:not(:disabled, [aria-busy='true']):is(:active, [data-force='press']) .thumb {
-      --switch-thumb-radius: var(--radius-thumb-pressed);
-
-      corner-shape: round;
-    }
   }
 
+  /* Busy: the thumb takes its pressed width, so the Clacks fit inside it at every density. */
   .track[aria-busy='true'] {
     cursor: progress;
   }
 
-  /* Disabled: 38 % ink, a 12 % edge and fill; the label keeps its words readable. */
-  .disabled {
+  .track[aria-busy='true'] .thumb {
+    inline-size: calc(var(--switch-thumb) + var(--space-2));
+  }
+
+  .track[aria-busy='true'][aria-checked='true'] .thumb {
+    margin-inline-start: calc(-1 * var(--space-2));
+  }
+
+  /*
+   * Disabled, from the native state (a disabled fieldset too): 38 % ink, a 12 % edge and
+   * fill.
+   */
+  .row:has(> .track:disabled) {
     --switch-track-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
     --switch-thumb-bg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --switch-label: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
   }
 
-  .disabled .track[aria-checked='true'] {
+  .row:has(> .track:disabled) .track[aria-checked='true'] {
     --switch-track-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
     --switch-track-edge: transparent;
     --switch-thumb-bg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
   }
 
-  .disabled .text,
+  .row:has(> .track:disabled) :is(.head, .description, .note),
   .track:disabled {
     cursor: not-allowed;
   }
 
   /* Error: the track's edge and the thumb take the danger ink, and the row says why. */
   .error .track {
-    --switch-track-edge: var(--danger-ink);
-    --switch-thumb-bg: var(--danger-ink);
+    --switch-track-edge: var(--tone-ink);
+    --switch-thumb-bg: var(--tone-ink);
   }
 
   .message {
+    grid-row: 4;
     grid-column: 1 / -1;
     display: flex;
     gap: var(--space-2);
-    align-items: center;
+    align-items: flex-start;
     margin: 0;
-    color: var(--danger-ink);
-    font-size: var(--text-3);
-    line-height: var(--leading-3);
+    color: var(--tone-ink);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
+
+  .message > svg {
+    --icon-size: var(--icon-sm);
+
+    flex: none;
+    block-size: calc(1lh);
   }
 
   @media (forced-colors: active) {

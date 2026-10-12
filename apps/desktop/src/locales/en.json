@@ -15,7 +15,6 @@
   "speakers.scan": "Ask again",
   "speakers.scanning": "Listening…",
   "speakers.stop_all": "Stop all casts",
-  "speakers.stopping": "Stopping…",
 
   "device.coordinator": "Coordinator",
   "device.others_one": "+{{count}} other",
@@ -28,7 +27,6 @@
   "device.listen_url_hint": "Plays in VLC or a browser while the cast lasts. It won't keep time with the speakers.",
   "device.listen_url_echo": "With browser-wide capture, this browser would cast it straight back. Use VLC.",
 
-  "transport.playing": "Playing",
   "transport.paused": "Paused",
   "transport.stopped": "Not playing",
   "transport.transitioning": "Loading",
@@ -49,7 +47,6 @@
   "server.disconnect_description": "Hangs up on every extension, which ends every cast. The extensions ring back by themselves in a few seconds; the casts need starting again.",
   "server.stop_streams": "Stop all casts",
   "server.stop": "Stop",
-  "server.stopping": "Stopping…",
   "server.stop_streams_description": "Stops every cast, including any started from another computer, whose owner has not been consulted.",
 
   "settings.startup": "Startup",

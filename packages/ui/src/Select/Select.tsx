@@ -34,7 +34,10 @@ export interface SelectProps<T extends string | number> extends DataAttributes {
   size?: 'sm' | 'md';
   /** Invalid: a 2 px danger edge and `aria-invalid`. The message is the caller's. */
   error?: boolean;
-  /** Busy, only while a choice is being applied: the Clacks in the trigger. */
+  /**
+   * Busy, only while a choice is being applied: the Clacks in the trigger, `aria-busy` and
+   * `aria-disabled`. Focus stays, and a choice made meanwhile is not taken.
+   */
   busy?: boolean;
   /** Disabled. */
   disabled?: boolean;
@@ -89,7 +92,11 @@ export function Select<T extends string | number>({
       <label for={selectId} class={hideLabel ? 'visually-hidden' : styles.label}>
         {label}
       </label>
-      <span class={cx(styles.control, styles[size], error && styles.invalid)} data-size={size}>
+      <span
+        class={cx(styles.control, styles[size], error && styles.invalid)}
+        data-size={size}
+        data-tone={error ? 'danger' : undefined}
+      >
         <select
           id={selectId}
           class={styles.select}
@@ -97,9 +104,24 @@ export function Select<T extends string | number>({
           disabled={disabled}
           aria-invalid={error ? 'true' : undefined}
           aria-busy={busy ? 'true' : undefined}
+          aria-disabled={busy ? 'true' : undefined}
           aria-describedby={rest['aria-describedby']}
+          // Whether a pointer or a key last used it: a list a pointer opened shows no focus
+          // on its chosen option until a key is used (Chromium focuses it on every open).
+          onPointerDown={(event) => {
+            event.currentTarget.dataset.pointer = '';
+          }}
+          onKeyDown={(event) => {
+            delete event.currentTarget.dataset.pointer;
+          }}
           onChange={(event) => {
-            const chosen = options[(event.currentTarget as HTMLSelectElement).selectedIndex];
+            const select = event.currentTarget as HTMLSelectElement;
+            // Busy (F-grammar): focus stays, but a choice made now is not taken.
+            if (busy) {
+              select.value = String(value);
+              return;
+            }
+            const chosen = options[select.selectedIndex];
             if (chosen) onChange(chosen.value);
           }}
           {...dataAttributes(rest)}
@@ -111,10 +133,15 @@ export function Select<T extends string | number>({
           )}
           {options.map((option) => (
             <option key={String(option.value)} value={String(option.value)}>
-              {customizableSelect && option.description ? (
+              {customizableSelect ? (
                 <span class={styles.optionText}>
-                  <span>{option.label}</span>
-                  <span class={styles.optionDescription}>{option.description}</span>
+                  {/* The label's cell holds its strong width, so choosing moves nothing. */}
+                  <span class={styles.optionLabel} data-text={option.label}>
+                    <span>{option.label}</span>
+                  </span>
+                  {option.description && (
+                    <span class={styles.optionDescription}>{option.description}</span>
+                  )}
                 </span>
               ) : (
                 option.label

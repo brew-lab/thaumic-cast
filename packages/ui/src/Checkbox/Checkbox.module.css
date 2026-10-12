@@ -54,7 +54,9 @@
     cursor: inherit;
     transition:
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects),
+      background-color var(--dur-change) var(--ease-effects),
+      border-color var(--dur-change) var(--ease-effects);
   }
 
   /* The row carries the ring. */
@@ -71,10 +73,17 @@
     color: var(--check-ink);
     pointer-events: none;
     visibility: hidden;
+    opacity: 0;
+    scale: 0.6;
+    transition:
+      opacity var(--dur-change) var(--ease-effects),
+      scale var(--dur-change) var(--ease-effects),
+      visibility var(--dur-change);
   }
 
+  /* An even size, so the check centres in the even box at both densities. */
   .mark > svg {
-    --icon-size: calc(var(--check-size) - var(--space-1));
+    --icon-size: round(down, calc(var(--check-size) - var(--space-1)), calc(2 * var(--line-hair)));
 
     stroke-width: calc(var(--icon-stroke) * 1.25);
   }
@@ -84,8 +93,11 @@
     --check-fill: var(--primary);
   }
 
+  /* Checking fades the fill in and grows the check from .6; unchecking reverses it. */
   .input:checked + .mark {
     visibility: visible;
+    opacity: 1;
+    scale: 1;
   }
 
   .text {
@@ -124,38 +136,31 @@
     outline: var(--line-bold) solid transparent;
   }
 
-  .row:is(:active, [data-force='press']) {
+  .row:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
   }
 
-  .row:is(:active, [data-force='press']) .input {
-    --check-radius: var(--radius-thumb-pressed);
-
-    scale: var(--press-icon);
-  }
-
+  /* The box takes the bevel on focus-visible and press (held, utils/press.ts); nothing scales. */
   @supports (corner-shape: bevel) {
-    .row:not(.disabled):is(
-        :hover,
+    .row:not(:has(.input:disabled)):is(
         :has(.input:focus-visible),
-        [data-force='hover'],
-        [data-force='focus']
+        :active,
+        [data-pressing],
+        [data-force='focus'],
+        [data-force='press']
       )
       .input {
       --check-radius: var(--shape-bevel-small);
 
       corner-shape: bevel;
     }
-
-    .row:not(.disabled):is(:active, [data-force='press']) .input {
-      --check-radius: var(--radius-thumb-pressed);
-
-      corner-shape: round;
-    }
   }
 
-  /* Disabled: the ring stays at 38 % (the one exception to the 12 % rule), the ink 38 %. */
-  .disabled {
+  /*
+   * Disabled, from the native state, so a disabled <fieldset> round it draws it disabled too:
+   * the ring stays at 38 % (the one exception to the 12 % rule), the ink 38 %.
+   */
+  .row:has(.input:disabled) {
     --check-ring: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --check-label: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --check-hint: var(--check-label);
@@ -164,13 +169,9 @@
     cursor: not-allowed;
   }
 
-  .disabled .input:checked {
+  .row:has(.input:disabled) .input:checked {
     --check-ring: transparent;
     --check-fill: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
-  }
-
-  .disabled:active .input {
-    scale: 1;
   }
 
   @media (forced-colors: active) {

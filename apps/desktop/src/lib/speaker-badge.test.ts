@@ -15,7 +15,7 @@ const strings = en as Record<string, string>;
 function reading(state: string | undefined, isCasting: boolean) {
   const badge = speakerBadge(state, isCasting);
   if (!badge) return null;
-  return { label: strings[badge.key] ?? badge.defaultValue, tone: badge.tone };
+  return { label: strings[badge.key], tone: badge.tone };
 }
 
 describe('speakerBadge', () => {
@@ -44,14 +44,16 @@ describe('speakerBadge', () => {
     expect(reading('Stopped', true)).toEqual({ label: 'Not playing', tone: 'idle' });
   });
 
-  it('should have a label for every state the core sends', () => {
-    for (const state of TransportStateSchema.options) {
-      const badge = speakerBadge(state, false);
-      expect(badge && strings[badge.key]).toBeTruthy();
-    }
+  it('should show no badge for a state with no words, never the raw state name', () => {
+    expect(reading('Recording', false)).toBeNull();
+    expect(reading('NO_MEDIA_PRESENT', true)).toBeNull();
   });
 
-  it('should fall back to the raw state for one with no label', () => {
-    expect(reading('Recording', false)).toEqual({ label: 'Recording', tone: 'idle' });
+  it('should have words for every state the core sends', () => {
+    for (const state of TransportStateSchema.options) {
+      for (const casting of [false, true]) {
+        expect(reading(state, casting)?.label).toBeString();
+      }
+    }
   });
 });

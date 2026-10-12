@@ -59,6 +59,12 @@ export interface TextInputProps extends DataAttributes {
   onFocus?: (event: FocusEvent) => void;
   /** Keyboard handling, e.g. Enter to submit. */
   onKeyDown?: (event: KeyboardEvent) => void;
+  /**
+   * Grows with its text (F-shift, `field-sizing: content`), from `--ch-ip` to `--ch-ip-max`,
+   * and the box hugs it; where the engine cannot size a field to its content, it keeps the
+   * width its container gives it. For the IP field of AddressField's speaker kind.
+   */
+  grow?: boolean;
 }
 
 /**
@@ -79,6 +85,7 @@ export interface TextInputProps extends DataAttributes {
  * @param props.onClear - Search: clears the field
  * @param props.clearLabel - Search: the Clear button's name
  * @param props.label - Search: the hidden label
+ * @param props.grow - Grows with its text
  * @param ref - The `<input>`
  * @returns The field
  */
@@ -102,6 +109,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
     onBlur,
     onFocus,
     onKeyDown,
+    grow = false,
     ...rest
   }: TextInputProps,
   ref: Ref<HTMLInputElement>,
@@ -128,10 +136,19 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
       class={cx(
         styles.control,
         styles[size ?? 'sm'],
-        disabled && styles.disabled,
         invalid && styles.invalid,
+        grow && styles.grow,
       )}
       data-size={size ?? 'sm'}
+      data-tone={invalid ? 'danger' : undefined}
+      onPointerDown={(event) => {
+        // The drawn box is all field: a press in its padding or on the search glyph focuses
+        // the input, as a press on the input itself would. The Clear button keeps its own.
+        const target = event.target as Element;
+        if (target === inner.current || target.closest('button')) return;
+        event.preventDefault();
+        inner.current?.focus();
+      }}
       {...dataAttributes(rest)}
     >
       {search && label && (

@@ -1,208 +1,202 @@
-.card {
-  --artwork: none;
-  --dominant-l: 0.5;
-  --dominant-c: 0;
-  --dominant-h: 0;
-  --safe-l: 0.8;
-  --card-radius: 6px;
-  --card-border-width: 1px;
+/* The cast card, until Phase 3 rebuilds it as the CastTile with the artwork-seeded card. */
+@layer app {
+  .card {
+    --artwork: none;
+    --dominant-l: 0.5;
+    --dominant-c: 0;
+    --dominant-h: 0;
+    --safe-l: 0.8;
+    --cast-card-bg: var(--surface);
+    --ring-gap: var(--cast-card-bg);
 
-  position: relative;
-  overflow: hidden;
-  margin-block-end: 1rem;
-  border: var(--line-hair) solid var(--card-border);
-  border-radius: var(--card-radius);
-  background: var(--card-bg);
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border: var(--line-hair) solid var(--card-edge);
+    border-radius: var(--radius-card);
+    background: var(--cast-card-bg);
 
-  /* View Transition API: unique name per card, shared class for animation styling */
-  view-transition-class: activecastcard;
-}
+    /* View Transition API: unique name per card, shared class for animation styling */
+    view-transition-class: activecastcard;
+  }
 
-.card-inner {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
-}
+  .card-inner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
 
-/* Background artwork layer with adaptive darkness vignette */
-.card.has-artwork::before {
-  content: '';
-  position: absolute;
-  inset-block: var(--card-border-width);
-  inset-inline: var(--card-border-width);
-  border-radius: calc(var(--card-radius) - var(--card-border-width));
+  /* Background artwork layer with adaptive darkness vignette */
+  .card.has-artwork::before {
+    /* Backdrop darkness: ensure text contrast, lighter images need darker overlay */
+    --backdrop-opacity: calc(0.55 + var(--dominant-l) * 0.4);
 
-  /* Backdrop darkness: ensure text contrast, lighter images need darker overlay */
-  --backdrop-opacity: calc(0.55 + var(--dominant-l) * 0.4);
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background:
+      radial-gradient(
+        ellipse at center,
+        oklch(0% 0 0 / calc(var(--backdrop-opacity) - 0.2)) 0%,
+        oklch(0% 0 0 / var(--backdrop-opacity)) 100%
+      ),
+      var(--artwork) center / cover no-repeat;
+  }
 
-  background:
-    radial-gradient(
-      ellipse at center,
-      oklch(0% 0 0 / calc(var(--backdrop-opacity) - 0.2)) 0%,
-      oklch(0% 0 0 / var(--backdrop-opacity)) 100%
-    ),
-    var(--artwork) center / cover no-repeat;
-  z-index: 0;
-}
+  /* Content paints over the backdrop: the root isolates, so one raised step is enough. */
+  .card.has-artwork > * {
+    position: relative;
+    z-index: var(--z-raised);
+  }
 
-/* Ensure content is above background layers */
-.card.has-artwork > * {
-  position: relative;
-  z-index: 2;
-}
+  /*
+   * On artwork the card is dark (the backdrop above darkens it for contrast), so its
+   * design-system tokens take their dark values: every atom inside reads correctly on it.
+   * Phase 3 replaces this with the artwork-seeded card (DESIGN.md T-colour).
+   */
+  .card.has-artwork {
+    /* Use original dominant color for card background (smoother visual transition) */
+    --cast-card-bg: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
 
-/*
- * On artwork the card is dark (the backdrop above darkens it for contrast), so its
- * design-system tokens take their dark values: every atom inside reads correctly on it.
- * Phase 3 replaces this with the artwork-seeded card (DESIGN.md T-colour).
- */
-.card.has-artwork {
-  /* Use original dominant color for card background (smoother visual transition) */
-  --card-bg: oklch(calc(var(--dominant-l) * 100%) var(--dominant-c) var(--dominant-h));
+    /*
+     * The darkened artwork has no one colour to cut gaps with, so the slider handle and the
+     * focus ring draw without them here (a gap in the dominant colour read as a grey thumb).
+     */
+    --ring-gap: transparent;
 
-  color-scheme: dark;
-}
+    color-scheme: dark;
+  }
 
-.header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
+  .header,
+  .main-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
 
-.header-spacer {
-  flex: 1;
-}
+  .header-spacer {
+    flex: 1;
+  }
 
-.main-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
+  .info {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    user-select: text;
+  }
 
-.info {
-  flex: 1;
-  min-inline-size: 0;
-  overflow: visible;
-  user-select: text;
-}
+  .title {
+    max-inline-size: 100%;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--on-surface);
+    font: inherit;
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+    text-align: start;
+    white-space: nowrap;
+    overflow-x: clip;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
 
-.title {
-  max-inline-size: 100%;
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1;
-  color: var(--on-surface);
-  white-space: nowrap;
-  overflow-x: clip;
-  text-overflow: ellipsis;
-  text-box: cap alphabetic;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border: none;
-  text-align: start;
-  cursor: pointer;
-  transition: var(--transition-color);
-}
+  .title:hover {
+    color: var(--primary);
+    text-decoration: underline;
+  }
 
-.title:hover {
-  color: var(--primary);
-  text-decoration: underline;
-}
+  /* Title hover stays white on artwork cards - rely on underline for feedback */
+  .card.has-artwork .title:hover {
+    color: var(--on-surface);
+  }
 
-.title:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
+  .subtitle {
+    max-inline-size: 100%;
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    white-space: nowrap;
+    overflow-x: clip;
+    text-overflow: ellipsis;
+  }
 
-/* Title hover stays white on artwork cards - rely on underline for feedback */
-.card.has-artwork .title:hover {
-  color: var(--on-surface);
-}
+  .speaker-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 
-.subtitle {
-  max-inline-size: 100%;
-  font-size: 0.75rem;
-  line-height: 1;
-  color: var(--on-surface-variant);
-  white-space: nowrap;
-  overflow-x: clip;
-  text-overflow: ellipsis;
-  text-box: cap alphabetic;
-  margin: 0;
-  margin-block-start: 0.25rem;
-}
+  /* Video sync section */
+  .video-sync-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-block-start: var(--space-3);
+    border-block-start: var(--line-hair) solid var(--divider);
+  }
 
-.speaker-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
+  .video-sync-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
 
-/* Video sync section */
-.video-sync-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding-block-start: 0.5rem;
-  border-block-start: 1px solid var(--outline-variant);
-}
+  .video-sync-switch {
+    flex: 1;
+    min-inline-size: 0;
+  }
 
-.video-sync-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
+  .video-sync-reason {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
 
-.video-sync-switch {
-  flex: 1;
-  min-inline-size: 0;
-}
+  .video-sync-reason-text {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
 
-.video-sync-reason {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
+  .video-sync-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+  }
 
-.video-sync-reason-text {
-  margin: 0;
-  color: var(--on-surface-variant);
-  font-size: var(--text-2);
-  line-height: var(--leading-2);
-}
+  /* On its own line: it names the speaker, and names can be long */
+  .video-sync-trim-label {
+    flex: 1 0 100%;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
-.video-sync-controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-}
+  .video-sync-trim-value {
+    min-inline-size: var(--ch-ms);
+    color: var(--on-surface);
+    font-size: var(--text-2);
+    font-weight: var(--weight-strong);
+    white-space: nowrap;
+  }
 
-/* On its own line: it names the speaker, and names can be long */
-.video-sync-trim-label {
-  flex: 1 0 100%;
-  color: var(--on-surface-variant);
-  font-size: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.video-sync-trim-value {
-  min-inline-size: var(--ch-ms);
-  color: var(--on-surface);
-  font-size: var(--text-2);
-  font-weight: var(--weight-strong);
-  white-space: nowrap;
-}
-
-/* Transition animation for track changes (background + colors) */
-::view-transition-old(.activecastcard),
-::view-transition-new(.activecastcard) {
-  animation-duration: 300ms;
-  animation-timing-function: ease-out;
+  /* Transition animation for track changes (background + colors) */
+  ::view-transition-old(.activecastcard),
+  ::view-transition-new(.activecastcard) {
+    animation-duration: var(--dur-effects);
+    animation-timing-function: var(--ease-effects);
+  }
 }

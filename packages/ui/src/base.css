@@ -1,6 +1,7 @@
 /*
  * The base layer (DESIGN.md F-pipeline, T-focus, F-shift, F-utils, T-motion): the theme
- * switch, the focus ring, forced colours, reduced motion, prose links and the scrollbar.
+ * switch, the accent colour of any native control, the focus ring, forced colours, reduced
+ * motion, prose links and the scrollbar colour.
  * With tokens.css and webkit-fallbacks.css, one of the three files that hold raw values.
  */
 @layer reset {
@@ -19,10 +20,19 @@
    */
   :root {
     color-scheme: light dark;
-    scrollbar-color: var(--outline) transparent;
+    accent-color: var(--primary);
+    caret-color: var(--primary);
     scroll-behavior: smooth;
     interpolate-size: allow-keywords;
-    caret-color: var(--primary);
+
+    /*
+     * F-shift: the scrollbar colour, set here once; nothing sets its own. Each page scroller
+     * sets scrollbar-gutter: stable (the popup and options documents, the desktop main, the
+     * full Wizard's content), so a scrollbar arriving never narrows the content on Windows.
+     * A popover or a short list does not: classic scrollbars reserve the gutter even when
+     * nothing overflows (§11 call 81).
+     */
+    scrollbar-color: var(--outline) transparent;
   }
 
   :root[data-theme='light'] {
@@ -51,7 +61,7 @@
     text-wrap: balance;
   }
 
-  :where(p) {
+  :where(p, li) {
     text-wrap: pretty;
   }
 
@@ -108,18 +118,17 @@
   }
 
   /*
-   * Reduced motion: shapes swap without morphing, a press darkens without scaling, the live
-   * drift holds and the Clacks fade instead of walking. Components read these tokens.
+   * Reduced motion: shapes swap without morphing, a press darkens without stretching, a change
+   * of state (a fold, a Button's state, a choice, a check) is instant, the live drift holds
+   * and the Clacks fade instead of walking. Components read these tokens.
    */
   @media (prefers-reduced-motion: reduce) {
     :root {
       scroll-behavior: auto;
 
       --dur-shape: 0s;
+      --dur-change: 0s;
       --dur-spatial: 0s;
-      --press-text: 1;
-      --press-icon: 1;
-      --press-wide: 1;
       --live-drift-from: 0;
       --clack-animation: clack-fade;
     }

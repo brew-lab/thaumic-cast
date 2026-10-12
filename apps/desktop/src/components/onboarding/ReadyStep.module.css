@@ -4,12 +4,6 @@
     text-wrap: pretty;
   }
 
-  .section-title {
-    margin: 0;
-    font-size: var(--text-5);
-    line-height: var(--leading-5);
-  }
-
   .section-body {
     margin: 0;
     color: var(--on-surface-variant);

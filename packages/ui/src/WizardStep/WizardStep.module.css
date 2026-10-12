@@ -9,7 +9,7 @@
     --wizard-title-tracking: var(--tracking-6);
     --wizard-subtitle: var(--text-3);
     --wizard-subtitle-leading: var(--leading-3);
-    --wizard-title-ink: light-dark(var(--brand-ink), var(--on-surface));
+    --wizard-title-ink: var(--title-ink);
 
     display: flex;
     flex-direction: column;
@@ -32,10 +32,11 @@
     gap: var(--space-4);
   }
 
+  /* The h2 is trimmed to its letters (F-textbox), so the gap gives the subtitle its room. */
   .titles {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-3);
     min-inline-size: 0;
   }
 

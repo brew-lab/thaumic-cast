@@ -1,7 +1,7 @@
 @layer components {
   /*
    * A-nav. --size-nav tall; current has the primary container, the 2 px primary inset edge
-   * and the strong weight, and stays calm (it still bevels on hover and focus, as every
+   * and the strong weight, and stays calm (it still bevels on focus and press, as every
    * control does). The narrow rail (under a 45rem window) makes it a --size-nav square.
    */
   .item {
@@ -31,9 +31,9 @@
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     transition:
-      --layer var(--dur-effects) var(--ease-effects),
+      background-color var(--dur-effects) var(--ease-effects),
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .item > svg {
@@ -46,6 +46,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /*
+   * F-textbox: not trimmed. The label truncates (overflow hidden for the ellipsis), and a
+   * line box trimmed to the baseline would clip its descenders ("Settings").
+   */
 
   .item[aria-current='page'] {
     --nav-bg: var(--primary-container);
@@ -68,23 +73,22 @@
     --nav-shadow: var(--nav-ring), var(--nav-edge);
   }
 
-  .item:is(:active, [data-force='press']) {
+  .item:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
-    --nav-radius: var(--radius-pressed);
-
-    scale: var(--press-wide);
-    transition-duration: var(--dur-fast);
   }
 
   @supports (corner-shape: bevel) {
-    .item:not(.disabled):is(:hover, :focus-visible, [data-force='hover'], [data-force='focus']) {
+    /* Focus-visible and press (held, utils/press.ts) take the bevel; hover is colour. */
+    .item:not(.disabled):is(
+        :focus-visible,
+        :active,
+        [data-pressing],
+        [data-force='focus'],
+        [data-force='press']
+      ) {
       --nav-radius: var(--shape-bevel);
 
       corner-shape: bevel;
-    }
-
-    .item:is(:active, [data-force='press']) {
-      corner-shape: round;
     }
   }
 
@@ -93,11 +97,19 @@
     --layer: initial;
     --nav-radius: var(--radius-control);
 
-    scale: 1;
     cursor: not-allowed;
   }
 
+  /* The Tooltip repeats the words, so it shows only in the narrow rail, where they hide. */
+  .tip-host {
+    --tip-shown: none;
+  }
+
   @container app (inline-size < 45rem) {
+    .tip-host {
+      --tip-shown: block;
+    }
+
     .item {
       justify-content: center;
       inline-size: var(--size-nav);

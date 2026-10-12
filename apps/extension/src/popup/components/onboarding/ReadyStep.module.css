@@ -1,12 +1,14 @@
-.intro-text {
-  margin: 0;
-  line-height: var(--leading-4);
-  text-wrap: pretty;
-}
+@layer app {
+  .intro-text {
+    margin: 0;
+    line-height: var(--leading-4);
+    text-wrap: pretty;
+  }
 
-.performance-text {
-  margin: 0;
-  line-height: var(--leading-4);
-  color: var(--on-surface-variant);
-  text-wrap: pretty;
+  .performance-text {
+    margin: 0;
+    line-height: var(--leading-4);
+    color: var(--on-surface-variant);
+    text-wrap: pretty;
+  }
 }

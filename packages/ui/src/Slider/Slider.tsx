@@ -25,6 +25,18 @@ export interface SliderProps extends DataAttributes {
   unknownText?: string;
   /** A centre value (trim: 0): the fill runs from it, and a mark shows it. */
   centre?: number;
+  /**
+   * A ghost tick at a value that is not the slider's own (StartLine: the room's level now).
+   * It is drawn only; say its value in the caption or the row's words.
+   */
+  mark?: number;
+  /**
+   * Show the formatted value after the track, in a box this many characters wide
+   * (`--ch-volume` is 3, `--ch-ms` 7), so the number never moves the track; "…" while the
+   * value is unknown (P-start). The value is already read as `aria-valuetext`, so the box is
+   * hidden from assistive tech.
+   */
+  readout?: number;
   /** Disabled, e.g. a row that is joining. */
   disabled?: boolean;
   /** Called as the value changes, on every step of a drag, a click or a key. */
@@ -57,6 +69,8 @@ export interface SliderProps extends DataAttributes {
  * @param props.format - Words for the value
  * @param props.unknownText - Read while the value is unknown
  * @param props.centre - A centre value
+ * @param props.mark - A ghost tick
+ * @param props.readout - Show the value, in a box this many characters wide
  * @param props.disabled - Disabled
  * @param props.onChange - Called as the value changes
  * @param props.onCommit - Called when a change is committed
@@ -74,6 +88,8 @@ export function Slider({
   format = String,
   unknownText = '…',
   centre,
+  mark,
+  readout,
   disabled = false,
   onChange,
   onCommit,
@@ -89,11 +105,12 @@ export function Slider({
 
   return (
     <span
-      class={cx(styles.slider, unknown && styles.unknown, disabled && styles.disabled)}
+      class={cx(styles.slider, unknown && styles.unknown)}
       style={{
         '--fill-start': fill.start,
         '--fill-end': fill.end,
         '--centre': centre === undefined ? -100 : percentOf(centre, min, max),
+        '--mark': mark === undefined ? -100 : percentOf(mark, min, max),
       }}
       {...dataAttributes(rest)}
     >
@@ -124,6 +141,11 @@ export function Slider({
           }
         }}
       />
+      {readout !== undefined && (
+        <span class={cx(styles.readout, 'num')} style={{ '--num-ch': readout }} aria-hidden="true">
+          {unknown ? '…' : format(shown)}
+        </span>
+      )}
     </span>
   );
 }

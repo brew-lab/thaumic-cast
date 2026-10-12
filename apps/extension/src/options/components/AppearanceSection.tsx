@@ -32,6 +32,7 @@ export function AppearanceSection({ settings, onUpdate }: AppearanceSectionProps
     <Card title={t('appearance_section_title')}>
       <SettingsRow
         label={t('appearance_theme')}
+        controlWidth="wide"
         help={settings.theme === 'auto' ? t('appearance_theme_auto_desc') : undefined}
         control={(a11y) => (
           <SegmentedControl

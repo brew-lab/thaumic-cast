@@ -1,12 +1,12 @@
 @layer components {
   /*
    * A-text. The edge is the control's: 1 px --outline at rest, --on-surface on hover,
-   * 2 px --primary on focus (with the ring), 2 px --danger-ink when invalid. The padding
+   * 2 px --primary on focus (with the ring), 2 px danger ink (--tone-ink) when invalid. The padding
    * gives back the extra edge, so the text never moves. It never reshapes.
    */
   .control {
     --input-h: var(--control-md);
-    --input-bg: light-dark(var(--surface), var(--container));
+    --input-bg: var(--field-bg);
     --input-edge: var(--outline);
     --input-edge-w: var(--line-hair);
     --input-fg: var(--on-surface);
@@ -63,6 +63,21 @@
     text-overflow: ellipsis;
   }
 
+  /* grow: the field sizes to its text between the IP box and its cap; the box hugs it. */
+  @supports (field-sizing: content) {
+    .grow {
+      inline-size: max-content;
+      max-inline-size: 100%;
+    }
+
+    .grow > .input {
+      flex: none;
+      field-sizing: content;
+      min-inline-size: var(--ch-ip);
+      max-inline-size: var(--ch-ip-max);
+    }
+  }
+
   .input::placeholder {
     color: var(--input-hint);
     opacity: 1;
@@ -94,7 +109,7 @@
   }
 
   /* States */
-  .control:is(:hover, [data-force='hover']):not(.disabled) {
+  .control:is(:hover, [data-force='hover']):not(:has(.input:disabled)) {
     --input-edge: var(--on-surface);
   }
 
@@ -110,11 +125,12 @@
 
   .invalid,
   .invalid:hover {
-    --input-edge: var(--danger-ink);
+    --input-edge: var(--tone-ink);
     --input-edge-w: var(--line-bold);
   }
 
-  .disabled {
+  /* Disabled, from the native state, so a disabled fieldset round it draws it too. */
+  .control:has(.input:disabled) {
     --input-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
     --input-fg: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --input-hint: var(--input-fg);

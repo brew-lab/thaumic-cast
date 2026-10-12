@@ -1,8 +1,7 @@
 import { useEffect } from 'preact/hooks';
-import { WizardStep, DescriptionList, Icon, Notice } from '@thaumic-cast/ui';
+import { WizardStep, DescriptionList, EmptyState, Notice } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useSonosState } from '../../hooks/useSonosState';
-import styles from './SpeakerStep.module.css';
 
 interface SpeakerStepProps {
   /** Callback when speakers are found */
@@ -32,35 +31,24 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
       glyph="speaker"
     >
       {loading ? (
+        <EmptyState kind="searching" body={t('onboarding.speakers.loading')} />
+      ) : !speakerGroups.isEmpty ? (
+        // The found rooms are checklist lines under the count, as on the desktop.
         <DescriptionList
           kind="checklist"
-          rows={[{ key: 'status', state: 'checking', text: t('onboarding.speakers.loading') }]}
+          rows={[
+            {
+              key: 'status',
+              state: 'connected',
+              text: t('onboarding.speakers.found', { count: speakerGroups.size }),
+            },
+            ...[...speakerGroups].map((group) => ({
+              key: group.id,
+              state: 'connected' as const,
+              text: group.isMultiSpeaker ? `${group.name} +${group.size - 1}` : group.name,
+            })),
+          ]}
         />
-      ) : !speakerGroups.isEmpty ? (
-        <>
-          <DescriptionList
-            kind="checklist"
-            rows={[
-              {
-                key: 'status',
-                state: 'connected',
-                text: t('onboarding.speakers.found', { count: speakerGroups.size }),
-              },
-            ]}
-          />
-
-          <div className={styles.speakerList}>
-            {[...speakerGroups].map((group) => (
-              <div key={group.id} className={styles.speakerItem}>
-                <Icon glyph="speaker" />
-                <span>{group.name}</span>
-                {group.isMultiSpeaker && (
-                  <span className={`${styles.memberCount} num`}>+{group.size - 1}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </>
       ) : (
         <Notice tone="warning" text={t('onboarding.speakers.none_found')} />
       )}

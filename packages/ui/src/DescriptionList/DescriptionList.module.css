@@ -1,7 +1,7 @@
 @layer components {
   /*
    * M-dl. readout: quiet terms (--text-3, --on-surface-variant) and strong values. stat:
-   * strong terms and --text-5 values, counts tabular in a --ch-count box. From a 25rem
+   * strong terms and --text-5 values, counts tabular and start-aligned. From a 25rem
    * `card` the pairs share one grid (terms max-content, values the rest); under it each
    * pair stacks. checklist: a StatusDot in a --icon-md box and one sentence per line.
    */
@@ -87,8 +87,12 @@
     font-variant-numeric: var(--num);
   }
 
+  /*
+   * A count shares its column with words (the Address, "3 hours"), so it starts where they
+   * start (§11 call 35): tabular figures keep its digits steady, and a longer number grows
+   * away from the term, moving nothing.
+   */
   .count {
-    min-inline-size: var(--ch-count);
     text-align: start;
   }
 

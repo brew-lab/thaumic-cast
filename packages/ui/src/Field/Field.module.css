@@ -2,7 +2,7 @@
   /*
    * M-field. A stack: label, control, one message slot. The label takes the settings-row
    * style (13 in the popup, 14 on the desktop, 600); the slot is 12/16 and holds the help,
-   * a status, or the error with the danger glyph in --danger-ink.
+   * a status, or the error with the danger glyph in the danger ink (--tone-ink).
    */
   .field {
     --field-gap: var(--space-2);
@@ -12,7 +12,6 @@
     --field-help: var(--text-2);
     --field-help-leading: var(--leading-2);
     --field-help-ink: var(--on-surface-variant);
-    --field-error-ink: var(--danger-ink);
 
     container: field / inline-size;
     display: flex;
@@ -60,8 +59,9 @@
     color: var(--on-surface);
   }
 
+  /* The error: the danger ink on the surface (data-tone sets --tone-ink). */
   .error {
-    color: var(--field-error-ink);
+    color: var(--tone-ink);
   }
 
   .glyph {

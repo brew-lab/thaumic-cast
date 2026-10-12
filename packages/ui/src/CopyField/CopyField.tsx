@@ -53,6 +53,11 @@ export interface CopyFieldProps {
   resetKey?: unknown;
   /** The clipboard to write to; the browser's by default (tests and the catalogue fake it). */
   clipboard?: ClipboardEnv;
+  /**
+   * How long "Copied" shows, in ms: `COPY_CONFIRM_MS` (P-copy). Only the catalogue changes
+   * it, with `Infinity`, to hold the state for a screenshot.
+   */
+  confirmFor?: number;
 }
 
 /**
@@ -76,6 +81,7 @@ export interface CopyFieldProps {
  * @param props.help - Lines under the control
  * @param props.resetKey - Returns to rest when it changes
  * @param props.clipboard - The clipboard to write to
+ * @param props.confirmFor - How long "Copied" shows
  * @returns The value and its copy action
  */
 export function CopyField({
@@ -89,6 +95,7 @@ export function CopyField({
   help,
   resetKey,
   clipboard,
+  confirmFor = COPY_CONFIRM_MS,
 }: CopyFieldProps): JSX.Element {
   const id = useId();
   const noteId = `${id}-note`;
@@ -102,10 +109,10 @@ export function CopyField({
   // "Copied" is a brief echo of the user's own action (P-copy): after COPY_CONFIRM_MS the
   // action returns to its rest label. A refusal has no timer: its note needs reading.
   useEffect(() => {
-    if (result !== 'done') return undefined;
-    const timer = setTimeout(() => setResult('idle'), COPY_CONFIRM_MS);
+    if (result !== 'done' || !Number.isFinite(confirmFor)) return undefined;
+    const timer = setTimeout(() => setResult('idle'), confirmFor);
     return () => clearTimeout(timer);
-  }, [result, copies]);
+  }, [result, copies, confirmFor]);
 
   // A new value is a new thing to copy: drop what was shown for the old one.
   useEffect(() => {
@@ -131,7 +138,8 @@ export function CopyField({
       if (next === 'refused') {
         say(refusedNote);
         requestAnimationFrame(() => {
-          text.current?.focus();
+          // The value is beside the action just pressed, so nothing needs scrolling to it.
+          text.current?.focus({ preventScroll: true });
           selectAll(text.current);
         });
       }
@@ -168,6 +176,7 @@ export function CopyField({
           <Button
             kind="quiet"
             icon="copy"
+            flush
             status={result === 'done' ? 'done' : 'idle'}
             labels={{ done }}
             disabled={nothingToCopy}

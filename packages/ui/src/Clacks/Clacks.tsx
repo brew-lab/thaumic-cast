@@ -28,11 +28,13 @@ export function Clacks({ state = 'working', size = 'md', ...rest }: ClacksProps)
   return (
     <span
       class={cx(styles.clacks, styles[size], state === 'answered' && styles.answered)}
+      data-tone={state === 'answered' ? 'success' : undefined}
       aria-hidden="true"
       {...dataAttributes(rest)}
     >
-      {CLACKS_PATH.map((pos, i) => (
-        <span key={i} class={styles.shutter} style={{ '--pos': pos }} />
+      {CLACKS_PATH.map((_, i) => (
+        // The DOM index, for engines without sibling-index(); the CSS turns it into the walk.
+        <span key={i} class={styles.shutter} style={{ '--i': i + 1 }} />
       ))}
     </span>
   );

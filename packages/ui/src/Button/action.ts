@@ -16,8 +16,9 @@ export interface ActionLabels {
 
 /**
  * The status an action settles in. Done and failed are shown only when the Button has words
- * for them; Stop and Stop all casts have busy only, because on success the control goes away
- * and a failure is a notice at its source.
+ * for them; Stop and Stop all casts have neither (and keep their words while busy, the Clacks
+ * in place of the square), because on success the control goes away and a failure is a
+ * notice at its source.
  * @param outcome - Whether the action resolved or rejected
  * @param labels - The Button's state labels
  * @returns The status to show

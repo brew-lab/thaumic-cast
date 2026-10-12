@@ -15,30 +15,41 @@
     --btn-icon: var(--icon-sm);
     --btn-font: var(--text-4-fixed);
     --btn-radius: var(--radius-control);
-    --btn-press: var(--press-text);
     --btn-on-bg: var(--secondary-container);
     --btn-on-fg: var(--on-secondary-container);
     --btn-check: var(--primary);
-    --btn-failed-bg: var(--danger-container);
-    --btn-failed-fg: var(--on-danger-container);
+    --btn-failed-bg: var(--tone-container);
+    --btn-failed-fg: var(--on-tone-container);
+    --btn-lead: currentcolor;
     --btn-hit: var(--hit-min);
     --btn-fill: color-mix(in oklch, var(--btn-fg) var(--layer), var(--btn-bg));
     --btn-trail: var(--btn-fg);
+    --btn-pad-start: var(--btn-pad);
+    --btn-pull: calc(0 * var(--btn-pad));
 
     position: relative;
+    isolation: isolate;
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
     gap: var(--btn-gap);
     min-block-size: var(--btn-h);
-    max-inline-size: 100%;
+
+    /*
+     * The margin box fits the container, not the border box: a flush Button reaches back by
+     * --btn-pull, so its own cap is that much wider. A cap of 100% took the pull off a flush
+     * Button in a box that hugs it (CopyField's action), at rest and on every frame of a
+     * morph, so the morph ran one pull short and snapped by it at both ends (§11 call 80).
+     */
+    max-inline-size: calc(100% + var(--btn-pull));
     margin: 0;
+    margin-inline-start: calc(-1 * var(--btn-pull));
     padding-block: 0;
     padding-inline: var(--btn-pad);
-    border: var(--line-hair) solid var(--btn-edge);
+    border: var(--line-hair) solid transparent;
     border-radius: var(--btn-radius);
-    background: var(--btn-fill);
+    background: transparent;
     color: var(--btn-fg);
     font-family: var(--font-body);
     font-size: var(--btn-font);
@@ -49,10 +60,44 @@
     cursor: pointer;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
+
+    /*
+     * The ink, fill and layer fade as painted colours (here and on the surface), never as the
+     * registered --layer, --btn-bg and --btn-fg: WebKit drops the corner's morph while a
+     * registered custom property transitions on the same element (§11 call 79).
+     */
     transition:
-      --layer var(--dur-effects) var(--ease-effects),
+      color var(--dur-change) var(--ease-effects),
       border-radius var(--dur-shape) var(--ease-effects),
-      scale var(--dur-spatial) var(--ease-spatial);
+      corner-shape var(--dur-shape) var(--ease-effects);
+  }
+
+  /*
+   * The surface: the fill, the edge and the state layer are painted here, under the words,
+   * and take the Button's radius and corner shape, so the focus ring traces the same shape.
+   */
+  .button::before {
+    content: '';
+    position: absolute;
+    inset: calc(-1 * var(--line-hair));
+    border: var(--line-hair) solid var(--btn-edge);
+    border-radius: inherit;
+    background: var(--btn-fill);
+    pointer-events: none;
+    transition:
+      background-color var(--dur-effects) var(--ease-effects),
+      border-color var(--dur-change) var(--ease-effects);
+  }
+
+  @supports (corner-shape: bevel) {
+    .button::before {
+      corner-shape: inherit;
+    }
+  }
+
+  .button > * {
+    position: relative;
+    z-index: var(--z-raised);
   }
 
   /* The hit area reaches the target minimum (2.75rem on the desktop) without a bigger box. */
@@ -63,8 +108,24 @@
     inset-inline: calc(-1 * var(--line-hair));
   }
 
-  .button:has(.lead) {
+  /*
+   * The start padding follows the glyph the Button shows now; a change of state eases it with
+   * the width.
+   */
+  .with-icon {
+    --btn-pad-start: var(--btn-pad-icon);
+
     padding-inline-start: var(--btn-pad-icon);
+  }
+
+  /*
+   * Flush: a quiet Button that starts a text column pulls back by its own leading padding,
+   * so its glyph (or first letter) lines up with the text above it. A context can ask for
+   * it by setting --btn-pull: var(--btn-pad-start) on the Button, as it re-points any other
+   * --btn-* token.
+   */
+  .flush {
+    --btn-pull: var(--btn-pad-start);
   }
 
   .button:has(.trail, .check, .chevron) {
@@ -94,14 +155,19 @@
     --btn-fg: var(--on-primary);
   }
 
+  /*
+   * Danger (data-tone="danger"): filled is the ink on a surface, with --on-danger; tonal is
+   * the tone on its container, its glyph in the tone's glyph colour (the ink in dark).
+   */
   .filled.danger {
-    --btn-bg: var(--danger);
+    --btn-bg: var(--tone-ink);
     --btn-fg: var(--on-danger);
   }
 
   .tonal.danger {
-    --btn-bg: var(--danger-container);
-    --btn-fg: var(--on-danger-container);
+    --btn-bg: var(--tone-container);
+    --btn-fg: var(--on-tone-container);
+    --btn-lead: var(--tone-glyph);
   }
 
   .outline {
@@ -130,8 +196,12 @@
     text-underline-offset: var(--space-1);
   }
 
+  /*
+   * The link's box is its line, so its hit area is centred on it and at least --btn-hit
+   * tall, however tall the line is.
+   */
   .link::after {
-    inset-block: calc(min(0rem, (1lh - var(--btn-hit)) / 2));
+    inset-block: calc(min(0rem, (100% - var(--btn-hit)) / 2));
   }
 
   .link:hover {
@@ -153,6 +223,11 @@
     padding-block: var(--space-2);
   }
 
+  /* The trimmed label leaves no leading, so the description keeps a step from it. */
+  .two-line .text {
+    gap: var(--space-1);
+  }
+
   /* Parts */
   .lead,
   .check,
@@ -164,14 +239,30 @@
     block-size: var(--btn-icon);
   }
 
+  .lead {
+    color: var(--btn-lead);
+  }
+
+  /* While only the glyph changes, the old and the new share the slot as one fades for the other. */
+  .lead > * {
+    grid-area: 1 / 1;
+  }
+
   .lead > svg,
   .check > svg,
   .chevron > svg {
     --icon-size: var(--btn-icon);
   }
 
+  /* The check slot is always kept while `pressed` is set; the check fades in when on. */
   .check {
     color: var(--btn-check);
+    opacity: 0;
+    transition: opacity var(--dur-change) var(--ease-effects);
+  }
+
+  .check[data-on] {
+    opacity: 1;
   }
 
   .chevron > svg {
@@ -182,29 +273,80 @@
     rotate: 180deg;
   }
 
+  /*
+   * The words sit centred in the box (at the start for `align="start"`), so while the box
+   * morphs past them they overflow evenly and the clip takes both sides alike.
+   */
   .text {
     display: flex;
     flex-direction: column;
+    align-items: center;
     min-inline-size: 0;
   }
 
-  /* Every label the Button can show sits in one cell, so the width never jumps (F-shift). */
-  .labels {
-    display: grid;
-    justify-items: center;
+  .start .text {
+    align-items: stretch;
   }
 
-  .start .labels {
-    justify-items: start;
+  /*
+   * One state's glyph and words (A-button, "Changing state"). Script fades them; this
+   * transition is where it reads --dur-change and --ease-effects as the engine resolves them.
+   *
+   * Every state keeps one block size and one baseline, so a change never moves the line the
+   * Button sits on (§11 call 76). The unit is always as tall as the glyph slot, glyph or not,
+   * and its baseline is always the words'. A flex box takes its baseline from its first item,
+   * and the slot's (an icon's foot, or the Clacks' top row while busy) sat up to 5 px above the
+   * words', so going busy pushed the line box out. The slot is held out of the flow, in room
+   * the unit's start padding keeps for it, so the words are its only item.
+   */
+  .unit {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--btn-icon);
+    transition: opacity var(--dur-change) var(--ease-effects);
   }
 
-  .label {
-    grid-area: 1 / 1;
+  .unit:has(> .lead) {
+    padding-inline-start: calc(var(--btn-icon) + var(--btn-gap));
+  }
+
+  .unit > .lead {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: var(--btn-icon);
+    block-size: auto;
+  }
+
+  /*
+   * While the box morphs, the words are clipped to it: the in-flow words overflow it while it
+   * is still narrower than they are. They are invisible over the first half of the change and
+   * the box covers most of the distance in that time, so only a few faint pixels are cut.
+   */
+  .button[data-morph] .text {
+    clip-path: inset(calc(-1 * var(--space-4)) calc(-1 * var(--btn-pad-icon)));
+  }
+
+  /*
+   * The words a change leaves: out of the flow and the accessibility tree, held where they
+   * were from the edge that stays (script sets the place), and clipped to the box as they
+   * fade up and out.
+   */
+  .button > .ghost {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    pointer-events: none;
+  }
+
+  .ghost > .unit {
+    position: absolute;
     white-space: nowrap;
   }
 
-  .label:not([data-current]) {
-    visibility: hidden;
+  .label {
+    white-space: nowrap;
   }
 
   @supports (text-box: trim-both cap alphabetic) {
@@ -223,9 +365,13 @@
   .trail {
     font-weight: var(--weight-body);
     color: var(--btn-trail);
+    transition: color var(--dur-change) var(--ease-effects);
   }
 
-  /* States (F-grammar): hover 8 %, focus 10 %, press 12 % and the press scale. */
+  /*
+   * States (F-grammar): hover 8 %, focus 10 %, press 12 %. A press is held for the morph
+   * ([data-pressing], utils/press.ts), so a quick click still shows it in full.
+   */
   .button:is(:hover, [data-force='hover']) {
     --layer: var(--layer-hover);
   }
@@ -234,41 +380,29 @@
     --layer: var(--layer-focus);
   }
 
-  .button:is(:active, [data-force='press']) {
+  .button:is(:active, [data-pressing], [data-force='press']) {
     --layer: var(--layer-press);
-
-    border-radius: var(--radius-pressed);
-    scale: var(--btn-press);
-    transition-duration: var(--dur-fast);
-  }
-
-  .full:is(:active, [data-force='press']) {
-    --btn-press: var(--press-wide);
   }
 
   /*
-   * Shapes appear only on hover, focus and press (DESIGN.md §1). Danger never reshapes, and
-   * neither does a busy or disabled Button. WebKit keeps colour, the ring and the press.
+   * Shapes appear only on focus and press; hover is colour (DESIGN.md §1). Focus-visible
+   * takes the bevel with the ring, and a press morphs the surface to it and back, with no
+   * scale. Every kind takes it, danger included. A busy Button keeps the bevel while focused
+   * but ignores a press, so it stays round under the pointer; a disabled one never reshapes.
+   * A press that itself makes the Button busy (an onAction click) plays out: its hold
+   * ([data-pressing]) began before busy, and one that starts while busy is never set
+   * (§11 call 78). Without corner-shape nothing reshapes: colour and the ring carry the state.
    */
   @supports (corner-shape: bevel) {
-    .button:not(.danger, :disabled, [aria-disabled='true']):is(
-        :hover,
+    .button:not(:disabled, [aria-disabled='true']:not([data-status='busy'])):is(
         :focus-visible,
-        [data-force='hover'],
+        [data-pressing],
         [data-force='focus']
-      ) {
+      ),
+    .button:not(:disabled, [aria-disabled='true']):is(:active, [data-force='press']) {
       border-radius: var(--shape-bevel);
       corner-shape: bevel;
     }
-
-    .button:not(.danger, :disabled, [aria-disabled='true']):is(:active, [data-force='press']) {
-      border-radius: var(--radius-pressed);
-      corner-shape: round;
-    }
-  }
-
-  .danger:is(:active, [data-force='press']) {
-    border-radius: var(--btn-radius);
   }
 
   /* Pressed (on): calm, the secondary container and a trailing check. */
@@ -277,16 +411,17 @@
     --btn-fg: var(--btn-on-fg);
   }
 
-  /* Busy ignores hover and press; focus stays. */
+  /*
+   * Busy ignores a press: hover's layer and the focus ring and bevel stay as they were, so
+   * nothing but the words changes while the action runs. The hold of the press that made it
+   * busy keeps the press layer with its bevel, and both go back together.
+   */
   .button[data-status='busy'] {
     cursor: progress;
-    scale: 1;
   }
 
-  .button[data-status='busy']:is(:hover, :active) {
-    --layer: initial;
-
-    border-radius: var(--btn-radius);
+  .button[data-status='busy']:is(:active, [data-force='press']) {
+    --layer: var(--layer-hover);
   }
 
   /* Failed: the danger container and "Try again". */
@@ -294,6 +429,7 @@
     --btn-bg: var(--btn-failed-bg);
     --btn-fg: var(--btn-failed-fg);
     --btn-edge: transparent;
+    --btn-lead: var(--tone-glyph);
   }
 
   /* Disabled (T-state): 38 % ink, a 12 % fill or edge, the rest shape. */
@@ -303,10 +439,10 @@
     --btn-bg: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
     --btn-check: var(--btn-fg);
     --btn-trail: var(--btn-fg);
+    --btn-lead: currentcolor;
     --layer: initial;
 
     border-radius: var(--btn-radius);
-    scale: 1;
     cursor: not-allowed;
   }
 
@@ -315,14 +451,15 @@
     --btn-edge: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
   }
 
-  .quiet:disabled,
-  .link:disabled,
-  .link[aria-disabled='true'] {
+  /* As specific as the rule above, so a disabled link (an <a>, aria-disabled) gets no fill. */
+  .quiet:is(:disabled, [aria-disabled='true']):not([data-status='busy']),
+  .link:is(:disabled, [aria-disabled='true']):not([data-status='busy']) {
     --btn-bg: transparent;
   }
 
   @media (forced-colors: active) {
-    .button {
+    .button,
+    .button::before {
       border-color: currentcolor;
     }
 

@@ -4,7 +4,7 @@
    * title is fluid on its container (--text-8, 32 → 40).
    */
   .header {
-    --page-title-ink: light-dark(var(--brand-ink), var(--on-surface));
+    --page-title-ink: var(--title-ink);
 
     display: flex;
     flex-wrap: wrap;
@@ -14,11 +14,12 @@
     min-inline-size: 0;
   }
 
+  /* The h1 is trimmed to its letters (F-textbox), so the gap gives the summary its room. */
   .titles {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-4);
     min-inline-size: 0;
   }
 

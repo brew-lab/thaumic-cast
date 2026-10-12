@@ -24,12 +24,30 @@
     --slider-at-centre: calc(
       var(--centre) * (100% - var(--size-handle-w)) / 100 + var(--size-handle-w) / 2
     );
+    --slider-at-mark: calc(
+      var(--mark) * (100% - var(--size-handle-w)) / 100 + var(--size-handle-w) / 2
+    );
+    --slider-ghost: var(--outline);
 
     display: flex;
+    gap: var(--space-3);
     align-items: center;
     min-inline-size: 0;
     inline-size: 100%;
     box-shadow: none;
+  }
+
+  /* The value after the track, in its ch box (F-shift). */
+  .readout {
+    flex: none;
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  :where([data-density='desktop']) .readout {
+    font-size: var(--text-4-fixed);
+    line-height: var(--leading-4);
   }
 
   /* The gradients run left to right, so right-to-left text mirrors the whole input. */
@@ -64,6 +82,13 @@
         circle at calc(100% - var(--space-3)) 50%,
         var(--slider-dot) var(--space-1),
         transparent calc(var(--space-1) + var(--line-hair))
+      ),
+      linear-gradient(
+        to right,
+        transparent calc(var(--slider-at-mark) - var(--line-hair)),
+        var(--slider-ghost) calc(var(--slider-at-mark) - var(--line-hair))
+          calc(var(--slider-at-mark) + var(--line-hair)),
+        transparent calc(var(--slider-at-mark) + var(--line-hair))
       ),
       linear-gradient(
         to right,
@@ -120,19 +145,19 @@
     visibility: hidden;
   }
 
-  .unknown .input,
-  .disabled .input {
+  .input:disabled {
     cursor: not-allowed;
   }
 
-  .disabled {
+  /* Disabled, from the native state (a disabled fieldset too); unknown keeps its track. */
+  .slider:not(.unknown):has(.input:disabled) {
     --slider-fill-ink: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
     --slider-handle: var(--slider-fill-ink);
     --slider-dot: var(--slider-fill-ink);
     --slider-track-ink: color-mix(in oklch, var(--on-surface) var(--disabled-fill), transparent);
   }
 
-  .disabled .input:is(:hover, :active) {
+  .input:disabled:is(:hover, :active) {
     --slider-handle-shadow: var(--slider-gap-shadow);
     --slider-handle-w: var(--size-handle-w);
   }

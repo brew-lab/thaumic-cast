@@ -3,7 +3,9 @@
    * M-copy. The value is text, not a box: a readout value in machine text that wraps
    * anywhere. The quiet sm action sits beside it while the whole value fits, and wraps under
    * it otherwise, at its own size. Under 20rem of its own `field` container the action is an
-   * icon-only square. It is sm on every surface (F-size).
+   * icon-only square. It is sm on every surface (F-size). The action is flush: under the
+   * value (or alone, on a card) its glyph lines up with the text; beside the value the gap
+   * to its glyph is still --gap-target.
    */
   .copy {
     container: field / inline-size;

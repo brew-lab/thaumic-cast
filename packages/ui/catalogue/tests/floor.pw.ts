@@ -1,0 +1,68 @@
+/*
+ * The desktop's WebKit floor (DESIGN.md §10, the floors), drawn by the catalogue's floor mode
+ * (`?floor=1`, catalogue/floor.ts): the features the floor lacks are taken away, so the
+ * fallbacks are what renders. It runs in both projects; the WebKit project is the one that
+ * stands for macOS 13 and 14. With DS_SCREENSHOTS=1 it also takes one picture per section
+ * under `floor-<section>.png`, made and kept like the other baselines (catalogue.pw.ts).
+ */
+import { existsSync } from 'node:fs';
+import { expect, test } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/?theme=dark&floor=1');
+  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await expect(page.locator('html[data-floor]')).toHaveCount(1);
+});
+
+test('the themed tokens come from webkit-fallbacks.css, not light-dark()', async ({ page }) => {
+  const surface = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--surface').trim(),
+  );
+  expect(surface).not.toContain('light-dark');
+  // The dark surface, as the fallback file repeats it.
+  expect(surface).toMatch(/^oklch\(21% 0?\.028 303\.7\)$/);
+});
+
+test('a pressed Button keeps its rest corner where corner-shape is missing', async ({ page }) => {
+  const radius = await page
+    .locator('#button [data-scheme="light"] button[data-force="press"]')
+    .first()
+    .evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
+  // --radius-control (8px), not the bevel a press takes where corner-shape exists: call 29.
+  expect(radius).toBe('8px');
+});
+
+test('the Select falls back to the native list', async ({ page }) => {
+  const select = page.locator('#select [data-scheme="light"] select').first();
+  expect(await select.evaluate((el) => getComputedStyle(el).appearance)).not.toBe('base-select');
+  await expect(select.locator('button')).toHaveCount(0);
+});
+
+test('axe finds no violations on the floor', async ({ page }) => {
+  test.setTimeout(180_000);
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  const summary = results.violations.map(
+    (v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`,
+  );
+  expect(summary).toEqual([]);
+});
+
+test('every section on the floor matches its screenshot', async ({ page }, testInfo) => {
+  test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
+  test.setTimeout(300_000);
+  await page.evaluate(() => document.fonts.ready);
+  const ids = await page.locator('main > section').evaluateAll((els) => els.map((e) => e.id));
+  for (const id of ids) {
+    const name = `floor-${id}.png`;
+    const section = page.locator(`#${id}`);
+    if (!existsSync(testInfo.snapshotPath(name))) {
+      await section.screenshot({ path: testInfo.outputPath('new-baselines', name) });
+      testInfo.annotations.push({ type: 'new baseline', description: name });
+      continue;
+    }
+    await expect(section).toHaveScreenshot(name);
+  }
+});

@@ -241,6 +241,7 @@ export function Settings() {
       <Card id="appearance" title={t('settings.appearance')}>
         <SettingsRow
           label={t('settings.theme')}
+          controlWidth="wide"
           help={currentTheme === 'auto' ? t('settings.theme_auto_desc') : undefined}
           control={(a11y) => (
             <SegmentedControl

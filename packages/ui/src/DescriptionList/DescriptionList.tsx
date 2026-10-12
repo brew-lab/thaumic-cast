@@ -11,7 +11,7 @@ export interface DescriptionRow {
   term: string;
   /** The value: words, a number, or a CopyField. */
   value: ComponentChildren;
-  /** A number: tabular, in a `--ch-count` box (stat counts). */
+  /** A number: tabular, starting where the words in its column start (stat counts). */
   count?: boolean;
 }
 
@@ -30,7 +30,7 @@ export type DescriptionListProps =
   | {
       /**
        * readout: quiet terms and strong values ("For the next tab cast"). stat: strong
-       * terms and larger values, counts in `--ch-count` boxes (the Server page).
+       * terms and larger values, tabular counts (the Server page).
        */
       kind: 'readout' | 'stat';
       /** The pairs. */
