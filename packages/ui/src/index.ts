@@ -66,7 +66,5 @@ export * from './OptionsShell';
 export * from './Rail';
 export * from './RoomCard';
 export * from './SettingsSection';
-export * from './WizardShell';
-
-// Rebuilt in a later phase (DESIGN.md §14)
 export * from './Wizard';
+export * from './WizardShell';

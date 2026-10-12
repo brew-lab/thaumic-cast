@@ -154,7 +154,7 @@ export function useSonosState(): SonosStateResult {
   const setSyncGroupVolume = useCallback(async (speakerIp: string, volume: number) => {
     // No optimistic update: Sonos adjusts speakers proportionally (preserving
     // relative offsets), so we can't predict individual volumes. The group slider
-    // stays responsive via VolumeControl's local drag state, and per-speaker
+    // stays responsive via VolumeLine's local drag state (useVolumeControl), and per-speaker
     // sliders update when RenderingControl GENA events arrive.
     await chrome.runtime.sendMessage({ type: 'SET_VOLUME', speakerIp, volume, group: true });
   }, []);
