@@ -14,35 +14,17 @@
  *   field-sizing, ::details-content, base-select and :open) sit inside an `@supports` that
  *   tests for them, so the floors get the written fallback (DESIGN.md §10, the floors).
  *
- * Usage: `bun scripts/check-ds.ts` (also run by `bun run lint:ds`). It prints a report and
- * exits 0, except when a file that is already built from the design system (CLEAN_PATHS)
- * breaks a rule. Phase 5 makes every finding an error.
+ * Usage: `bun scripts/check-ds.ts` (the last step of `bun run lint`). It prints a report and
+ * exits 1 on any finding; unused tokens are listed and never fail. Pass --verbose to print every
+ * finding.
  */
 import { Glob } from 'bun';
 import { readFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { GLYPH_NAMES } from '../packages/ui/src/Icon/glyphs';
 import { CONTAINER_BREAKPOINTS_REM, TOKEN_NAMES } from '../packages/ui/src/tokens';
 
 const ROOT = join(import.meta.dir, '..');
-
-/** Files already built from the design system: a finding here fails the check. */
-export const CLEAN_PATHS = [
-  /^packages\/ui\/src\/(layers|tokens|webkit-fallbacks|base|motion|utilities|fonts)\.css$/,
-  /^packages\/ui\/src\/(tokens|theme)\.ts$/,
-  /^packages\/ui\/src\/(Announcer|Cluster|Icon)\//,
-  // Phase 1: the atoms.
-  /^packages\/ui\/src\/(Artwork|Badge|BrandBlock|Button|Checkbox|Chip|Clacks|Divider|IconButton|Meter|NavItem|Radio|SectionHeader|SegmentedControl|Select|Slider|StatusDot|StepIndicator|Switch|TextInput|Tooltip|utils)\//,
-  // Phase 2: the molecules and Card.
-  /^packages\/ui\/src\/(AddressField|Card|ChoiceGroup|CopyField|DescriptionList|Disclosure|EmptyState|Field|Notice|NoticeLine|PageHeader|SettingsRow|Toast|WizardStep)\//,
-  // Phase 3: the popup's molecules, components and shells.
-  /^packages\/ui\/src\/(CastBar|CastTile|TabCard|GroupVolume|MediaHeader|NoticeSlot|PopupHeader|PopupShell|StickyActionBar|RoomPicker|RoomRow|StartLevel|VideoSync)\//,
-  // Phase 4: settings and the desktop.
-  /^packages\/ui\/src\/(DesktopShell|Dialog|OptionsShell|Rail|RoomCard|SetList|SettingsSection|Wizard|WizardShell)\//,
-  // Every app file (Phase 1; the popup since Phase 3; the desktop's shell and onboarding
-  // frame since Phase 4).
-  /^apps\/[^/]+\/src\/.*\.(tsx|css)$/,
-];
 
 /** One finding: the check it breaks, where, and what. */
 export interface Finding {
@@ -278,6 +260,9 @@ export async function checkDesignSystem(): Promise<Finding[]> {
   return findings;
 }
 
+/** A finding that is listed and never fails: a token nobody reads yet (DESIGN.md §10 row 5). */
+const LISTED = new Set(['unused-token']);
+
 /**
  * Prints findings grouped by rule, with counts.
  * @param findings - The findings
@@ -289,29 +274,19 @@ export function printFindings(findings: Finding[], verbose: boolean): void {
   process.stdout.write('\ncheck-ds (row 5, the token graph)\n');
   if (!findings.length) process.stdout.write('  no findings\n');
   for (const [rule, list] of [...byRule].sort()) {
-    process.stdout.write(`  ${rule}: ${list.length}\n`);
+    const note = LISTED.has(rule) ? ' (listed, not an error)' : '';
+    process.stdout.write(`  ${rule}: ${list.length}${note}\n`);
     if (verbose) for (const f of list) process.stdout.write(`    ${f.file}: ${f.message}\n`);
   }
-}
-
-/**
- * The findings in files that are already built from the design system.
- * @param findings - All findings
- * @returns Those in CLEAN_PATHS
- */
-export function inCleanPaths(findings: Finding[]): Finding[] {
-  return findings.filter(
-    (f) => f.rule !== 'unused-token' && CLEAN_PATHS.some((re) => re.test(relative('.', f.file))),
-  );
 }
 
 if (import.meta.main) {
   const findings = await checkDesignSystem();
   printFindings(findings, process.argv.includes('--verbose'));
-  const clean = inCleanPaths(findings);
-  if (clean.length) {
-    process.stderr.write('\nDesign-system files break the rules:\n');
-    for (const f of clean) process.stderr.write(`  ${f.file}: ${f.message}\n`);
+  const errors = findings.filter((f) => !LISTED.has(f.rule));
+  if (errors.length) {
+    process.stderr.write('\nThe design-system check failed:\n');
+    for (const f of errors) process.stderr.write(`  ${f.file}: ${f.message}\n`);
     process.exit(1);
   }
 }
