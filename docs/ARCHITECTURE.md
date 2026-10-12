@@ -66,8 +66,8 @@ graph TD
    on a broadcast channel, both under one lock so that `subscribe()` never sees a frame twice.
 5. **Start playback.** On the first frame the client is sent `STREAM_READY` and answers with
    `START_PLAYBACK` naming the speakers. If it carries a `startVolume`, each room of each speaker
-   is first turned down to the limit or set to a level chosen by hand
-   (`services/start_volume.rs`). `StreamCoordinator` (`services/stream_coordinator.rs`) then
+   is first turned down to the limit or set to the level chosen by hand for that room, keyed by
+   its player UUID (`services/start_volume.rs`). `StreamCoordinator` (`services/stream_coordinator.rs`) then
    gives each speaker the stream's URL (`SetAVTransportURI`, `Play`) through the `sonos` module.
    Speaker commands run on a per-connection control worker in `api/ws.rs`, so a slow SOAP call
    never holds up frame ingest.
@@ -256,6 +256,18 @@ Speakers are found by SSDP and mDNS (`sonos/discovery/`) or added by IP address.
 `services/topology_monitor.rs` refreshes the
 zone topology and manages GENA subscriptions; speakers post their notifications to `/sonos/gena`,
 and `services/gena_event_processor.rs` turns them into `SonosState` updates and events.
+
+The topology arrives as Sonos groups. Bonded devices (a home theatre's satellites, the second
+speaker of a stereo pair) are sent marked `invisible`, and `roomsOf()` in `packages/protocol`
+folds the groups into rooms, named by the primary's player UUID; core folds the same way
+(`services/start_volume.rs`), and `fixtures/rooms.json` holds the two to it. The extension casts to
+rooms: `lib/cast-plan.ts` turns the chosen rooms into one target per Sonos group (its
+coordinator). Until regrouping lands, a chosen room plays with its whole group.
+
+The extension keeps its own record of the casts for the popup. `lib/room-sets.ts` holds Last cast
+and the saved sets in `chrome.storage.local` (never synced). `background/away-log.ts` keeps what
+happened while the popup was shut in `chrome.storage.session`, and `background/toolbar-badge.ts`
+shows "!" on the toolbar button for what needs a look.
 
 Services emit through the `EventEmitter` trait. `BroadcastEventBridge` (`events/bridge.rs`) puts
 events on the broadcast channel every WebSocket connection reads, and forwards them to an optional

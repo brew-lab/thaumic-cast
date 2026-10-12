@@ -1,0 +1,142 @@
+{
+  "groups": [
+    {
+      "id": "RINCON_LIVING01400:12",
+      "name": "Living Room",
+      "coordinatorUuid": "RINCON_LIVING01400",
+      "coordinatorIp": "192.168.1.20",
+      "members": [
+        {
+          "uuid": "RINCON_LIVING_SUB",
+          "ip": "192.168.1.21",
+          "zoneName": "Living Room",
+          "model": "Subwoofer",
+          "invisible": true
+        },
+        {
+          "uuid": "RINCON_LIVING01400",
+          "ip": "192.168.1.20",
+          "zoneName": "Living Room",
+          "model": "Soundbar"
+        },
+        {
+          "uuid": "RINCON_LIVING_LS",
+          "ip": "192.168.1.22",
+          "zoneName": "Living Room",
+          "model": "Surround Left",
+          "invisible": true
+        },
+        {
+          "uuid": "RINCON_LIVING_RS",
+          "ip": "192.168.1.23",
+          "zoneName": "Living Room",
+          "model": "Surround Right",
+          "invisible": true
+        }
+      ]
+    },
+    {
+      "id": "RINCON_STUDY01400:4",
+      "name": "Study",
+      "coordinatorUuid": "RINCON_STUDY01400",
+      "coordinatorIp": "192.168.1.30",
+      "members": [
+        {
+          "uuid": "RINCON_STUDY01400",
+          "ip": "192.168.1.30",
+          "zoneName": "Study",
+          "model": "one"
+        },
+        {
+          "uuid": "RINCON_STUDY_RIGHT",
+          "ip": "192.168.1.31",
+          "zoneName": "Study",
+          "model": "one",
+          "invisible": true
+        }
+      ]
+    },
+    {
+      "id": "RINCON_KITCHEN1400:7",
+      "name": "Kitchen + 1",
+      "coordinatorUuid": "RINCON_KITCHEN1400",
+      "coordinatorIp": "192.168.1.10",
+      "members": [
+        {
+          "uuid": "RINCON_PATIO01400",
+          "ip": "192.168.1.11",
+          "zoneName": "Patio",
+          "model": "move"
+        },
+        {
+          "uuid": "RINCON_KITCHEN1400",
+          "ip": "192.168.1.10",
+          "zoneName": "Kitchen",
+          "model": "era100"
+        }
+      ]
+    },
+    {
+      "id": "RINCON_BEDROOM1400:2",
+      "name": "Bedroom",
+      "coordinatorUuid": "RINCON_BEDROOM1400",
+      "coordinatorIp": "192.168.1.41",
+      "members": [
+        {
+          "uuid": "RINCON_BEDROOM_LEFT",
+          "ip": "192.168.1.40",
+          "zoneName": "Bedroom",
+          "model": "one"
+        },
+        {
+          "uuid": "RINCON_BEDROOM1400",
+          "ip": "192.168.1.41",
+          "zoneName": "Bedroom",
+          "model": "one"
+        }
+      ]
+    }
+  ],
+  "rooms": [
+    {
+      "id": "RINCON_BEDROOM1400",
+      "name": "Bedroom",
+      "ip": "192.168.1.41",
+      "coordinatorId": "RINCON_BEDROOM1400",
+      "groupedWith": [],
+      "coordinatorIp": "192.168.1.41"
+    },
+    {
+      "id": "RINCON_KITCHEN1400",
+      "name": "Kitchen",
+      "ip": "192.168.1.10",
+      "coordinatorId": "RINCON_KITCHEN1400",
+      "groupedWith": ["Patio"],
+      "coordinatorIp": "192.168.1.10"
+    },
+    {
+      "id": "RINCON_LIVING01400",
+      "name": "Living Room",
+      "ip": "192.168.1.20",
+      "coordinatorId": "RINCON_LIVING01400",
+      "groupedWith": [],
+      "coordinatorIp": "192.168.1.20"
+    },
+    {
+      "id": "RINCON_PATIO01400",
+      "name": "Patio",
+      "ip": "192.168.1.11",
+      "coordinatorId": "RINCON_KITCHEN1400",
+      "groupedWith": ["Kitchen"],
+      "coordinatorIp": "192.168.1.10"
+    },
+    {
+      "id": "RINCON_STUDY01400",
+      "name": "Study",
+      "ip": "192.168.1.30",
+      "coordinatorId": "RINCON_STUDY01400",
+      "groupedWith": [],
+      "coordinatorIp": "192.168.1.30"
+    }
+  ]
+}

@@ -31,13 +31,30 @@ export const brokerCalls = {
   startedPlayback: [] as StartPlaybackCall[],
 };
 
+/** One speaker's answer to a `startPlayback` call. */
+export interface PlaybackResult {
+  speakerIp: string;
+  success: boolean;
+  error?: string;
+}
+
 /**
- * Empties every recorded call.
+ * How the mocked `startPlayback` answers: by default it resolves with nothing,
+ * as an offscreen document that did not answer. Set `playbackResult` to answer
+ * each speaker.
+ */
+export const brokerReplies = {
+  playbackResult: undefined as ((speakerIp: string) => PlaybackResult) | undefined,
+};
+
+/**
+ * Empties every recorded call and answer.
  */
 export function resetBrokerCalls(): void {
   brokerCalls.stoppedTabs.length = 0;
   brokerCalls.syncedStates.length = 0;
   brokerCalls.startedPlayback.length = 0;
+  brokerReplies.playbackResult = undefined;
 }
 
 mock.module('../background/offscreen-broker', () => ({
@@ -55,8 +72,12 @@ mock.module('../background/offscreen-broker', () => ({
       _syncSpeakers?: boolean,
       _videoSyncEnabled?: boolean,
       startVolume?: StartVolume,
-    ): Promise<void> {
+    ): Promise<{ success: boolean; results: PlaybackResult[] } | undefined> {
       brokerCalls.startedPlayback.push({ tabId, speakerIps, startVolume });
+      const answer = brokerReplies.playbackResult;
+      if (!answer) return undefined;
+      const results = speakerIps.map(answer);
+      return { success: results.some((r) => r.success), results };
     },
   },
 }));

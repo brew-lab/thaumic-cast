@@ -175,7 +175,8 @@ test.describe('accepted', () => {
     page,
   }) => {
     // The catalogue's refused specimens bring their own clipboard, which refuses.
-    const runs = (await pressAll(page, COPY_CONFIRM_MS + D * 1.3 + 300)).filter((r) =>
+    // The tail leaves headless WebKit, under parallel load, room to draw the last frames.
+    const runs = (await pressAll(page, COPY_CONFIRM_MS + D * 1.3 + 900)).filter((r) =>
       r.frames.some((f) => f.status === 'done'),
     );
     expect(runs.length).toBeGreaterThanOrEqual(10);

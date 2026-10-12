@@ -49,6 +49,9 @@ const IPv4Pattern = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 /** Valid speaker IP address (IPv4 format) */
 export const SpeakerIpSchema = z.string().regex(IPv4Pattern, 'Invalid IPv4 address');
 
+/** A room id: the room primary's player UUID (`RINCON_…`). */
+export const RoomIdSchema = z.string().min(1, 'Empty room id');
+
 /** Valid tab ID (positive integer) */
 export const TabIdSchema = z.number().int().positive();
 
@@ -80,19 +83,22 @@ export type RawMediaState = z.infer<typeof RawMediaStateSchema>;
 export const StartCastMessageSchema = z.object({
   type: z.literal('START_CAST'),
   payload: z.object({
-    /** Target speaker IP addresses (multi-group support). */
-    speakerIps: z.array(SpeakerIpSchema).min(1, 'At least one speaker required'),
+    /**
+     * The chosen rooms (player UUIDs), in order. The background plans the
+     * speakers from them (`lib/cast-plan.ts`), from its own Sonos state.
+     */
+    roomIds: z.array(RoomIdSchema),
     /**
      * Encoder configuration. If omitted, background will auto-select
      * based on device capabilities and past session history.
      */
     encoderConfig: EncoderConfigSchema.optional(),
     /**
-     * Start levels set by hand in the popup before Cast, keyed by speaker IP.
+     * Start levels set by hand in the popup before Cast, keyed by room id.
      * Nothing is sent to a speaker until Cast; the background adds the start
      * limit from the settings.
      */
-    startLevels: z.record(SpeakerIpSchema, VolumeSchema).optional(),
+    startLevels: z.record(RoomIdSchema, VolumeSchema).optional(),
   }),
 });
 export type StartCastMessage = z.infer<typeof StartCastMessageSchema>;
@@ -106,6 +112,66 @@ export const StopCastMessageSchema = z.object({
     .optional(),
 });
 export type StopCastMessage = z.infer<typeof StopCastMessageSchema>;
+
+/**
+ * Adds rooms to a running cast. Until a room can join the cast's Sonos group,
+ * each new target plays the cast's stream on its own, as a cast to several
+ * rooms does with "Play speakers as one group" off.
+ */
+export const AddRoomsMessageSchema = z.object({
+  type: z.literal('ADD_ROOMS'),
+  payload: z.object({
+    /** The cast's tab. */
+    tabId: TabIdSchema,
+    /** The rooms to add (player UUIDs), in order. */
+    roomIds: z.array(RoomIdSchema).min(1, 'At least one room required'),
+    /** Levels set by hand before adding, keyed by room id (Undo uses the room's old level). */
+    startLevels: z.record(RoomIdSchema, VolumeSchema).optional(),
+  }),
+});
+export type AddRoomsMessage = z.infer<typeof AddRoomsMessageSchema>;
+
+/** How each room of an ADD_ROOMS went. */
+export const AddRoomsResponseSchema = z.object({
+  /** True when at least one room is now in the cast. */
+  success: z.boolean(),
+  /** A general failure (no such cast, nothing to add), as an i18n key or text. */
+  error: z.string().optional(),
+  /** One entry per room asked for that is present. */
+  rooms: z.array(
+    z.object({
+      roomId: z.string(),
+      /** Whether the room now plays the cast. */
+      joined: z.boolean(),
+      /** Why it did not, when it did not. */
+      error: z.string().optional(),
+    }),
+  ),
+});
+export type AddRoomsResponse = z.infer<typeof AddRoomsResponseSchema>;
+
+/**
+ * The browser's theme, for the toolbar badge's colours. The popup and the
+ * offscreen document report it: the service worker cannot read it.
+ */
+export const SetToolbarThemeMessageSchema = z.object({
+  type: z.literal('SET_TOOLBAR_THEME'),
+  payload: z.object({
+    /** Whether the browser (and so its toolbar) is dark. */
+    dark: z.boolean(),
+  }),
+});
+export type SetToolbarThemeMessage = z.infer<typeof SetToolbarThemeMessageSchema>;
+
+/** The popup drew these away events (or the user dismissed the line). */
+export const MarkAwaySeenMessageSchema = z.object({
+  type: z.literal('MARK_AWAY_SEEN'),
+  payload: z.object({
+    /** The events' ids. */
+    ids: z.array(z.string()),
+  }),
+});
+export type MarkAwaySeenMessage = z.infer<typeof MarkAwaySeenMessageSchema>;
 
 export const RemoveSpeakerMessageSchema = z.object({
   type: z.literal('REMOVE_SPEAKER'),

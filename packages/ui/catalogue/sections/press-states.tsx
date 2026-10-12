@@ -91,7 +91,7 @@ export function PressStatesSpecimen(): JSX.Element {
           <IconButton glyph="settings" label="Settings" data-kind="icon-md" />
           <IconButton glyph="settings" label="Settings" kind="tonal" data-kind="icon-tonal" />
           <Chip label="192.168.1.47" mono removeLabel="Remove 192.168.1.47" onRemove={noop} />
-          <Switch label="Sync video" checked={on} onChange={setOn} data-kind="switch" />
+          <Switch label="Video sync" checked={on} onChange={setOn} data-kind="switch" />
           <Checkbox label="Kitchen" checked={checked} onChange={setChecked} />
           <SegmentedControl label="Theme" value={theme} onChange={setTheme} options={SEGMENTS} />
           <span>

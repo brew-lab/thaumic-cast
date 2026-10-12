@@ -11,6 +11,7 @@
 import { createLogger } from '@thaumic-cast/shared';
 import { setupMessageHandlers } from './handlers';
 import { disconnectControlWebSocket } from './control-connection';
+import { watchToolbarTheme } from '../lib/toolbar-theme';
 
 const log = createLogger('Offscreen');
 
@@ -22,6 +23,9 @@ log.info('Offscreen document ready');
 chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(() => {
   // Background may be suspended during startup
 });
+
+// The toolbar badge's colours follow the browser's theme, which only a document can read.
+watchToolbarTheme();
 
 // Gracefully close WebSocket on document unload
 globalThis.addEventListener('beforeunload', () => {

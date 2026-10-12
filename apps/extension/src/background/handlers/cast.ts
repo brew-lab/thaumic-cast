@@ -16,11 +16,13 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { StreamMetadata } from '@thaumic-cast/protocol';
-import { countRemoteStreams } from '@thaumic-cast/protocol';
+import { countRemoteStreams, roomsOf } from '@thaumic-cast/protocol';
 import type {
   StartCastMessage,
   StopCastMessage,
   RemoveSpeakerMessage,
+  AddRoomsMessage,
+  AddRoomsResponse,
   ExtensionResponse,
 } from '../../lib/messages';
 import { KeyedError, errorParamsOf } from '../../lib/keyed-error';
@@ -29,6 +31,8 @@ import { getSourceFromUrl } from '../../lib/url-utils';
 import { getActiveTab, getActiveTabId } from '../../lib/tab-utils';
 import { loadExtensionSettings } from '../../lib/settings';
 import { buildStartVolume } from '../../lib/start-level';
+import { planCast } from '../../lib/cast-plan';
+import { recordLastCast, refOf } from '../../lib/room-sets';
 import { getCachedCodecSupport } from '../../lib/codec-cache';
 import { describeEncoderConfig } from '../../lib/presets';
 import { resolveAudio } from '../../lib/audio-resolver';
@@ -36,6 +40,7 @@ import { companionCapability } from '../../lib/capture-capability';
 import { getCachedState, updateCache } from '../metadata-cache';
 import {
   registerSession,
+  addToSession,
   hasSession,
   getSession,
   getSessionCount,
@@ -44,6 +49,7 @@ import {
   hasBrowserCaptureSessions,
 } from '../session-manager';
 import { getSpeakerGroups, getSonosState } from '../sonos-state';
+import { recordJoinFailed } from '../away-log';
 import { getConnectionState, clearConnectionState } from '../connection-state';
 import { stopCastForTab } from '../sonos-event-handlers';
 import { ensureOffscreen } from '../offscreen-manager';
@@ -53,6 +59,23 @@ import { detectAndCacheCodecSupport } from '../codec-support';
 import { discoverAndCache, connectWebSocket } from './connection';
 
 const log = createLogger('Background');
+
+/**
+ * The metadata a speaker shows when it starts playing a tab's cast.
+ * @param tabId - The cast's tab
+ * @returns The title, artist and source known for the tab, if any
+ */
+function metadataFor(tabId: number): StreamMetadata | undefined {
+  const cachedState = getCachedState(tabId);
+  if (cachedState?.metadata) {
+    return {
+      title: cachedState.metadata.title,
+      artist: cachedState.metadata.artist,
+      source: cachedState.source,
+    };
+  }
+  return cachedState?.source ? { source: cachedState.source } : undefined;
+}
 
 /**
  * Logic for starting a new cast session.
@@ -71,7 +94,12 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
   let tab: chrome.tabs.Tab | null | undefined;
 
   try {
-    const { speakerIps, startLevels } = msg.payload;
+    // The chosen rooms play through their Sonos groups' coordinators, planned
+    // from this worker's own Sonos state so the popup's line and what is sent
+    // agree (lib/cast-plan.ts).
+    const { roomIds, startLevels } = msg.payload;
+    const plan = planCast(roomIds, roomsOf(getSonosState().groups));
+    const speakerIps = plan.targets;
     if (!speakerIps.length) throw new Error('error_no_speakers_selected');
 
     tab = await getActiveTab();
@@ -206,16 +234,7 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
     // ─── Shared post-capture flow (playback, session registration) ─────────
 
     if (captureResponse.success && captureResponse.streamId) {
-      const cachedState = getCachedState(tabId);
-      const initialMetadata: StreamMetadata | undefined = cachedState?.metadata
-        ? {
-            title: cachedState.metadata.title,
-            artist: cachedState.metadata.artist,
-            source: cachedState.source,
-          }
-        : cachedState?.source
-          ? { source: cachedState.source }
-          : undefined;
+      const initialMetadata = metadataFor(tabId);
 
       // Each room starts no louder than the limit, or at the level set by
       // hand in the popup. The companion applies it before anything plays.
@@ -225,7 +244,11 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         initialMetadata,
         settings.syncSpeakers,
         settings.videoSyncEnabled,
-        buildStartVolume(settings, speakerIps, startLevels),
+        buildStartVolume(
+          settings,
+          plan.rooms.map((room) => room.id),
+          startLevels,
+        ),
       );
       if (!playbackResponse) throw new Error('error_offscreen_unavailable');
 
@@ -255,6 +278,8 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         updateCache(tabId, { title: tab.title, favIconUrl: tab.favIconUrl, source }, null);
       }
 
+      // The chosen rooms whose target began playing.
+      const castRooms = plan.rooms.filter((room) => successfulIps.includes(plan.targetOf[room.id]));
       registerSession(
         tabId,
         captureResponse.streamId,
@@ -264,7 +289,12 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         settings.syncSpeakers,
         captureMode,
         settings.videoSyncEnabled,
+        {
+          ids: castRooms.map((room) => room.id),
+          targets: Object.fromEntries(castRooms.map((room) => [room.id, plan.targetOf[room.id]])),
+        },
       );
+      await recordLastCast(castRooms.map(refOf));
 
       return { success: true };
     } else {
@@ -370,4 +400,89 @@ export async function handleRemoveSpeaker(msg: RemoveSpeakerMessage): Promise<Ex
   } catch {
     return { success: false, error: 'Failed to send command' };
   }
+}
+
+/**
+ * Adds rooms to a running cast.
+ *
+ * Until a room can join the cast's Sonos group (the regrouping work), each
+ * new target plays the cast's stream on its own, as a cast to several rooms
+ * does with "Play speakers as one group" off, and starts at its start level.
+ * A room whose Sonos group already plays the cast is added at once. This is
+ * the place to swap independent playback for a join.
+ *
+ * @param msg - The add rooms message
+ * @returns How each room went
+ */
+export async function handleAddRooms(msg: AddRoomsMessage): Promise<AddRoomsResponse> {
+  const { tabId, roomIds, startLevels } = msg.payload;
+  const session = getSession(tabId);
+  if (!session) return { success: false, error: 'No active session', rooms: [] };
+
+  const plan = planCast(roomIds, roomsOf(getSonosState().groups));
+  if (plan.rooms.length === 0) {
+    return { success: false, error: 'error_no_speakers_selected', rooms: [] };
+  }
+  const newTargets = plan.targets.filter((ip) => !session.speakerIps.includes(ip));
+  const results = new Map<string, { success: boolean; error?: string }>();
+
+  if (newTargets.length > 0) {
+    try {
+      const settings = await loadExtensionSettings();
+      const starting = plan.rooms.filter((room) => newTargets.includes(plan.targetOf[room.id]));
+      const response = await offscreenBroker.startPlayback(
+        tabId,
+        newTargets,
+        metadataFor(tabId),
+        false,
+        session.videoSync,
+        buildStartVolume(
+          settings,
+          starting.map((room) => room.id),
+          startLevels,
+        ),
+      );
+      for (const result of response?.results ?? []) {
+        results.set(result.speakerIp, { success: result.success, error: result.error });
+      }
+      if (!response) log.warn('Adding rooms: the offscreen document did not answer');
+      else if (response.error) log.warn(`Adding rooms failed: ${response.error}`);
+    } catch (err) {
+      log.warn(`Adding rooms failed: ${String(err)}`);
+    }
+  }
+
+  const joined = (targetIp: string): boolean =>
+    session.speakerIps.includes(targetIp) || results.get(targetIp)?.success === true;
+  const added = plan.rooms.filter((room) => joined(plan.targetOf[room.id]));
+  const addedTargets = newTargets.filter((ip) => results.get(ip)?.success === true);
+  const speakerGroups = getSpeakerGroups();
+  addToSession(
+    tabId,
+    addedTargets,
+    addedTargets.map((ip) => speakerGroups.getGroupName(ip)),
+    {
+      ids: added.map((room) => room.id),
+      targets: Object.fromEntries(added.map((room) => [room.id, plan.targetOf[room.id]])),
+    },
+  );
+
+  // A popup that shut while the rooms were joining hears of a failure in its away line.
+  for (const room of plan.rooms) {
+    if (!joined(plan.targetOf[room.id])) await recordJoinFailed(tabId, room.name);
+  }
+
+  return {
+    success: added.length > 0,
+    rooms: plan.rooms.map((room) => {
+      const target = plan.targetOf[room.id];
+      return joined(target)
+        ? { roomId: room.id, joined: true }
+        : {
+            roomId: room.id,
+            joined: false,
+            error: results.get(target)?.error ?? 'error_playback_failed',
+          };
+    }),
+  };
 }

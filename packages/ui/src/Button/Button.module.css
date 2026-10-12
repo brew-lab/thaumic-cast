@@ -208,10 +208,19 @@
     text-decoration-thickness: var(--line-bold);
   }
 
-  /* Layout */
+  /*
+   * Layout. A start-aligned Button is a list row (a set): its trailing word or count sits at
+   * the row's end in the muted ink, as the drawings have it.
+   */
   .start {
+    --btn-trail: var(--on-surface-variant);
+
     justify-content: flex-start;
     text-align: start;
+  }
+
+  .start .trail {
+    margin-inline-start: auto;
   }
 
   .full {
@@ -349,8 +358,10 @@
     white-space: nowrap;
   }
 
+  /* The trailing word is trimmed like the label, so the two share a centre line. */
   @supports (text-box: trim-both cap alphabetic) {
-    .label {
+    .label,
+    .trail {
       text-box: trim-both cap alphabetic;
     }
   }
@@ -362,8 +373,11 @@
     white-space: normal;
   }
 
+  /* A trailing word or count never breaks: a set's "2 rooms" stays on one line. */
   .trail {
+    flex: none;
     font-weight: var(--weight-body);
+    white-space: nowrap;
     color: var(--btn-trail);
     transition: color var(--dur-change) var(--ease-effects);
   }

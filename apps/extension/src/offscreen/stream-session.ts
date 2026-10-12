@@ -58,6 +58,28 @@ const GAP_WINDOW_TICKS = 3;
 /** Capture-health detector: drops-in-window threshold for sustained loss. */
 const GAP_THRESHOLD = 3;
 
+/** How one speaker's playback went. */
+export interface PlaybackResult {
+  /** The speaker. */
+  speakerIp: string;
+  /** It started. */
+  success: boolean;
+  /** The URL it plays. */
+  streamUrl?: string;
+  /** Why it did not start. */
+  error?: string;
+}
+
+/** The resolver of the START_PLAYBACK call waiting for its results. */
+interface PlaybackResolver {
+  /** The speakers it asked for: results for others belong to a call that timed out. */
+  speakerIps: readonly string[];
+  /** Called with the worker's results. */
+  resolve: (results: PlaybackResult[]) => void;
+  /** Called with a worker error. */
+  reject: (error: Error) => void;
+}
+
 /**
  * Manages an active capture session.
  *
@@ -134,18 +156,14 @@ export class StreamSession {
     reject: (error: Error) => void;
   } | null = null;
 
+  /**
+   * The START_PLAYBACK calls on this stream, one at a time: the worker's results carry no
+   * call id, so a second call (a room added, Undo, Try again) waits for the first to settle.
+   */
+  private playbackQueue: Promise<unknown> = Promise.resolve();
+
   /** Pending playback request resolver for multi-group results. */
-  private playbackResultsResolver: {
-    resolve: (
-      results: Array<{
-        speakerIp: string;
-        success: boolean;
-        streamUrl?: string;
-        error?: string;
-      }>,
-    ) => void;
-    reject: (error: Error) => void;
-  } | null = null;
+  private playbackResultsResolver: PlaybackResolver | null = null;
 
   // Cumulative session stats for health reporting
   private totalProducerDrops = 0;
@@ -673,6 +691,7 @@ export class StreamSession {
         case 'PLAYBACK_STARTED':
           // Legacy single-speaker response - convert to array format
           log.info(`Playback started on ${msg.speakerIp}`);
+          if (!this.ownsResults([{ speakerIp: msg.speakerIp }])) break;
           this.playbackResultsResolver?.resolve([
             {
               speakerIp: msg.speakerIp,
@@ -688,6 +707,10 @@ export class StreamSession {
           log.info(
             `Playback results: ${msg.results.filter((r: { success: boolean }) => r.success).length}/${msg.results.length} speakers started`,
           );
+          if (this.playbackResultsResolver && !this.ownsResults(msg.results)) {
+            log.warn('Playback results for a call that already timed out; ignored');
+            break;
+          }
           this.playbackResultsResolver?.resolve(msg.results);
           this.playbackResultsResolver = null;
           break;
@@ -991,8 +1014,20 @@ export class StreamSession {
   }
 
   /**
+   * Whether results answer the call waiting now: each speaker in them is one it asked for.
+   * @param results - The worker's results
+   * @returns True when they are the waiting call's (or no call waits)
+   */
+  private ownsResults(results: ReadonlyArray<{ speakerIp: string }>): boolean {
+    const waiting = this.playbackResultsResolver;
+    return !waiting || results.every((result) => waiting.speakerIps.includes(result.speakerIp));
+  }
+
+  /**
    * Starts playback on multiple Sonos speakers.
-   * Must be called after the stream is ready (waitForReady resolved).
+   * Must be called after the stream is ready (waitForReady resolved). Calls on one stream run
+   * one at a time, each with its own timeout, so overlapping calls never take each other's
+   * results.
    *
    * @param speakerIps - IP addresses of the Sonos speakers
    * @param metadata - Optional initial metadata to display on Sonos
@@ -1004,59 +1039,85 @@ export class StreamSession {
    * @throws {KeyedError} If the session stopped itself, with the reason and its values
    * @throws Error if all playback attempts fail or timeout
    */
-  public async startPlayback(
+  public startPlayback(
     speakerIps: string[],
     metadata?: StreamMetadata,
     syncSpeakers: boolean = false,
     videoSyncEnabled: boolean = false,
     startVolume?: StartVolume,
     timeoutMs = 15000,
-  ): Promise<
-    Array<{
-      speakerIp: string;
-      success: boolean;
-      streamUrl?: string;
-      error?: string;
-    }>
-  > {
-    if (this.fatalError) throw this.fatalError;
+  ): Promise<PlaybackResult[]> {
+    const run = this.playbackQueue.then(() =>
+      this.startPlaybackNow(
+        speakerIps,
+        metadata,
+        syncSpeakers,
+        videoSyncEnabled,
+        startVolume,
+        timeoutMs,
+      ),
+    );
+    this.playbackQueue = run.catch(() => undefined);
+    return run;
+  }
 
-    if (!this.consumerWorker) {
-      throw new Error('Worker not running');
-    }
-
+  /**
+   * Sends one START_PLAYBACK and waits for its results. Its resolver is its own: the timer
+   * clears only that resolver, and a settled call clears its timer.
+   * @param speakerIps - IP addresses of the Sonos speakers
+   * @param metadata - Optional initial metadata to display on Sonos
+   * @param syncSpeakers - Whether to synchronize multi-speaker playback
+   * @param videoSyncEnabled - Whether client has video sync enabled
+   * @param startVolume - The level each room starts at; absent on a resume
+   * @param timeoutMs - Timeout in milliseconds
+   * @returns Per-speaker playback results
+   */
+  private startPlaybackNow(
+    speakerIps: string[],
+    metadata: StreamMetadata | undefined,
+    syncSpeakers: boolean,
+    videoSyncEnabled: boolean,
+    startVolume: StartVolume | undefined,
+    timeoutMs: number,
+  ): Promise<PlaybackResult[]> {
+    if (this.fatalError) return Promise.reject(this.fatalError);
+    const worker = this.consumerWorker;
+    if (!worker) return Promise.reject(new Error('Worker not running'));
     if (!this.isReady) {
-      throw new Error('Stream not ready - call waitForReady() first');
+      return Promise.reject(new Error('Stream not ready - call waitForReady() first'));
     }
 
-    const responsePromise = new Promise<
-      Array<{
-        speakerIp: string;
-        success: boolean;
-        streamUrl?: string;
-        error?: string;
-      }>
-    >((resolve, reject) => {
-      this.playbackResultsResolver = { resolve, reject };
-    });
+    return new Promise<PlaybackResult[]>((resolve, reject) => {
+      const settle = (): void => {
+        clearTimeout(timer);
+        if (this.playbackResultsResolver === own) this.playbackResultsResolver = null;
+      };
+      const own: PlaybackResolver = {
+        speakerIps,
+        resolve: (results) => {
+          settle();
+          resolve(results);
+        },
+        reject: (error) => {
+          settle();
+          reject(error);
+        },
+      };
+      this.playbackResultsResolver = own;
+      const timer = setTimeout(
+        () => own.reject(new Error('Timeout waiting for playback to start')),
+        timeoutMs,
+      );
 
-    this.consumerWorker.postMessage({
-      type: 'START_PLAYBACK',
-      speakerIps,
-      metadata,
-      syncSpeakers,
-      videoSyncEnabled,
-      startVolume,
+      worker.postMessage({
+        type: 'START_PLAYBACK',
+        speakerIps,
+        metadata,
+        syncSpeakers,
+        videoSyncEnabled,
+        startVolume,
+      });
     });
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        this.playbackResultsResolver = null;
-        reject(new Error('Timeout waiting for playback to start'));
-      }, timeoutMs);
-    });
-
-    return Promise.race([responsePromise, timeoutPromise]);
   }
 }
 

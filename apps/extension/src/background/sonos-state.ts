@@ -73,12 +73,44 @@ export function setSonosState(newState: SonosStateSnapshot): void {
 }
 
 /**
+ * Drops the level entries of every speaker that led a Sonos group and no longer does: such an
+ * entry was its group's volume, and kept, a room that joined another group would read its old
+ * group's level as its own ("at 80 now"). A member's own entry (written for a synced cast) is
+ * kept, as the companion keeps it.
+ * @param levels - Levels, mutes or fixed flags by speaker IP
+ * @param before - The groups until now
+ * @param after - The new groups
+ * @returns The entries without the stale group levels
+ */
+export function dropStaleGroupLevels<T>(
+  levels: Record<string, T>,
+  before: readonly ZoneGroup[],
+  after: readonly ZoneGroup[],
+): Record<string, T> {
+  const leading = new Set(after.map((group) => group.coordinatorIp));
+  const stale = before
+    .map((group) => group.coordinatorIp)
+    .filter((ip) => !leading.has(ip) && ip in levels);
+  if (stale.length === 0) return levels;
+  const kept = { ...levels };
+  for (const ip of stale) delete kept[ip];
+  return kept;
+}
+
+/**
  * Updates the zone groups.
  * @param groups - The updated zone groups array
  * @returns The updated state
  */
 export function updateGroups(groups: ZoneGroup[]): SonosStateSnapshot {
-  state = { ...state, groups };
+  const before = state.groups;
+  state = {
+    ...state,
+    groups,
+    groupVolumes: dropStaleGroupLevels(state.groupVolumes, before, groups),
+    groupMutes: dropStaleGroupLevels(state.groupMutes, before, groups),
+    groupVolumeFixed: dropStaleGroupLevels(state.groupVolumeFixed, before, groups),
+  };
   storage.schedule();
   return state;
 }

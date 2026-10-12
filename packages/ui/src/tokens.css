@@ -137,6 +137,14 @@
     --live-stop-5: light-dark(oklch(54% 0.22 350.1), oklch(78.1% 0.15 350.1));
     --live-drift-from: -16;
 
+    /* T-colour: the artwork-seeded card (lightness and chroma cap per theme) */
+    --seed-card: light-dark(oklch(92% 0.06 0), oklch(30% 0.09 0));
+    --seed-title: light-dark(oklch(23% 0.06 0), oklch(92% 0.04 0));
+    --seed-sub: light-dark(oklch(41% 0.05 0), oklch(86% 0.04 0));
+    --seed-primary: light-dark(oklch(49% 0.14 0), oklch(83% 0.12 0));
+    --seed-rim: light-dark(oklch(49% 0.14 0), oklch(66% 0.1 0));
+    --seed-track: light-dark(oklch(84% 0.05 0), oklch(42% 0.06 0));
+
     /* T-type: faces, weights and numbers */
     --font-body:
       system-ui, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'Adwaita Sans', 'Cantarell',

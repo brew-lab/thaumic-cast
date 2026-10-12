@@ -33,6 +33,15 @@ describe('design tokens', () => {
     }
   });
 
+  it('should keep tokens.ts free of imports, so a service worker can load it alone', async () => {
+    // Exported as "@thaumic-cast/ui/tokens": the extension's background reads the toolbar
+    // badge colours from it without Preact or CSS.
+    const files = await renderTokens();
+    const tokens = Object.entries(files).find(([path]) => path.endsWith('src/tokens.ts'));
+    expect(tokens).toBeDefined();
+    expect(tokens?.[1]).not.toMatch(/^\s*import\b/m);
+  });
+
   it('should write every drawn hex as oklch() that maps back to the same hex', () => {
     const hexes = tableHexes();
     expect(hexes.length).toBeGreaterThan(90);

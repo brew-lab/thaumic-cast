@@ -54,7 +54,7 @@ export type VolumeLevel = z.infer<typeof VolumeLevelSchema>;
  * The level each room starts a cast at, sent on `START_PLAYBACK`.
  *
  * Before playing, the companion sets every room of every target: to the
- * hand-set level for that target when there is one (even above the limit),
+ * room's own hand-set level when there is one (even above the limit),
  * otherwise down to `limit` when the room is louder, never up. A room whose
  * level cannot be read is set to `limit`; a fixed (line-level) output is never
  * set. With no `limit` and no hand-set levels nothing is touched, which is
@@ -63,8 +63,8 @@ export type VolumeLevel = z.infer<typeof VolumeLevelSchema>;
 export const StartVolumeSchema = z.object({
   /** The highest level a room may start at; absent when the limit is off. */
   limit: VolumeLevelSchema.optional(),
-  /** Levels set by hand before Cast, keyed by target speaker IP. */
-  speakers: z.record(z.string(), VolumeLevelSchema).optional(),
+  /** Levels set by hand before Cast, keyed by room id (the player UUID, `RINCON_…`). */
+  rooms: z.record(z.string(), VolumeLevelSchema).optional(),
 });
 export type StartVolume = z.infer<typeof StartVolumeSchema>;
 
@@ -121,6 +121,12 @@ export const ActiveCastSchema = z.object({
   speakerIps: z.array(z.string()),
   /** Speaker/group display names (parallel array with speakerIps) */
   speakerNames: z.array(z.string()),
+  /**
+   * The rooms the user chose (player UUIDs), in order. `speakerIps` are the
+   * targets they play through; a target can carry rooms that were not chosen
+   * (grouped partners). Empty for a cast started before rooms.
+   */
+  roomIds: z.array(z.string()).default([]),
   /** Encoder configuration used for this cast */
   encoderConfig: EncoderConfigSchema,
   /** Timestamp when cast started */
@@ -133,5 +139,10 @@ export const ActiveCastSchema = z.object({
    * stands now says nothing about a cast already running.
    */
   videoSync: z.boolean().default(false),
+  /**
+   * What the cast captures: one tab, or the whole browser (browser-wide
+   * capture). The popup names a browser-wide cast "Whole browser".
+   */
+  captureMode: z.enum(['tab', 'browser']).default('tab'),
 });
 export type ActiveCast = z.infer<typeof ActiveCastSchema>;

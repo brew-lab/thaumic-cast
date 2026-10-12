@@ -52,6 +52,23 @@ import {
   ToastSpecimen,
   WizardStepSpecimen,
 } from './molecules';
+import {
+  CastBarSpecimen,
+  CastTileSpecimen,
+  GroupVolumeSpecimen,
+  MediaHeaderSpecimen,
+  NoticeSlotSpecimen,
+  PopupFramesSpecimen,
+  PopupShellSpecimen,
+  PopupHeaderSpecimen,
+  RoomPickerSpecimen,
+  RoomRowCastSpecimen,
+  RoomRowListSpecimen,
+  RoomRowPickSpecimen,
+  StartLevelSpecimen,
+  TabCardSpecimen,
+  VideoSyncSpecimen,
+} from './popup';
 import { SizeRuleSpecimen } from './size';
 import { ButtonStatesSpecimen } from './button-states';
 import { PressStatesSpecimen } from './press-states';
@@ -442,6 +459,139 @@ export const SECTIONS: CatalogueSection[] = [
     tier: 'Tier 3 · C-card',
     summary: 'One look; a titled card is a section named by its SectionHeader.',
     Specimen: CardSpecimen,
+  },
+  {
+    id: 'start-level',
+    wide: true,
+    title: 'StartLevel',
+    tier: 'Tier 2 · M-startlevel, P-start',
+    summary:
+      'Pending until Cast: start = min(now, limit); a level set by hand wins with no warning; “…” while unknown, “Fixed” for a fixed output.',
+    Specimen: StartLevelSpecimen,
+  },
+  {
+    id: 'room-row-pick',
+    wide: true,
+    title: 'RoomRow pick',
+    tier: 'Tier 2 · M-roomrow',
+    summary:
+      'The Checkbox is the row; StartLevel sits outside its label once chosen. The row never tints or reshapes.',
+    Specimen: RoomRowPickSpecimen,
+  },
+  {
+    id: 'room-row-cast',
+    wide: true,
+    title: 'RoomRow cast',
+    tier: 'Tier 2 · M-roomrow',
+    summary:
+      'Mute, the Slider, its value and Remove; joining is inert; a failure adds a row line; the last room has no Remove.',
+    Specimen: RoomRowCastSpecimen,
+  },
+  {
+    id: 'room-row-list',
+    wide: true,
+    title: 'RoomRow list',
+    tier: 'Tier 2 · M-roomrow',
+    summary: 'Read only: a disc, the name, a sub line and a Badge; nothing is focusable.',
+    Specimen: RoomRowListSpecimen,
+  },
+  {
+    id: 'media-header',
+    wide: true,
+    title: 'MediaHeader',
+    tier: 'Tier 2 · M-media',
+    summary:
+      'One head for the TabCard and both tile forms: the disclosure follows the grammar; the open tile sits on the artwork-seeded band, and the red guard moves Stop off it.',
+    Specimen: MediaHeaderSpecimen,
+  },
+  {
+    id: 'group-volume',
+    wide: true,
+    title: 'GroupVolume',
+    tier: 'Tier 2 · M-groupvol, P-addroom',
+    summary:
+      'One room: its row and Add a room. From two: the master (the mean), then the rooms fold with Add a room last; the last room has no Remove.',
+    Specimen: GroupVolumeSpecimen,
+  },
+  {
+    id: 'video-sync',
+    wide: true,
+    title: 'VideoSync',
+    tier: 'Tier 2 · M-videosync',
+    summary:
+      'One name, “Video sync”, with its phase Badge; the reason, its one action, and Fine-tune for the trim.',
+    Specimen: VideoSyncSpecimen,
+  },
+  {
+    id: 'popup-header',
+    wide: true,
+    title: 'PopupHeader',
+    tier: 'Tier 3 · C-popupheader',
+    summary:
+      'The mark (lit while casting), the status and Settings; never a count. A change is said once.',
+    Specimen: PopupHeaderSpecimen,
+  },
+  {
+    id: 'room-picker',
+    wide: true,
+    title: 'RoomPicker',
+    tier: 'Tier 3 · C-picker, P-picker',
+    summary:
+      'Sets, then rooms; the rooms fold from 8, and search lives in the fold: it never unticks and counts the chosen rooms it hides. Not connected, the fieldset is disabled.',
+    Specimen: RoomPickerSpecimen,
+  },
+  {
+    id: 'cast-bar',
+    wide: true,
+    title: 'CastBar',
+    tier: 'Tier 3 · C-castbar',
+    summary:
+      'Cast counts rooms; busy reads “Starting…”; a failure line above with X; one reserved polite line; add mode is Cancel and Add.',
+    Specimen: CastBarSpecimen,
+  },
+  {
+    id: 'notice-slot',
+    wide: true,
+    title: 'NoticeSlot',
+    tier: 'Tier 3 · C-noticeslot, P-notices',
+    summary:
+      'Everything wrong with one cast: the first item in full, the rest as lines; on a compact tile one slot line that opens it.',
+    Specimen: NoticeSlotSpecimen,
+  },
+  {
+    id: 'tab-card',
+    wide: true,
+    title: 'TabCard',
+    tier: 'Tier 3 · C-tabcard',
+    summary: 'This tab while it is not casting: its head, large, over the RoomPicker.',
+    Specimen: TabCardSpecimen,
+  },
+  {
+    id: 'cast-tile',
+    wide: true,
+    title: 'CastTile',
+    tier: 'Tier 3 · C-casttile, P-stop',
+    summary:
+      'One running cast, compact or open in place; the head is the same element in both. A single cast has no chevron. Stop has no busy words and no Undo.',
+    Specimen: CastTileSpecimen,
+  },
+  {
+    id: 'popup-shell',
+    wide: true,
+    title: 'PopupShell and StickyActionBar',
+    tier: 'Tier 5 · L-popup, L-bar',
+    summary:
+      'One scroller; the bar sticks to its end, publishes its size as --overlay-end and the scroller pads by it plus 8 px, so focus is never under it (2.4.11). The hairline shows only while content runs under the bar.',
+    Specimen: PopupShellSpecimen,
+  },
+  {
+    id: 'popup-frames',
+    wide: true,
+    title: 'Containers: the popup components',
+    tier: 'Tier 3 · F-containers',
+    summary:
+      'The picker, a cast’s volume, an open tile and the CastBar in compact, medium and wide frames at both densities: they fill, wrap and never overflow.',
+    Specimen: PopupFramesSpecimen,
   },
   {
     id: 'container-frames',

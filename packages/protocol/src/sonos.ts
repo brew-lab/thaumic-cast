@@ -42,6 +42,12 @@ export const ZoneGroupMemberSchema = z.object({
   ip: z.string(),
   zoneName: z.string(),
   model: z.string().optional(),
+  /**
+   * True on a bonded device (a home-theatre satellite, the second speaker of a
+   * stereo pair), which plays as part of its room's primary. Absent otherwise,
+   * and on companions that predate it.
+   */
+  invisible: z.boolean().optional(),
 });
 export type ZoneGroupMember = z.infer<typeof ZoneGroupMemberSchema>;
 

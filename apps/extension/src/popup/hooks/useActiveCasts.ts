@@ -12,8 +12,8 @@ interface ActiveCastsResult {
   casts: ActiveCast[];
   /** Whether the initial data is still loading */
   loading: boolean;
-  /** Function to stop a specific cast by tab ID */
-  stopCast: (tabId: number) => Promise<void>;
+  /** Stops a cast by tab ID; resolves false when the background says it could not */
+  stopCast: (tabId: number) => Promise<boolean>;
   /** Function to remove a speaker from a cast */
   removeSpeaker: (tabId: number, speakerIp: string) => Promise<void>;
 }
@@ -48,9 +48,15 @@ export function useActiveCasts(): ActiveCastsResult {
   /**
    * Stops a cast session for the specified tab.
    * @param tabId - The tab ID to stop casting
+   * @returns False when the background could not stop it
+   * @throws When the background cannot be reached
    */
-  const stopCast = useCallback(async (tabId: number) => {
-    await chrome.runtime.sendMessage({ type: 'STOP_CAST', payload: { tabId } });
+  const stopCast = useCallback(async (tabId: number): Promise<boolean> => {
+    const response: { success?: boolean } | undefined = await chrome.runtime.sendMessage({
+      type: 'STOP_CAST',
+      payload: { tabId },
+    });
+    return response?.success !== false;
   }, []);
 
   /**

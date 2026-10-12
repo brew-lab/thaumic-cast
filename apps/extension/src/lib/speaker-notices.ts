@@ -156,6 +156,21 @@ export function speakerNoticeLines(notice: SpeakerNotice, ctx: NoticeWordingCont
   return lines;
 }
 
+/** Where dismissed speaker notices are kept (`chrome.storage.local`). */
+export const SPEAKER_NOTICES_DISMISSED_KEY = 'dismissedSpeakerNotices';
+
+/** Where dismissed ingest-gaps notices are kept: stream id → the report's `receivedAt`. */
+export const INGEST_GAPS_DISMISSED_KEY = 'dismissedIngestGapsAt';
+
+/** Where the dismissed capture-health notice is kept: its `detectedAt`. */
+export const CAPTURE_HEALTH_DISMISSED_KEY = 'dismissedCaptureHealthAt';
+
+/**
+ * Where "No reply from the speakers", dismissed, is kept: `true` until the speakers answer
+ * again (the background clears it), so the toolbar badge drops it too.
+ */
+export const NO_REPLY_DISMISSED_KEY = 'dismissedNoReply';
+
 /** Dismissed notices, as kept in extension storage. */
 export interface SpeakerNoticeDismissals {
   /** `streamId|speakerIp|noticeId` → when it was dismissed. */

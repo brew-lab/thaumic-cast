@@ -16,6 +16,7 @@
 import { type AppType, type CompanionAudio } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { persistenceManager } from './persistence-manager';
+import { NO_REPLY_DISMISSED_KEY } from '../lib/speaker-notices';
 
 const log = createLogger('ConnectionState');
 
@@ -236,6 +237,10 @@ export function setConnectionError(error: string): void {
  * @param reason - The reason for degraded health (null if healthy)
  */
 export function setNetworkHealth(health: NetworkHealthStatus, reason: string | null): void {
+  // "No reply" dismissed in the popup stays dismissed only while it lasts.
+  if (reason !== 'speakers_not_responding') {
+    chrome.storage.local.remove(NO_REPLY_DISMISSED_KEY).catch(() => undefined);
+  }
   state = {
     ...state,
     networkHealth: health,

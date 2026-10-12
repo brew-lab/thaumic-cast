@@ -2,12 +2,13 @@
 //!
 //! A cast used to start at whatever level the room was left at, which after a
 //! party can be 80 or more. The client now sends a limit ("start no louder
-//! than") and, optionally, a level the user set by hand for a speaker before
-//! pressing Cast. Before anything is played, each room of each target is:
+//! than") and, optionally, a level the user set by hand for a room before
+//! pressing Cast, keyed by the room's player UUID. Before anything is played, each room of each target is:
 //!
 //! - left alone if its output is fixed (line level: the amplifier sets it);
-//! - set to the hand-set level, if there is one, even above the limit, since
-//!   that is the user's own choice;
+//! - set to its own hand-set level, if there is one, even above the limit,
+//!   since that is the user's own choice (a grouped partner without one
+//!   follows the limit);
 //! - otherwise turned down to the limit if it is above it, and never turned
 //!   up;
 //! - set to the limit if its level cannot be read, because safety comes first.
@@ -29,7 +30,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::sonos::traits::SonosVolumeControl;
-use crate::sonos::types::ZoneGroup;
+use crate::sonos::types::{ZoneGroup, ZoneGroupMember};
 use crate::state::SonosState;
 
 /// How long one read or write of a room's volume may take before the room is
@@ -47,17 +48,17 @@ pub struct StartVolumeRequest {
     /// turned the limit off.
     #[serde(default)]
     pub limit: Option<u8>,
-    /// Levels the user set by hand before Cast, keyed by the target speaker's
-    /// IP (a group's coordinator). Applied to every room of that target.
+    /// Levels the user set by hand before Cast, keyed by the room's player
+    /// UUID (`RINCON_…`). Each applies to that room only.
     #[serde(default)]
-    pub speakers: HashMap<String, u8>,
+    pub rooms: HashMap<String, u8>,
 }
 
 impl StartVolumeRequest {
     /// Whether the request can change anything at all.
     #[must_use]
     pub fn is_noop(&self) -> bool {
-        self.limit.is_none() && self.speakers.is_empty()
+        self.limit.is_none() && self.rooms.is_empty()
     }
 
     /// The limit, clamped to the Sonos range.
@@ -65,11 +66,9 @@ impl StartVolumeRequest {
         self.limit.map(|limit| limit.min(MAX_VOLUME))
     }
 
-    /// The hand-set level for `target`, clamped to the Sonos range.
-    fn hand_set(&self, target: &str) -> Option<u8> {
-        self.speakers
-            .get(target)
-            .map(|level| (*level).min(MAX_VOLUME))
+    /// The hand-set level for the room `uuid`, clamped to the Sonos range.
+    fn hand_set(&self, uuid: &str) -> Option<u8> {
+        self.rooms.get(uuid).map(|level| (*level).min(MAX_VOLUME))
     }
 }
 
@@ -104,35 +103,71 @@ pub(crate) fn plan_room(
     }
 }
 
-/// The rooms a target plays on, as one speaker IP per room.
-///
-/// A target is a group's coordinator. Every room of its Sonos group is
-/// included, the coordinator's first. Invisible devices (home-theatre
-/// satellites, the second speaker of a stereo pair) play as part of their
-/// room's primary and are left out. A target missing from the topology is
-/// taken to be a room on its own.
-#[must_use]
-pub(crate) fn target_rooms(groups: &[ZoneGroup], target_ip: &str) -> Vec<String> {
-    let Some(group) = groups.iter().find(|g| g.coordinator_ip == target_ip) else {
-        return vec![target_ip.to_string()];
-    };
+/// One room of a Sonos group: the device that plays for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Room {
+    /// The primary's player UUID, which names the room.
+    pub uuid: String,
+    /// The primary's IP.
+    pub ip: String,
+    /// The coordinator IP of the Sonos group the room is in now.
+    pub coordinator_ip: String,
+}
 
-    let mut rooms = vec![target_ip.to_string()];
-    let mut seen_names: HashSet<&str> = group
-        .members
-        .iter()
-        .filter(|m| m.ip == target_ip)
-        .map(|m| m.zone_name.as_str())
-        .collect();
-    for member in &group.members {
-        if member.invisible || member.ip == target_ip {
-            continue;
-        }
-        if seen_names.insert(member.zone_name.as_str()) {
-            rooms.push(member.ip.clone());
+/// Folds the topology into rooms, group by group, each group's coordinator
+/// first.
+///
+/// Invisible devices (home-theatre satellites, the second speaker of a stereo
+/// pair) play as part of their room's primary and are left out. Members of
+/// one group that share a room name are folded too, the first kept, which
+/// covers a topology read without the flag. The extension folds the same way
+/// (`roomsOf` in protocol); `fixtures/rooms.json` holds both to it.
+#[must_use]
+pub(crate) fn rooms(groups: &[ZoneGroup]) -> Vec<Room> {
+    let mut rooms = Vec::new();
+    for group in groups {
+        let is_coordinator = |m: &&ZoneGroupMember| m.uuid == group.coordinator_uuid;
+        let coordinator = group.members.iter().filter(is_coordinator);
+        let others = group.members.iter().filter(|m| !is_coordinator(m));
+        let mut seen_names: HashSet<&str> = HashSet::new();
+        for member in coordinator.chain(others) {
+            if member.invisible || !seen_names.insert(member.zone_name.as_str()) {
+                continue;
+            }
+            rooms.push(Room {
+                uuid: member.uuid.clone(),
+                ip: member.ip.clone(),
+                coordinator_ip: group.coordinator_ip.clone(),
+            });
         }
     }
     rooms
+}
+
+/// The rooms a target plays on, as `(uuid, ip)` per room.
+///
+/// A target is a group's coordinator. Every room of its Sonos group is
+/// included, the coordinator's first (see [`rooms`]). A target missing from
+/// the topology is taken to be a room on its own, named by the UUID of the
+/// member with its IP if one is known; with none, no hand-set level can match
+/// it and it follows the limit.
+#[must_use]
+pub(crate) fn target_rooms(groups: &[ZoneGroup], target_ip: &str) -> Vec<(String, String)> {
+    let target: Vec<(String, String)> = rooms(groups)
+        .into_iter()
+        .filter(|room| room.coordinator_ip == target_ip)
+        .map(|room| (room.uuid, room.ip))
+        .collect();
+    if !target.is_empty() {
+        return target;
+    }
+    let uuid = groups
+        .iter()
+        .flat_map(|g| &g.members)
+        .find(|m| m.ip == target_ip)
+        .map(|m| m.uuid.clone())
+        .unwrap_or_default();
+    vec![(uuid, target_ip.to_string())]
 }
 
 /// Reads one room's volume and whether its output is fixed.
@@ -231,12 +266,8 @@ pub(crate) async fn apply_start_volume(
     let groups = sonos_state.groups.read().clone();
 
     let mut seen: HashSet<String> = HashSet::new();
-    let mut rooms: Vec<(String, Option<u8>)> = Vec::new();
+    let mut starts: Vec<(String, Option<u8>)> = Vec::new();
     for target in targets {
-        let hand_set = request.hand_set(target);
-        if limit.is_none() && hand_set.is_none() {
-            continue;
-        }
         // The group's own flag, from GENA, covers a group whose rooms all
         // play at line level; each room is still asked for itself below.
         if sonos_state
@@ -247,14 +278,18 @@ pub(crate) async fn apply_start_volume(
             log::debug!("[StartVolume] {target}: fixed output, left as it is");
             continue;
         }
-        for room in target_rooms(&groups, target) {
-            if seen.insert(room.clone()) {
-                rooms.push((room, hand_set));
+        for (uuid, ip) in target_rooms(&groups, target) {
+            let hand_set = request.hand_set(&uuid);
+            if limit.is_none() && hand_set.is_none() {
+                continue;
+            }
+            if seen.insert(ip.clone()) {
+                starts.push((ip, hand_set));
             }
         }
     }
 
-    let starts = rooms
+    let starts = starts
         .iter()
         .map(|(ip, hand_set)| start_room(sonos, ip, limit, *hand_set));
     futures::future::join_all(starts).await;
@@ -263,7 +298,6 @@ pub(crate) async fn apply_start_volume(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sonos::types::ZoneGroupMember;
 
     fn reading(volume: Option<u8>) -> RoomReading {
         RoomReading {
@@ -323,25 +357,29 @@ mod tests {
     fn out_of_range_levels_are_clamped_to_100() {
         let request = StartVolumeRequest {
             limit: Some(200),
-            speakers: HashMap::from([("192.168.1.10".to_string(), 150)]),
+            rooms: HashMap::from([("RINCON_A".to_string(), 150)]),
         };
         assert_eq!(request.limit(), Some(100));
-        assert_eq!(request.hand_set("192.168.1.10"), Some(100));
+        assert_eq!(request.hand_set("RINCON_A"), Some(100));
     }
 
     #[test]
     fn the_request_parses_from_the_wire_and_defaults_to_no_change() {
         let full: StartVolumeRequest = serde_json::from_value(serde_json::json!({
             "limit": 30,
-            "speakers": { "192.168.1.10": 45 }
+            "rooms": { "RINCON_A": 45 }
         }))
         .unwrap();
         assert_eq!(full.limit, Some(30));
-        assert_eq!(full.speakers.get("192.168.1.10"), Some(&45));
+        assert_eq!(full.rooms.get("RINCON_A"), Some(&45));
         assert!(!full.is_noop());
 
         let empty: StartVolumeRequest = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(empty.is_noop());
+    }
+
+    fn ips(rooms: Vec<(String, String)>) -> Vec<String> {
+        rooms.into_iter().map(|(_, ip)| ip).collect()
     }
 
     fn member(ip: &str, zone: &str, invisible: bool) -> ZoneGroupMember {
@@ -373,7 +411,10 @@ mod tests {
                 member("10.0.0.2", "Kitchen", false),
             ],
         )];
-        assert_eq!(target_rooms(&groups, "10.0.0.2"), ["10.0.0.2", "10.0.0.3"]);
+        assert_eq!(
+            ips(target_rooms(&groups, "10.0.0.2")),
+            ["10.0.0.2", "10.0.0.3"]
+        );
     }
 
     #[test]
@@ -388,11 +429,71 @@ mod tests {
                 member("10.0.0.7", "Study", true),
             ],
         )];
-        assert_eq!(target_rooms(&groups, "10.0.0.2"), ["10.0.0.2", "10.0.0.6"]);
+        assert_eq!(
+            ips(target_rooms(&groups, "10.0.0.2")),
+            ["10.0.0.2", "10.0.0.6"]
+        );
+    }
+
+    #[test]
+    fn rooms_fold_the_shared_fixture_as_the_extension_does() {
+        // packages/protocol's roomsOf folds the same file to the same rooms.
+        const ROOMS: &str = include_str!("../../../protocol/fixtures/rooms.json");
+        let fixture: serde_json::Value = serde_json::from_str(ROOMS).expect("rooms.json is JSON");
+        let groups: Vec<ZoneGroup> =
+            serde_json::from_value(fixture["groups"].clone()).expect("the groups parse");
+
+        let mut got: Vec<(String, String, String)> = rooms(&groups)
+            .into_iter()
+            .map(|room| (room.uuid, room.ip, room.coordinator_ip))
+            .collect();
+        got.sort();
+        let mut want: Vec<(String, String, String)> = fixture["rooms"]
+            .as_array()
+            .expect("a rooms list")
+            .iter()
+            .map(|room| {
+                let field = |key: &str| room[key].as_str().expect(key).to_string();
+                (field("id"), field("ip"), field("coordinatorIp"))
+            })
+            .collect();
+        want.sort();
+        assert_eq!(got, want);
     }
 
     #[test]
     fn a_target_missing_from_the_topology_is_a_room_on_its_own() {
-        assert_eq!(target_rooms(&[], "10.0.0.9"), ["10.0.0.9"]);
+        assert_eq!(
+            target_rooms(&[], "10.0.0.9"),
+            [(String::new(), "10.0.0.9".to_string())]
+        );
+    }
+
+    #[test]
+    fn target_rooms_are_named_by_their_primary_uuid() {
+        let groups = vec![group(
+            "10.0.0.2",
+            vec![
+                member("10.0.0.2", "Kitchen", false),
+                member("10.0.0.3", "Patio", false),
+            ],
+        )];
+        let uuids: Vec<String> = target_rooms(&groups, "10.0.0.2")
+            .into_iter()
+            .map(|(uuid, _)| uuid)
+            .collect();
+        assert_eq!(uuids, ["RINCON_10.0.0.2", "RINCON_10.0.0.3"]);
+    }
+
+    #[test]
+    fn a_pair_without_the_flag_folds_by_name_onto_the_coordinator() {
+        let groups = vec![group(
+            "10.0.0.5",
+            vec![
+                member("10.0.0.4", "Bedroom", false),
+                member("10.0.0.5", "Bedroom", false),
+            ],
+        )];
+        assert_eq!(ips(target_rooms(&groups, "10.0.0.5")), ["10.0.0.5"]);
     }
 }

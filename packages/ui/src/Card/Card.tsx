@@ -23,6 +23,11 @@ export interface CardProps {
   id?: string;
   /** Names the card when it has no heading. */
   'aria-label'?: string;
+  /**
+   * The id of a heading inside the content that names the card (a TabCard or CastTile is
+   * named by its media title): the card is then a `<section>` without a SectionHeader.
+   */
+  labelledBy?: string;
   /** The content. */
   children: ComponentChildren;
 }
@@ -41,6 +46,7 @@ export interface CardProps {
  * @param props.actions - Actions at the end of the heading
  * @param props.flush - No padding
  * @param props.id - The element id
+ * @param props.labelledBy - The id of the element inside that names it
  * @param props.children - The content
  * @returns The card
  */
@@ -51,6 +57,7 @@ export function Card({
   actions,
   flush = false,
   id,
+  labelledBy,
   children,
   ...rest
 }: CardProps): JSX.Element {
@@ -62,6 +69,13 @@ export function Card({
       {children}
     </div>
   );
+  if (!title && labelledBy) {
+    return (
+      <section id={id} class={className} aria-labelledby={labelledBy}>
+        {body}
+      </section>
+    );
+  }
   if (!title) {
     return (
       <div id={id} class={className} aria-label={rest['aria-label']}>

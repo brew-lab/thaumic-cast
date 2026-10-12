@@ -98,7 +98,13 @@ function Frame({
  * @param props.children - The specimen, drawn once per frame
  * @returns The frames
  */
-function Frames({ title, children }: { title: string; children: () => JSX.Element }): JSX.Element {
+export function Frames({
+  title,
+  children,
+}: {
+  title: string;
+  children: () => JSX.Element;
+}): JSX.Element {
   return (
     <div class="stack">
       <h3 class="label">{title}</h3>

@@ -16,8 +16,9 @@
     padding: var(--space-6);
   }
 
-  h1,
-  h2,
+  /* The page's own headings only: a component's heading keeps its own face. */
+  .page-header > h1,
+  .section-title,
   .caps,
   .head {
     font-family: var(--font-head);
@@ -963,5 +964,96 @@
       --dur-change: calc(5 * var(--dur-effects));
       --dur-shape: calc(5 * var(--dur-effects));
     }
+  }
+
+  /* Phase 3: the popup's components, drawn at the popup's row width (325 px). */
+  .popup-specimens {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-5);
+  }
+
+  .popup-specimen {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-inline-size: 100%;
+  }
+
+  /* A card surface as wide as a popup row: the popup's width less its padding and gutter. */
+  .popup-card {
+    --ring-gap: var(--surface);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    inline-size: calc(var(--popup-inline) - 2 * var(--space-4));
+    max-inline-size: 100%;
+    padding: var(--space-3) var(--space-1);
+    border: var(--line-hair) solid var(--card-edge);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+  }
+
+  .start-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name level'
+      'line line';
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    padding-inline: var(--space-3) 0;
+  }
+
+  .start-row-name {
+    grid-area: name;
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+  }
+
+  .pick-list,
+  .cast-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .cast-list {
+    gap: var(--space-2-5);
+    padding-inline: var(--space-3);
+  }
+
+  .bare-fieldset {
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .bare-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0 var(--space-3);
+  }
+
+  /* A popup frame's ground: cards sit on it at the popup's row width. */
+  .popup-ground {
+    --ring-gap: var(--ground);
+
+    inline-size: calc(var(--popup-inline) - 2 * var(--space-4));
+  }
+
+  /* A popup window: the shell inside sizes itself (22rem by at most 37.5rem). */
+  .popup-frame {
+    display: flex;
+    inline-size: fit-content;
+    max-inline-size: 100%;
+    border: var(--line-hair) solid var(--outline-variant);
+    border-radius: var(--radius-group);
+    overflow: clip;
   }
 }

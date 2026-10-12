@@ -76,6 +76,8 @@ export interface ButtonProps extends DataAttributes {
   'aria-label'?: string;
   /** Ties a hint or a notice to the Button. */
   'aria-describedby'?: string;
+  /** What an `expanded` trigger opens: the panel's id, while it is open. */
+  'aria-controls'?: string;
   /** The element id. */
   id?: string;
   /** The label: one string, which is also the accessible name. */
@@ -222,6 +224,7 @@ export function Button({
     'data-tone': isDanger || status === 'failed' ? 'danger' : undefined,
     'aria-label': rest['aria-label'],
     'aria-describedby': rest['aria-describedby'],
+    'aria-controls': rest['aria-controls'],
     'aria-busy': busy ? ('true' as const) : undefined,
     ...press,
     ...dataAttributes(rest),

@@ -39,6 +39,10 @@ import { registerConnectionRoutes } from './routes/connection-routes';
 import { registerSonosRoutes } from './routes/sonos-routes';
 import { registerVideoSyncRoutes } from './routes/video-sync-routes';
 import { registerOffscreenRoutes } from './routes/offscreen-routes';
+import { registerAwayRoutes } from './routes/away-routes';
+import { registerBadgeRoutes } from './routes/badge-routes';
+import { watchPopupPorts } from './away-log';
+import { startToolbarBadge } from './toolbar-badge-runner';
 
 // Offscreen management
 import { recoverOffscreenState, checkAndReconnect } from './offscreen-manager';
@@ -60,6 +64,8 @@ const log = createLogger('Background');
 // Route Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
+watchPopupPorts();
+startToolbarBadge();
 registerCastRoutes();
 registerMetadataRoutes();
 registerConnectionRoutes();
@@ -67,6 +73,8 @@ registerSonosRoutes();
 registerVideoSyncRoutes();
 initVideoSyncService();
 registerOffscreenRoutes();
+registerAwayRoutes();
+registerBadgeRoutes();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Initialization

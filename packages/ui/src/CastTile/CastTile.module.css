@@ -1,0 +1,43 @@
+@layer components {
+  /*
+   * C-casttile. The head row (the same element compact and open), then the body. Open puts
+   * the head on the band, inset by --space-1 so its rim sits inside the card's edge. Compact
+   * keeps the band's place, rim and padding included, with nothing drawn, so the head row's
+   * artwork and Stop sit at one spot in both forms and never move when the tile opens or
+   * shuts. The body is inset alike in both forms; open spaces its parts --space-3 apart.
+   */
+  .tile {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-1) var(--space-3-5);
+  }
+
+  .tile:not([data-open]) > .head {
+    padding-block-start: calc(var(--line-bold) + var(--space-2-5));
+    padding-inline: calc(var(--line-bold) + var(--space-2-5))
+      calc(var(--line-bold) + var(--space-3-5));
+  }
+
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-inline-size: 0;
+    padding-inline: var(--space-4);
+  }
+
+  .tile[data-open] {
+    gap: var(--space-3-5);
+    padding-block-end: var(--space-3);
+  }
+
+  /*
+   * Opening or shutting the tile is instant (§11 call 83): its rows and notices would
+   * otherwise make their entrance into a body that is already full height, which read as a
+   * flash. Held for the frame the tile changes form in.
+   */
+  .tile[data-instant] * {
+    transition: none;
+  }
+}

@@ -1,0 +1,253 @@
+@layer components {
+  /*
+   * M-media. The artwork, the title and the subtitle (with the live dot), and a trailing
+   * slot; on a tile the head is a disclosure button that follows the grammar (hover is
+   * colour, focus-visible and a press take the bevel). On the open tile it sits on the
+   * artwork-seeded band with the transport and Go to tab.
+   */
+  .root {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .media {
+    --media-title: var(--on-surface);
+    --media-sub: var(--on-surface-variant);
+    --media-link: var(--primary);
+    --media-tonal: var(--container-high);
+    --media-gap: var(--space-3);
+    --media-sub-size: var(--text-2);
+    --media-sub-leading: var(--leading-2);
+    --media-band-bg: transparent;
+    --media-rim: transparent;
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .lg {
+    --media-gap: var(--space-4);
+    --media-sub-size: var(--text-3);
+    --media-sub-leading: var(--leading-3);
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .id,
+  .toggle {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--media-gap);
+    min-inline-size: 0;
+  }
+
+  .text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .title {
+    margin: 0;
+    overflow: hidden;
+    color: var(--media-title);
+    font-family: var(--font-body);
+    font-size: var(--text-4-fixed);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-4);
+    letter-spacing: var(--tracking-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .title:focus-visible {
+    outline: var(--line-bold) solid var(--focus);
+    outline-offset: var(--line-bold);
+  }
+
+  /* F-textbox does not trim a heading that truncates: its descenders would be clipped. */
+  @supports (text-box: trim-both cap alphabetic) {
+    .title {
+      text-box: normal;
+    }
+  }
+
+  .subtitle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    color: var(--media-sub);
+    font-size: var(--media-sub-size);
+    line-height: var(--media-sub-leading);
+  }
+
+  .subtitle-text {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trailing {
+    flex: none;
+  }
+
+  /* The disclosure: one button round the chevron, the artwork and the text. */
+  .toggle {
+    --media-toggle-shadow: none;
+    --media-toggle-fill: color-mix(in oklch, var(--media-title) var(--layer), transparent);
+
+    margin: 0;
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--radius-control);
+    background: var(--media-toggle-fill);
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    box-shadow: var(--media-toggle-shadow);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      background-color var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      corner-shape var(--dur-shape) var(--ease-effects);
+  }
+
+  .chevron {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    color: var(--media-sub);
+  }
+
+  /* The Disclosure's chevron and turn: down while shut, up while open. */
+  .chevron > svg {
+    --icon-size: var(--icon-sm);
+
+    transition: rotate var(--dur-change) var(--ease-effects);
+  }
+
+  .toggle[aria-expanded='true'] .chevron > svg {
+    rotate: 180deg;
+  }
+
+  .toggle:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .toggle:is(:focus-visible, [data-force='focus']) {
+    --layer: var(--layer-focus);
+    --media-toggle-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .toggle:is(:active, [data-pressing], [data-force='press']) {
+    --layer: var(--layer-press);
+  }
+
+  @supports (corner-shape: bevel) {
+    .toggle:is(
+      :focus-visible,
+      :active,
+      [data-pressing],
+      [data-force='focus'],
+      [data-force='press']
+    ) {
+      border-radius: var(--shape-bevel);
+      corner-shape: bevel;
+    }
+  }
+
+  /* The open tile's transport and Go to tab. */
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .transport > button,
+  .play > button {
+    --ib-fg: var(--media-title);
+  }
+
+  .play > button {
+    --ib-bg: var(--media-tonal);
+  }
+
+  .go {
+    margin-inline-start: auto;
+  }
+
+  .go > button {
+    --btn-fg: var(--media-link);
+  }
+
+  /*
+   * The artwork-seeded band: a --line-bold rim round the card on --radius-card. Its colours
+   * map the artwork's hue and chroma (--art-h, --art-c) through each part's lightness and
+   * chroma cap with relative colour. Where relative colour is missing (the desktop's WebKit
+   * floor, which never shows a band) it keeps the container step and a hairline-coloured rim.
+   */
+  .band {
+    --media-band-bg: var(--container);
+    --media-rim: var(--outline-variant);
+    --media-tonal: var(--container-high);
+    --ring-gap: var(--media-band-bg);
+
+    padding-block: var(--space-2-5) var(--space-3);
+    padding-inline: var(--space-2-5) var(--space-3-5);
+    border: var(--line-bold) solid var(--media-rim);
+    border-radius: var(--radius-card);
+    background: var(--media-band-bg);
+  }
+
+  @supports (color: oklch(from red l c h)) {
+    .band {
+      --np-card: oklch(from var(--seed-card) l min(c, var(--art-c)) var(--art-h));
+      --np-title: oklch(from var(--seed-title) l min(c, var(--art-c)) var(--art-h));
+      --np-sub: oklch(from var(--seed-sub) l min(c, var(--art-c)) var(--art-h));
+      --np-primary: oklch(from var(--seed-primary) l min(c, var(--art-c)) var(--art-h));
+      --np-rim: oklch(from var(--seed-rim) l min(c, var(--art-c)) var(--art-h));
+      --np-track: oklch(from var(--seed-track) l min(c, var(--art-c)) var(--art-h));
+      --media-band-bg: var(--np-card);
+      --media-title: var(--np-title);
+      --media-sub: var(--np-sub);
+      --media-link: var(--np-primary);
+      --media-rim: var(--np-rim);
+      --media-tonal: var(--np-track);
+    }
+  }
+
+  /* The red guard: Stop sits under the band at the inline end, on the surface. */
+  .off-band {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  @media (forced-colors: active) {
+    .toggle {
+      border: var(--line-hair) solid ButtonText;
+    }
+  }
+}

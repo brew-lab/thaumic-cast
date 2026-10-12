@@ -162,6 +162,24 @@ export const LIVE: TokenGroup = {
   },
 };
 
+/**
+ * The artwork-seeded card (DESIGN.md T-colour): the lightness and the chroma cap of each part
+ * of the band, per theme, from the R6 recipe. The hue and the chroma come from the artwork
+ * (MediaHeader writes `--art-h` and `--art-c`); the band maps them with relative colour, so
+ * each reference's own hue (0) is never shown.
+ */
+export const SEEDED: TokenGroup = {
+  title: 'T-colour: the artwork-seeded card (lightness and chroma cap per theme)',
+  tokens: {
+    'seed-card': pair('oklch(92% 0.06 0)', 'oklch(30% 0.09 0)'),
+    'seed-title': pair('oklch(23% 0.06 0)', 'oklch(92% 0.04 0)'),
+    'seed-sub': pair('oklch(41% 0.05 0)', 'oklch(86% 0.04 0)'),
+    'seed-primary': pair('oklch(49% 0.14 0)', 'oklch(83% 0.12 0)'),
+    'seed-rim': pair('oklch(49% 0.14 0)', 'oklch(66% 0.1 0)'),
+    'seed-track': pair('oklch(84% 0.05 0)', 'oklch(42% 0.06 0)'),
+  },
+};
+
 /** The body face stack (DESIGN.md T-type). */
 export const BODY_STACK =
   "system-ui, -apple-system, 'Segoe UI Variable Text', 'Segoe UI', 'Adwaita Sans', 'Cantarell', 'Noto Sans', 'Ubuntu', sans-serif";
@@ -363,6 +381,7 @@ export const TIMINGS = {
   ANNOUNCE_GAP_MS: 150,
   BUSY_MIN_MS: 600,
   COPY_CONFIRM_MS: 2000,
+  SEARCH_SETTLE_MS: 500,
 } as const;
 
 const onDanger = SEMANTIC_COLORS.tokens['on-danger'] as ThemedToken;

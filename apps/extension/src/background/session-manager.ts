@@ -70,6 +70,10 @@ interface ActiveCastSession {
   speakerIps: string[];
   /** Speaker/group display names (parallel array with speakerIps) */
   speakerNames: string[];
+  /** The rooms the user chose (player UUIDs), in order. */
+  roomIds: string[];
+  /** The target (a speakerIps entry) each chosen room plays through, keyed by room id. */
+  roomTargets: Record<string, string>;
   /** Encoder configuration used */
   encoderConfig: EncoderConfig;
   /** Timestamp when cast started */
@@ -93,6 +97,14 @@ interface ActiveCastSession {
 }
 
 /** In-memory storage of active sessions by tab ID */
+/** The rooms a session was started for. */
+export interface SessionRooms {
+  /** The chosen rooms (player UUIDs), in order. */
+  ids: string[];
+  /** The target each plays through, keyed by room id. */
+  targets: Record<string, string>;
+}
+
 const sessions = new Map<number, ActiveCastSession>();
 
 /**
@@ -137,6 +149,9 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
         if (session.videoSyncOn === undefined) {
           session.videoSyncOn = session.videoSync;
         }
+        // A session stored before rooms names none
+        if (!Array.isArray(session.roomIds)) session.roomIds = [];
+        if (!session.roomTargets) session.roomTargets = {};
         return [tabId, session] as [number, ActiveCastSession];
       });
 
@@ -166,6 +181,7 @@ const storage = persistenceManager.register<[number, ActiveCastSession][]>(
  * @param syncSpeakers - Whether synchronized multi-speaker playback is enabled
  * @param captureMode - Whether this session uses tab or browser-wide capture
  * @param videoSync - Whether the cast was started with video sync on
+ * @param rooms - The rooms the user chose, and the target each plays through
  */
 export function registerSession(
   tabId: number,
@@ -176,6 +192,7 @@ export function registerSession(
   syncSpeakers: boolean,
   captureMode: 'tab' | 'browser' = 'tab',
   videoSync = false,
+  rooms: SessionRooms = { ids: [], targets: {} },
 ): void {
   const wasEmpty = sessions.size === 0;
 
@@ -187,6 +204,8 @@ export function registerSession(
     tabId,
     speakerIps: [...speakerIps],
     speakerNames: [...speakerNames],
+    roomIds: [...rooms.ids],
+    roomTargets: { ...rooms.targets },
     encoderConfig,
     startedAt: Date.now(),
     syncSpeakers,
@@ -309,6 +328,41 @@ export function getSessionBySpeakerIp(speakerIp: string): ActiveCastSession | un
 }
 
 /**
+ * Adds speakers and rooms to a running session (ADD_ROOMS). Speakers and
+ * rooms it already has are skipped.
+ * @param tabId - The tab ID of the session
+ * @param speakerIps - The new targets that began playing
+ * @param speakerNames - Their display names (parallel array)
+ * @param rooms - The rooms added, and the target each plays through
+ * @returns True if the session exists
+ */
+export function addToSession(
+  tabId: number,
+  speakerIps: string[],
+  speakerNames: string[],
+  rooms: SessionRooms,
+): boolean {
+  const session = sessions.get(tabId);
+  if (!session) return false;
+
+  speakerIps.forEach((ip, index) => {
+    if (session.speakerIps.includes(ip)) return;
+    session.speakerIps.push(ip);
+    session.speakerNames.push(speakerNames[index] ?? ip);
+  });
+  for (const id of rooms.ids) {
+    if (!session.roomIds.includes(id)) session.roomIds.push(id);
+    const target = rooms.targets[id];
+    if (target) session.roomTargets[id] = target;
+  }
+
+  persistSessions();
+  notifySessionsChanged();
+  log.info(`Added ${rooms.ids.length} room(s) to the session for tab ${tabId}`);
+  return true;
+}
+
+/**
  * Removes a specific speaker from a session.
  * Used for partial speaker removal when one speaker changes source externally.
  * If no speakers remain, the entire session is removed.
@@ -323,9 +377,13 @@ export function removeSpeakerFromSession(tabId: number, speakerIp: string): bool
   const index = session.speakerIps.indexOf(speakerIp);
   if (index === -1) return false;
 
-  // Remove the speaker and its name
+  // Remove the speaker, its name and the rooms it played for
   session.speakerIps.splice(index, 1);
   session.speakerNames.splice(index, 1);
+  session.roomIds = session.roomIds.filter((id) => session.roomTargets[id] !== speakerIp);
+  for (const [id, target] of Object.entries(session.roomTargets)) {
+    if (target === speakerIp) delete session.roomTargets[id];
+  }
 
   // If no speakers left, remove the entire session
   if (session.speakerIps.length === 0) {
@@ -444,10 +502,12 @@ function toActiveCast(session: ActiveCastSession): ActiveCast {
     mediaState,
     speakerIps: session.speakerIps,
     speakerNames: session.speakerNames,
+    roomIds: session.roomIds,
     encoderConfig: session.encoderConfig,
     startedAt: session.startedAt,
     syncSpeakers: session.syncSpeakers,
     videoSync: session.videoSync,
+    captureMode: session.captureMode,
   };
 }
 

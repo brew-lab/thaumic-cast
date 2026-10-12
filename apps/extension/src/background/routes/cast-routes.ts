@@ -2,7 +2,7 @@
  * Cast Session Routes
  *
  * Handles message routing for cast session lifecycle:
- * - START_CAST, STOP_CAST, REMOVE_SPEAKER, GET_CAST_STATUS, GET_ACTIVE_CASTS
+ * - START_CAST, STOP_CAST, REMOVE_SPEAKER, ADD_ROOMS, GET_CAST_STATUS, GET_ACTIVE_CASTS
  */
 
 import type { ActiveCastsResponse } from '../../lib/messages';
@@ -12,12 +12,14 @@ import {
   handleStopCast,
   handleGetStatus,
   handleRemoveSpeaker,
+  handleAddRooms,
 } from '../handlers/cast';
 import { getActiveCasts } from '../session-manager';
 import {
   StartCastMessageSchema,
   StopCastMessageSchema,
   RemoveSpeakerMessageSchema,
+  AddRoomsMessageSchema,
 } from '../../lib/message-schemas';
 
 /**
@@ -29,6 +31,8 @@ export function registerCastRoutes(): void {
   registerValidatedRoute('STOP_CAST', StopCastMessageSchema, handleStopCast);
 
   registerValidatedRoute('REMOVE_SPEAKER', RemoveSpeakerMessageSchema, handleRemoveSpeaker);
+
+  registerValidatedRoute('ADD_ROOMS', AddRoomsMessageSchema, handleAddRooms);
 
   registerRoute('GET_CAST_STATUS', handleGetStatus);
 

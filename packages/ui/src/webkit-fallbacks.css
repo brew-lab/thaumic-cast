@@ -68,6 +68,14 @@
       --live-stop-4: oklch(50.9% 0.214 337.5);
       --live-stop-5: oklch(54% 0.22 350.1);
 
+      /* T-colour: the artwork-seeded card (lightness and chroma cap per theme) */
+      --seed-card: oklch(92% 0.06 0);
+      --seed-title: oklch(23% 0.06 0);
+      --seed-sub: oklch(41% 0.05 0);
+      --seed-primary: oklch(49% 0.14 0);
+      --seed-rim: oklch(49% 0.14 0);
+      --seed-track: oklch(84% 0.05 0);
+
       /* T-elev: the one shadow, for top-layer surfaces only */
       --shadow-overlay:
         0 0.125rem 0.375rem oklch(20% 0.036 310 / 12%),
@@ -133,6 +141,14 @@
         --live-stop-4: oklch(76.5% 0.15 337.9);
         --live-stop-5: oklch(78.1% 0.15 350.1);
 
+        /* T-colour: the artwork-seeded card (lightness and chroma cap per theme) */
+        --seed-card: oklch(30% 0.09 0);
+        --seed-title: oklch(92% 0.04 0);
+        --seed-sub: oklch(86% 0.04 0);
+        --seed-primary: oklch(83% 0.12 0);
+        --seed-rim: oklch(66% 0.1 0);
+        --seed-track: oklch(42% 0.06 0);
+
         /* T-elev: the one shadow, for top-layer surfaces only */
         --shadow-overlay:
           0 0.125rem 0.375rem oklch(5% 0.02 302 / 50%),
@@ -197,6 +213,14 @@
       --live-stop-3: oklch(75.1% 0.149 324.9);
       --live-stop-4: oklch(76.5% 0.15 337.9);
       --live-stop-5: oklch(78.1% 0.15 350.1);
+
+      /* T-colour: the artwork-seeded card (lightness and chroma cap per theme) */
+      --seed-card: oklch(30% 0.09 0);
+      --seed-title: oklch(92% 0.04 0);
+      --seed-sub: oklch(86% 0.04 0);
+      --seed-primary: oklch(83% 0.12 0);
+      --seed-rim: oklch(66% 0.1 0);
+      --seed-track: oklch(42% 0.06 0);
 
       /* T-elev: the one shadow, for top-layer surfaces only */
       --shadow-overlay:

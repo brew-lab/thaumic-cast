@@ -1,0 +1,43 @@
+@layer components {
+  /*
+   * L-bar. Sticky to the end of its scroller, on --surface, at --z-sticky (its one user). It
+   * bleeds to the scroller's inline edges by the page's padding. The hairline (a Divider on
+   * its edge) shows only while content runs under it, where scroll-state queries exist; on
+   * the floors (Chrome 125 to 132, all WebKit) it is always shown.
+   */
+  .bar {
+    --bar-bg: var(--surface);
+    --bar-bleed: var(--popup-pad, var(--space-4));
+    --ring-gap: var(--bar-bg);
+
+    position: sticky;
+    inset-block-end: 0;
+    z-index: var(--z-sticky);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-inline: calc(-1 * var(--bar-bleed));
+    padding-block: var(--space-3);
+    padding-inline: var(--bar-bleed);
+    background: var(--bar-bg);
+  }
+
+  .rule {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: 0;
+    display: flex;
+  }
+
+  @supports (container-type: scroll-state) {
+    .rule {
+      visibility: hidden;
+    }
+
+    @container scroll-state(scrollable: bottom) {
+      .rule {
+        visibility: visible;
+      }
+    }
+  }
+}

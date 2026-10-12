@@ -6,7 +6,7 @@
     "videoSyncEnabled": false,
     "startVolume": {
       "limit": 30,
-      "speakers": { "192.168.1.11": 45 }
+      "rooms": { "RINCON_000E58A0B1C2D01400": 45 }
     }
   }
 }

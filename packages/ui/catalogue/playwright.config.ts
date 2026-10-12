@@ -23,6 +23,10 @@ export default defineConfig({
   // WebKit pages at once starve each other into timeouts. Four is quick and steady.
   workers: process.env.CI ? undefined : 4,
   forbidOnly: !!process.env.CI,
+  // The page draws every item, and with the popup's components a WebKit page takes about
+  // six seconds to settle (data-ready waits a second after load); the default five-second
+  // wait for it would time out under parallel load.
+  expect: { timeout: 15_000 },
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://127.0.0.1:4179',

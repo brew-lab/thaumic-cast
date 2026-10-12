@@ -29,6 +29,14 @@ export {
   type StopCastMessage,
   RemoveSpeakerMessageSchema,
   type RemoveSpeakerMessage,
+  AddRoomsMessageSchema,
+  type AddRoomsMessage,
+  AddRoomsResponseSchema,
+  type AddRoomsResponse,
+  MarkAwaySeenMessageSchema,
+  type MarkAwaySeenMessage,
+  SetToolbarThemeMessageSchema,
+  type SetToolbarThemeMessage,
   StartCaptureMessageSchema,
   type StartCaptureMessage,
   StopSessionMessageSchema,
@@ -207,6 +215,9 @@ import type {
   StartCastMessage,
   StopCastMessage,
   RemoveSpeakerMessage,
+  AddRoomsMessage,
+  MarkAwaySeenMessage,
+  SetToolbarThemeMessage,
   GetSonosStateMessage,
   GetActiveCastsMessage,
   EnsureConnectionMessage,
@@ -274,6 +285,10 @@ export type PopupToBackgroundType =
   | 'START_CAST'
   | 'STOP_CAST'
   | 'REMOVE_SPEAKER'
+  | 'ADD_ROOMS'
+  | 'GET_AWAY_EVENTS'
+  | 'MARK_AWAY_SEEN'
+  | 'SET_TOOLBAR_THEME'
   | 'GET_CAST_STATUS'
   | 'GET_SONOS_STATE'
   | 'GET_CONNECTION_STATUS'
@@ -351,7 +366,8 @@ export type OffscreenToBackgroundType =
   | 'OFFSCREEN_READY'
   | 'SESSION_DISCONNECTED'
   | 'BROWSER_CAPTURE_ERROR'
-  | 'CAPTURE_DELAY';
+  | 'CAPTURE_DELAY'
+  | 'SET_TOOLBAR_THEME';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Directional Message Union Types
@@ -365,6 +381,10 @@ export type PopupToBackgroundMessage =
   | StartCastMessage
   | StopCastMessage
   | RemoveSpeakerMessage
+  | AddRoomsMessage
+  | { type: 'GET_AWAY_EVENTS' }
+  | MarkAwaySeenMessage
+  | SetToolbarThemeMessage
   | { type: 'GET_CAST_STATUS' }
   | GetSonosStateMessage
   | { type: 'GET_CONNECTION_STATUS' }
@@ -462,7 +482,8 @@ export type OffscreenToBackgroundMessage =
   | OffscreenReadyMessage
   | SessionDisconnectedMessage
   | BrowserCaptureErrorMessage
-  | CaptureDelayMessage;
+  | CaptureDelayMessage
+  | SetToolbarThemeMessage;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inbound Message Types (for listeners)

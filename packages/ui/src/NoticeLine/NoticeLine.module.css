@@ -42,6 +42,28 @@
     --noticeline-pad-end: var(--noticeline-pad-start);
   }
 
+  /*
+   * Everything in a row lines up with the words' first line: the glyph, the action and the X
+   * sit centred on it in a --control-sm band, so a lead that wraps grows downwards and nothing
+   * floats to the middle of it.
+   */
+  .row {
+    align-items: flex-start;
+  }
+
+  .row > .glyph {
+    margin-block-start: calc((var(--control-sm) - 1lh) / 2);
+  }
+
+  .row > .words {
+    margin-block: calc((var(--control-sm) - 1lh) / 2);
+  }
+
+  .row > .trail,
+  .row > .dismiss {
+    block-size: var(--control-sm);
+  }
+
   .glyph,
   .chevron {
     flex: none;
@@ -90,6 +112,8 @@
   /* The X's hit area reaches past its box; keep it --gap-target from the action's. */
   .dismiss {
     flex: none;
+    display: flex;
+    align-items: center;
     margin-inline-start: calc(max(0rem, var(--gap-target) - var(--space-2-5)));
   }
 

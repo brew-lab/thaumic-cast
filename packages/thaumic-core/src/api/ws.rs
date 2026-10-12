@@ -2724,7 +2724,7 @@ mod tests {
         assert_eq!(request.get_speaker_ips(), ["192.168.1.10", "192.168.1.11"]);
         let start = request.start_volume.expect("a start volume");
         assert_eq!(start.limit, Some(30));
-        assert_eq!(start.speakers.get("192.168.1.11"), Some(&45));
+        assert_eq!(start.rooms.get("RINCON_000E58A0B1C2D01400"), Some(&45));
     }
 
     #[test]

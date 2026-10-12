@@ -41,9 +41,12 @@ const SERVER_TEST_ERRORS: Record<ServerTestErrorType, true> = {
   permission_denied: true,
 };
 
-/** Every availability the speaker picker can show; a new one fails to compile here. */
-const SPEAKER_AVAILABILITIES: Record<SpeakerAvailability, true> = {
-  available: true,
+/**
+ * Whether each availability shows a Badge on a room in the picker; a new one fails to
+ * compile here. An available room shows none.
+ */
+const SPEAKER_AVAILABILITIES: Record<SpeakerAvailability, boolean> = {
+  available: false,
   in_use: true,
   casting: true,
   remote_cast: true,
@@ -84,9 +87,11 @@ describe('extension en.json', () => {
     }
   });
 
-  it('should have a label for every speaker availability', () => {
-    for (const availability of Object.keys(SPEAKER_AVAILABILITIES)) {
-      expect(strings[`speaker_availability_${availability}`]).toBeString();
+  it('should have a Badge word for every speaker availability that shows one', () => {
+    for (const [availability, shown] of Object.entries(SPEAKER_AVAILABILITIES)) {
+      expect(typeof strings[`speaker_availability_${availability}`]).toBe(
+        shown ? 'string' : 'undefined',
+      );
     }
   });
 
@@ -119,8 +124,15 @@ describe('extension en.json', () => {
       interpolation: { escapeValue: false },
     });
 
-    expect(i18n.t('cast_to_n_speakers', { count: 1 })).toBe('Cast to 1 speaker');
-    expect(i18n.t('cast_to_n_speakers', { count: 3 })).toBe('Cast to 3 speakers');
+    expect(i18n.t('cast_to_n_rooms', { count: 1 })).toBe('Cast to 1 room');
+    expect(i18n.t('cast_to_n_rooms', { count: 3 })).toBe('Cast to 3 rooms');
+    expect(i18n.t('hidden_chosen', { count: 1 })).toStartWith('1 chosen room is hidden');
+    expect(i18n.t('cast_plays_too', { count: 1, name: 'Patio', with: 'Kitchen' })).toBe(
+      'Patio plays too, as it is grouped with Kitchen.',
+    );
+    expect(i18n.t('cast_plays_too', { count: 2, names: 'Patio and Deck' })).toBe(
+      'Patio and Deck play too, as they are grouped with your rooms.',
+    );
     expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 speaker answered.');
     expect(i18n.t('onboarding.speakers.found', { count: 2 })).toBe('2 speakers answered.');
     expect(i18n.t('ingest_gaps_message_desktop', { count: 1, suggested: 500 })).toContain(

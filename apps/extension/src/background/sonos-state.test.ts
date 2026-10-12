@@ -142,6 +142,27 @@ describe('field updates', () => {
     expect(after.groupVolumes).toEqual(before.groupVolumes);
   });
 
+  it('should drop the group level of a speaker that stopped leading a group', () => {
+    // Patio (B) stood alone at 80, then joined Kitchen's (A) group in the Sonos app.
+    updateGroups([group('kitchen', SPEAKER_A), group('patio', SPEAKER_B)]);
+    updateVolume(SPEAKER_B, 80);
+    updateMute(SPEAKER_B, true);
+
+    const after = updateGroups([group('kitchen', SPEAKER_A)]);
+
+    expect(after.groupVolumes).toEqual({ [SPEAKER_A]: 20 });
+    expect(after.groupMutes).toEqual({ [SPEAKER_A]: false });
+  });
+
+  it('should keep a member’s own level, written while it was not leading a group', () => {
+    updateGroups([group('kitchen', SPEAKER_A)]);
+    updateVolume(SPEAKER_B, 35);
+
+    const after = updateGroups([group('kitchen', SPEAKER_A)]);
+
+    expect(after.groupVolumes).toEqual({ [SPEAKER_A]: 20, [SPEAKER_B]: 35 });
+  });
+
   it('should set one speaker’s volume and keep the others', () => {
     const before = getSonosState();
 

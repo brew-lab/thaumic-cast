@@ -88,7 +88,13 @@
     box-shadow: none;
   }
 
-  .input::-webkit-search-cancel-button {
+  /*
+   * The search's own Clear button is the one control: WebKit draws its native cancel glyph
+   * unless it is taken out of the box entirely.
+   */
+  .input::-webkit-search-cancel-button,
+  .input::-webkit-search-decoration {
+    display: none;
     appearance: none;
   }
 

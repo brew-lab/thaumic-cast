@@ -22,6 +22,7 @@ import {
   emptyDismissals,
   isNoticeDismissed,
   parseDismissals,
+  SPEAKER_NOTICES_DISMISSED_KEY,
   speakerNoticeLines,
   type NoticeLine,
   type SpeakerNoticeDismissals,
@@ -33,6 +34,12 @@ import { useMountedRef } from './useMountedRef';
 export interface SpeakerNoticeView {
   /** The speaker's IP, used as the notice's identity. */
   speakerIp: string;
+  /** The cast's stream the notice is about. */
+  streamId: string;
+  /** The speaker's room name, for the lead. */
+  name: string;
+  /** Dismissed: the words are hidden, and the room's Badge stays while it stands. */
+  dismissed: boolean;
   /** The companion's notice. */
   notice: SpeakerNotice;
   /** The sentences to translate and join, in order. */
@@ -41,7 +48,7 @@ export interface SpeakerNoticeView {
 
 /** What {@link useSpeakerNotices} returns. */
 export interface UseSpeakerNoticesResult {
-  /** Notices the popup should currently render, one per affected speaker. */
+  /** Every notice that stands on an active cast's speaker, dismissed or not. */
   notices: SpeakerNoticeView[];
   /** Dismisses the current notice for a speaker. */
   dismiss: (speakerIp: string) => void;
@@ -57,7 +64,7 @@ export interface SpeakerNoticeCompanion {
 
 type SpeakerHealthSnapshot = Record<string, SpeakerHealthEntry>;
 
-const DISMISSED_STORAGE_KEY = 'dismissedSpeakerNotices';
+const DISMISSED_STORAGE_KEY = SPEAKER_NOTICES_DISMISSED_KEY;
 
 /**
  * Resolves a display name for a casting speaker: the live Sonos group or
@@ -87,7 +94,7 @@ export function resolveSpeakerName(
 }
 
 /**
- * Tracks the companion's speaker notices and exposes the undismissed ones for
+ * Tracks the companion's speaker notices and exposes them, dismissed or not, for
  * the speakers of the active casts.
  * @param casts - Active casts; only their speakers can produce notices
  * @param speakerGroups - Current Sonos topology, used to name speakers
@@ -169,13 +176,16 @@ export function useSpeakerNotices(
         const reading = snapshot[speakerIp];
         const notice = reading?.notice;
         if (!reading || !notice) continue;
-        if (isNoticeDismissed(dismissals, reading.streamId, speakerIp, notice, now)) continue;
         if (notices.some((view) => view.speakerIp === speakerIp)) continue;
+        const name = resolveSpeakerName(speakerIp, speakerGroups, casts);
         notices.push({
           speakerIp,
+          streamId: reading.streamId,
+          name,
+          dismissed: isNoticeDismissed(dismissals, reading.streamId, speakerIp, notice, now),
           notice,
           lines: speakerNoticeLines(notice, {
-            speakerName: resolveSpeakerName(speakerIp, speakerGroups, casts),
+            speakerName: name,
             companionAudio: companion.companionAudio,
             appType: companion.appType,
           }),
