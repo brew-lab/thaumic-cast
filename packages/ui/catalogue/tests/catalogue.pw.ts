@@ -41,7 +41,10 @@ test('every section matches its screenshot', async ({ page }, testInfo) => {
   test.setTimeout(300_000);
   await page.goto('/?theme=light');
   await page.evaluate(() => document.fonts.ready);
-  const ids = await page.locator('main > section').evaluateAll((els) => els.map((e) => e.id));
+  // The catalogue's own sections: a specimen's PopupShell draws a <main> of its own.
+  const ids = await page
+    .locator('main > section.section[id]')
+    .evaluateAll((els) => els.map((e) => e.id));
   expect(ids.length).toBeGreaterThan(0);
   for (const id of ids) {
     const name = `${id}.png`;

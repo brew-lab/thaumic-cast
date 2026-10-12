@@ -54,7 +54,10 @@ test('every section on the floor matches its screenshot', async ({ page }, testI
   test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
   test.setTimeout(300_000);
   await page.evaluate(() => document.fonts.ready);
-  const ids = await page.locator('main > section').evaluateAll((els) => els.map((e) => e.id));
+  // The catalogue's own sections: a specimen's PopupShell draws a <main> of its own.
+  const ids = await page
+    .locator('main > section.section[id]')
+    .evaluateAll((els) => els.map((e) => e.id));
   for (const id of ids) {
     const name = `floor-${id}.png`;
     const section = page.locator(`#${id}`);
