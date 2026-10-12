@@ -1,34 +1,41 @@
 @layer components {
   /*
-   * The old Wizard, until Phase 4 rebuilds it (C-wizard, L-wizard). Full form: the window's
-   * height, with the content as its one scroller (`data-scroller`: the scrollbar and its
-   * balanced gutter come from base.css). The compact form is the popup's onboarding (L-wizard):
-   * see .frame.
+   * C-wizard, full form: the desktop's onboarding, inside the WizardShell, which scrolls it.
+   * The StepIndicator, the step and the footer, --space-6 apart; the footer is a rule, then
+   * Skip at the start and Back and Carry on at the end, on one line. The footer sticks to the
+   * end of the scroller on --ground, so Carry on is in view on a step taller than the window;
+   * its end padding is taken back from the column's, so nothing moves on a short step, and
+   * the WizardShell's end scroll padding keeps a focused control clear of it (WCAG 2.4.11).
    */
   .wizard {
-    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--space-6);
-    block-size: 100%;
-    padding: var(--space-6);
   }
 
   .content {
-    flex: 1;
     display: flex;
-    justify-content: center;
-    min-block-size: 0;
-    padding-inline: var(--space-6);
-    overflow-y: auto;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  .foot {
+    position: sticky;
+    inset-block-end: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-block-end: calc(-1 * var(--space-5));
+    padding-block-end: var(--space-5);
+    background: var(--ground);
   }
 
   .footer {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    padding-block-start: var(--space-6);
-    border-block-start: var(--line-hair) solid var(--divider);
+    gap: var(--space-3);
   }
 
   .footer-start {

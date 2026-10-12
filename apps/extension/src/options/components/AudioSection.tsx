@@ -1,15 +1,14 @@
 import type { JSX } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import {
-  Card,
   ChoiceGroup,
   DescriptionList,
   Disclosure,
-  Divider,
   Notice,
   Select,
   SettingsRow,
+  SettingsSection,
 } from '@thaumic-cast/ui';
 import type {
   AudioCodec,
@@ -38,10 +37,10 @@ import { getDynamicPresets } from '../../lib/presets';
 import { resolveAudio, type CompanionCapability } from '../../lib/audio-resolver';
 import { pcmAudioRows, type PcmRowsContext } from '../../lib/pcm-audio-rows';
 import { useCombinationSupport } from '../hooks/useCombinationSupport';
-import styles from '../Options.module.css';
 
-/** Fragment the popup links to so the advanced options open in view. */
-const ADVANCED_HASH = '#audio-advanced';
+/** The Advanced fold's id, which the popup's smoothing advice opens (`#audio-advanced`). */
+const ADVANCED_ID = 'audio-advanced';
+const ADVANCED_HASH = `#${ADVANCED_ID}`;
 
 interface AudioSectionProps {
   settings: ExtensionSettings;
@@ -81,7 +80,6 @@ export function AudioSection({
 }: AudioSectionProps): JSX.Element {
   const { t } = useTranslation();
   const [advancedOpen, setAdvancedOpen] = useState(() => location.hash === ADVANCED_HASH);
-  const advancedRef = useRef<HTMLDivElement>(null);
 
   // Resolve the settings exactly as a cast would
   const resolved = useMemo(() => {
@@ -132,7 +130,7 @@ export function AudioSection({
     const reveal = (): void => {
       if (location.hash !== ADVANCED_HASH) return;
       setAdvancedOpen(true);
-      advancedRef.current?.scrollIntoView({ block: 'start' });
+      document.getElementById(ADVANCED_ID)?.scrollIntoView({ block: 'start' });
     };
     if (showSmoothing) reveal();
     window.addEventListener('hashchange', reveal);
@@ -155,11 +153,12 @@ export function AudioSection({
       return ` (${option.label})`;
     };
 
+    // Low to high, so two columns read Economical, Sensible / Luxurious, Bespoke (the drawing).
     return [
       {
-        value: 'high',
-        label: t('audio_mode_high') + presetLabel('high'),
-        desc: t('audio_mode_high_desc'),
+        value: 'low',
+        label: t('audio_mode_low') + presetLabel('low'),
+        desc: t('audio_mode_low_desc'),
       },
       {
         value: 'mid',
@@ -167,9 +166,9 @@ export function AudioSection({
         desc: t('audio_mode_mid_desc'),
       },
       {
-        value: 'low',
-        label: t('audio_mode_low') + presetLabel('low'),
-        desc: t('audio_mode_low_desc'),
+        value: 'high',
+        label: t('audio_mode_high') + presetLabel('high'),
+        desc: t('audio_mode_high_desc'),
       },
       { value: 'custom', label: t('audio_mode_custom'), desc: t('audio_mode_custom_desc') },
     ];
@@ -386,10 +385,11 @@ export function AudioSection({
       });
     }
 
-    // The preset decides this for every codec, PCM included: the relay obeys it too.
+    // The preset decides this for every codec, PCM included: the relay obeys it too. The
+    // readout names it briefly, so its key column stays short.
     rows.push({
       key: 'latency-mode',
-      label: t('audio_latency_mode'),
+      label: t('audio_latency_mode_short'),
       value:
         resolvedConfig.latencyMode === 'quality'
           ? t('audio_latency_quality')
@@ -451,9 +451,9 @@ export function AudioSection({
   );
 
   return (
-    <Card title={t('audio_section_title')}>
+    <SettingsSection title={t('audio_section_title')}>
       {/* Loading state */}
-      {codecLoading && <p className={styles.hint}>{t('audio_detecting_codecs')}</p>}
+      {codecLoading && <p>{t('audio_detecting_codecs')}</p>}
 
       {/* No codecs detected */}
       {!codecLoading && codecSupport.availableCodecs.length === 0 && (
@@ -478,12 +478,8 @@ export function AudioSection({
           {/* Browser-wide capture decides the format, so say the choice above waits */}
           {resolved?.formatForced && <Notice tone="info" text={t('audio_browser_capture_note')} />}
 
-          <Divider />
-
-          {/* Resolved/Custom settings */}
-          <p className={styles.label}>
-            {isCustomMode ? t('audio_settings') : t('audio_resolved_settings')}
-          </p>
+          {/* Resolved/Custom settings, under a subheading the section draws as a row's name */}
+          <h3>{isCustomMode ? t('audio_settings') : t('audio_resolved_settings')}</h3>
 
           {isCustomMode ? (
             /* Custom mode: editable settings */
@@ -612,7 +608,8 @@ export function AudioSection({
             )
           )}
 
-          {isPcm && <p className={styles.hint}>{t('audio_sample_rate_follows_capture_hint')}</p>}
+          {/* Help for the rows above: the section draws a plain paragraph as help */}
+          {isPcm && <p>{t('audio_sample_rate_follows_capture_hint')}</p>}
 
           {/* The browser refuses this exact combination: say so before cast time */}
           {combinationSupported === false && (
@@ -635,61 +632,60 @@ export function AudioSection({
             />
           )}
 
-          {/* Advanced: smoothing for any PCM cast; frame size and, in Bespoke, falling behind for a PCM tab cast */}
+          {/* Advanced: smoothing for any PCM cast; frame size and, in Bespoke, falling behind
+              for a PCM tab cast */}
           {showSmoothing && (
-            <div ref={advancedRef} className={styles.advancedAnchor}>
-              <Disclosure
-                id="audio-advanced"
-                label={t('audio_advanced')}
-                open={advancedOpen}
-                onOpenChange={setAdvancedOpen}
-              >
-                {selectRow({
-                  label: t('audio_smoothing'),
-                  help: t('audio_smoothing_hint'),
+            <Disclosure
+              id={ADVANCED_ID}
+              label={t('audio_advanced')}
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+            >
+              {selectRow({
+                label: t('audio_smoothing'),
+                help: t('audio_smoothing_hint'),
+                select: (describedBy) => (
+                  <Select
+                    id="audio-smoothing"
+                    label={t('audio_smoothing')}
+                    hideLabel
+                    value={settings.pcmSmoothingMs}
+                    options={PCM_SMOOTHING_OPTIONS.map((ms) => ({
+                      value: ms,
+                      label: optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS),
+                    }))}
+                    onChange={(ms) => handleSmoothingChange(ms as PcmSmoothingMs)}
+                    aria-describedby={describedBy}
+                  />
+                ),
+              })}
+
+              {showFrameSize &&
+                selectRow({
+                  label: t('audio_frame_size'),
+                  help: t('audio_frame_size_hint'),
                   select: (describedBy) => (
                     <Select
-                      id="audio-smoothing"
-                      label={t('audio_smoothing')}
+                      id="audio-frame-size"
+                      label={t('audio_frame_size')}
                       hideLabel
-                      value={settings.pcmSmoothingMs}
-                      options={PCM_SMOOTHING_OPTIONS.map((ms) => ({
+                      value={settings.pcmFrameDurationMs}
+                      options={FRAME_DURATIONS.map((ms) => ({
                         value: ms,
-                        label: optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS),
+                        label: optionLabel(ms, FRAME_DURATION_MS_DEFAULT),
                       }))}
-                      onChange={(ms) => handleSmoothingChange(ms as PcmSmoothingMs)}
+                      onChange={(ms) => handleFrameDurationChange(ms as FrameDurationMs)}
                       aria-describedby={describedBy}
                     />
                   ),
                 })}
 
-                {showFrameSize &&
-                  selectRow({
-                    label: t('audio_frame_size'),
-                    help: t('audio_frame_size_hint'),
-                    select: (describedBy) => (
-                      <Select
-                        id="audio-frame-size"
-                        label={t('audio_frame_size')}
-                        hideLabel
-                        value={settings.pcmFrameDurationMs}
-                        options={FRAME_DURATIONS.map((ms) => ({
-                          value: ms,
-                          label: optionLabel(ms, FRAME_DURATION_MS_DEFAULT),
-                        }))}
-                        onChange={(ms) => handleFrameDurationChange(ms as FrameDurationMs)}
-                        aria-describedby={describedBy}
-                      />
-                    ),
-                  })}
-
-                {/* Falling behind - here for Bespoke PCM on a tab cast */}
-                {fallBehindPlacement === 'advanced' && fallBehindRow}
-              </Disclosure>
-            </div>
+              {/* Falling behind - here for Bespoke PCM on a tab cast */}
+              {fallBehindPlacement === 'advanced' && fallBehindRow}
+            </Disclosure>
           )}
         </>
       )}
-    </Card>
+    </SettingsSection>
   );
 }

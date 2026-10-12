@@ -252,7 +252,20 @@ test('the tooltip waits for the delay on hover, then stays while hovered', async
     }).observe(el, { attributes: true, attributeFilter: ['data-open'] });
   });
   await trigger.hover();
-  await expect(tip).toBeVisible({ timeout: 5000 });
+  // Waited for in the page: polling toBeVisible forces a layout of the whole catalogue each
+  // time, which on a slow WebKit runner holds the delay's timer back by seconds.
+  await tip.evaluate(
+    (el) =>
+      new Promise<void>((resolve) => {
+        if (el.hasAttribute('data-open')) return resolve();
+        new MutationObserver((_, observer) => {
+          if (!el.hasAttribute('data-open')) return;
+          observer.disconnect();
+          resolve();
+        }).observe(el, { attributes: true, attributeFilter: ['data-open'] });
+      }),
+  );
+  await expect(tip).toBeVisible();
   const { enter, open } = await page.evaluate(
     () => (window as unknown as { __tipTimes: { enter: number; open: number } }).__tipTimes,
   );

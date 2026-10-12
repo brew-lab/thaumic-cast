@@ -13,6 +13,7 @@ mod household_tests;
 mod listen_tests;
 mod playback_tests;
 mod queue_tests;
+mod real_desktop;
 mod real_ext_companion;
 mod regroup_tests;
 mod start_volume_tests;

@@ -1,12 +1,5 @@
-/* The Speakers view, until Phase 4 rebuilds it with RoomCards in the DesktopShell. */
+/* The Speakers view's card grid: one column in a narrow main, as many 18rem tracks as fit. */
 @layer app {
-  .speakers {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-5);
-    padding: var(--space-7);
-  }
-
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--track-card)), 1fr));

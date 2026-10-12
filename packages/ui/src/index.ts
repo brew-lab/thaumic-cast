@@ -59,5 +59,14 @@ export * from './StickyActionBar';
 export * from './TabCard';
 export * from './VideoSync';
 
+// Settings and the desktop (DESIGN.md §6, §8, Phase 4)
+export * from './DesktopShell';
+export * from './Dialog';
+export * from './OptionsShell';
+export * from './Rail';
+export * from './RoomCard';
+export * from './SettingsSection';
+export * from './WizardShell';
+
 // Rebuilt in a later phase (DESIGN.md §14)
 export * from './Wizard';

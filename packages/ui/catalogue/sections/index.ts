@@ -13,7 +13,7 @@ import {
   TypeSpecimen,
   UtilitiesSpecimen,
 } from './foundations';
-import { SetListSpecimen } from './settings';
+import { SetListSpecimen, SettingsSectionSpecimen } from './settings';
 import {
   ArtworkSpecimen,
   BadgeSpecimen,
@@ -72,6 +72,13 @@ import {
   VideoSyncSpecimen,
 } from './popup';
 import { SizeRuleSpecimen } from './size';
+import { OptionsShellSpecimen } from './pages';
+import {
+  DesktopShellSpecimen,
+  DialogSpecimen,
+  RoomCardSpecimen,
+  WizardShellSpecimen,
+} from './desktop';
 import { ButtonStatesSpecimen } from './button-states';
 import { PressStatesSpecimen } from './press-states';
 import {
@@ -595,6 +602,51 @@ export const SECTIONS: CatalogueSection[] = [
     Specimen: SetListSpecimen,
   },
   {
+    id: 'settings-section',
+    wide: true,
+    title: 'SettingsSection',
+    tier: 'Tier 3 · C-section',
+    summary:
+      'One subgrid: every control ends on one edge from a 25rem card. A hairline between items, none under the heading or round a Notice; action Buttons fill the control track, so they share one width.',
+    Specimen: SettingsSectionSpecimen,
+  },
+  {
+    id: 'room-card',
+    wide: true,
+    title: 'RoomCard',
+    tier: 'Tier 3 · C-roomcard',
+    summary:
+      'One room on the desktop, read-only: the name then the Badge on a wrapping line (the name wraps, never cut off, and keeps 6ch), the sub line on its own, then Copy URL while it casts and the reserve Meter with diagnostics on. Cards sort casting first.',
+    Specimen: RoomCardSpecimen,
+  },
+  {
+    id: 'dialog',
+    wide: true,
+    title: 'Dialog',
+    tier: 'Tier 3 · C-dialog',
+    summary:
+      'The modal confirm, in the top layer over the scrim: focus starts on Cancel; Esc, Close and Cancel cancel and give focus back to the opener; the confirm is busy, closes it on success and shows its failure with the Dialog still open. The actions stack under a 25rem dialog.',
+    Specimen: DialogSpecimen,
+  },
+  {
+    id: 'desktop-shell',
+    wide: true,
+    title: 'DesktopShell and Rail',
+    tier: 'Tier 5 · L-desktop, C-rail',
+    summary:
+      'The window: the Rail (narrow under 45rem, wide from it) beside main, the one scroller; the toast row under main, outside it, 0 tall until a Toast opens it. Not found is an EmptyState whose title is the page heading.',
+    Specimen: DesktopShellSpecimen,
+  },
+  {
+    id: 'wizard-shell',
+    wide: true,
+    title: 'WizardShell and the full Wizard',
+    tier: 'Tier 5 · L-wizard, C-wizard',
+    summary:
+      'The desktop onboarding: the window without the Rail, main the one scroller; the StepIndicator, the step, a rule, then Skip, Back (from step 2) and Carry on on one line. Not a modal.',
+    Specimen: WizardShellSpecimen,
+  },
+  {
     id: 'popup-shell',
     wide: true,
     title: 'PopupShell and StickyActionBar',
@@ -602,6 +654,15 @@ export const SECTIONS: CatalogueSection[] = [
     summary:
       'One scroller; the bar sticks to its end, publishes its size as --overlay-end and the scroller pads by it plus 8 px, so focus is never under it (2.4.11). The hairline shows only while content runs under the bar.',
     Specimen: PopupShellSpecimen,
+  },
+  {
+    id: 'options-shell',
+    wide: true,
+    title: 'OptionsShell',
+    tier: 'Tier 5 · L-page, L-bar',
+    summary:
+      'The options page: one --page-max column; the document is the one scroller. The bar at its end holds the Toast and is 0 tall without one; the end scroll padding follows it (2.4.11). Drawn in a window at 400 and 760 px, failing to save, and loading.',
+    Specimen: OptionsShellSpecimen,
   },
   {
     id: 'popup-frames',

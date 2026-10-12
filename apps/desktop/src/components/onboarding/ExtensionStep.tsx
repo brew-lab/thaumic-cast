@@ -67,11 +67,12 @@ export function ExtensionStep(): preact.JSX.Element {
 
       <p className={styles.body}>{t('onboarding.extension.body')}</p>
 
+      {/* Carry on is the step's one filled action; the store is the usual way, so tonal. */}
       <Cluster>
-        <Button size="md" kind="filled" icon="external" onClick={handleOpenStore}>
+        <Button size="md" icon="external" onClick={handleOpenStore}>
           {t('onboarding.extension.chrome_link')}
         </Button>
-        <Button size="md" icon="external" onClick={handleOpenGithub}>
+        <Button size="md" kind="outline" icon="external" onClick={handleOpenGithub}>
           {t('onboarding.extension.github_link')}
         </Button>
       </Cluster>

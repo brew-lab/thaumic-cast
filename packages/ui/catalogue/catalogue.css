@@ -1091,4 +1091,55 @@
     border-radius: var(--radius-group);
     overflow: clip;
   }
+
+  /* A desktop window (a modal Dialog, the DesktopShell), drawn in an iframe at its size. */
+  .window-frame {
+    display: block;
+    inline-size: calc(var(--window-w) * 1px);
+    max-inline-size: 100%;
+    block-size: calc(var(--window-h) * 1px);
+    border: var(--line-hair) solid var(--outline-variant);
+    border-radius: var(--radius-card);
+  }
+
+  /* RoomCards at a fixed card width, wrapping. */
+  .room-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, calc(var(--room-card-rem) * 1rem));
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  /* The Speakers view's grid, as the desktop lays it out. */
+  .speaker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--track-card)), 1fr));
+    align-items: start;
+    gap: var(--space-5);
+  }
+
+  /* What a frame draws behind a modal Dialog: a little of a page. */
+  .frame-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-block-size: 100dvb;
+    padding: var(--space-6);
+    background: var(--ground);
+    color: var(--on-surface);
+  }
+
+  .frame-page > p {
+    margin: 0;
+  }
+
+  /* A page shell that owns its document, drawn in an iframe at a window's width. */
+  .page-frame {
+    display: block;
+    inline-size: calc(var(--page-frame-w) * 1px);
+    max-inline-size: 100%;
+    block-size: 40rem;
+    border: var(--line-hair) solid var(--outline-variant);
+    border-radius: var(--radius-card);
+  }
 }

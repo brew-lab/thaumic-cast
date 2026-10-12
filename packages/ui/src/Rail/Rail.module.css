@@ -1,13 +1,17 @@
-/* The sidebar, until Phase 4 rebuilds it as the Rail. */
-@layer app {
-  .sidebar {
+@layer components {
+  /*
+   * C-rail. It fills the track the DesktopShell gives it (--rail-narrow or --rail-wide) and
+   * the window's height, on --container; it never scrolls and clips nothing it draws (the
+   * NavItems' focus ring stays inside its inline padding).
+   */
+  .rail {
     display: flex;
     flex-direction: column;
     gap: var(--space-6);
+    min-inline-size: 0;
     block-size: 100%;
     padding-block: var(--space-5);
     padding-inline: var(--space-3);
-    overflow: clip;
     background: var(--container);
   }
 

@@ -387,6 +387,8 @@ test('a quick click that makes a control busy still plays the whole morph', asyn
 });
 
 test('Enter and Space each hold a press for the morph', async ({ page }) => {
+  // Every control, both keys: past 90 s on the CI WebKit runner.
+  test.setTimeout(240_000);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   for (const control of CONTROLS) {
     const el = control.find(page);

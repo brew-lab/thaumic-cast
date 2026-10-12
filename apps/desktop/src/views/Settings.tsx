@@ -5,6 +5,8 @@ import {
   getManualSpeakerIps,
   removeManualSpeakerIp,
   clearSpeakerNotices,
+  setShowDiagnostics,
+  showDiagnostics,
   getSpeakerMonitor,
   setSpeakerMonitor,
   getHeadStart,
@@ -24,12 +26,13 @@ import { open } from '@tauri-apps/plugin-shell';
 import {
   AddressField,
   Button,
-  Card,
+  Cluster,
   DescriptionList,
   PageHeader,
   SegmentedControl,
   Select,
   SettingsRow,
+  SettingsSection,
   Switch,
   type AddressResult,
 } from '@thaumic-cast/ui';
@@ -39,7 +42,6 @@ import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { hasLanguageChoice } from '../lib/language-choice';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import { addManualSpeaker, getSpeakerErrorMessage } from '../lib/manual-speaker';
-import styles from './Settings.module.css';
 
 const log = createLogger('Settings');
 
@@ -55,8 +57,8 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * - Autostart on login
  * - Language selection, once there is more than one language
  * - Theme (auto/light/dark)
- * - Speaker monitoring, the speaker head start, clock drift correction and
- *   speakers added by IP address
+ * - Speaker monitoring, the speaker head start, clock drift correction, Show
+ *   diagnostics and speakers added by IP address
  * @returns The rendered Settings page
  */
 export function Settings() {
@@ -202,11 +204,10 @@ export function Settings() {
   const driftToggle = driftToggleState(drift, monitorOn);
 
   return (
-    <div className={styles.settings}>
+    <>
       <PageHeader title={t('nav.settings')} />
 
-      {/* Startup Section */}
-      <Card id="startup" title={t('settings.startup')}>
+      <SettingsSection id="startup" title={t('settings.startup')}>
         <Switch
           label={t('settings.autostart')}
           description={t('settings.autostart_description')}
@@ -214,11 +215,11 @@ export function Settings() {
           onChange={handleAutostartChange}
           disabled={autostart === null}
         />
-      </Card>
+      </SettingsSection>
 
       {/* Language Section: shown once there is a second language to pick */}
       {hasLanguageChoice(availableLanguages) && (
-        <Card id="language" title={t('settings.language')}>
+        <SettingsSection id="language" title={t('settings.language')}>
           <SettingsRow
             label={t('settings.display_language')}
             control={
@@ -234,11 +235,10 @@ export function Settings() {
               />
             }
           />
-        </Card>
+        </SettingsSection>
       )}
 
-      {/* Appearance Section */}
-      <Card id="appearance" title={t('settings.appearance')}>
+      <SettingsSection id="appearance" title={t('settings.appearance')}>
         <SettingsRow
           label={t('settings.theme')}
           controlWidth="wide"
@@ -258,10 +258,9 @@ export function Settings() {
             />
           )}
         />
-      </Card>
+      </SettingsSection>
 
-      {/* Speakers Section */}
-      <Card id="speakers" title={t('settings.speakers')}>
+      <SettingsSection id="speakers" title={t('settings.speakers')}>
         <Switch
           label={t('settings.speaker_monitor')}
           description={t('settings.speaker_monitor_description')}
@@ -314,6 +313,15 @@ export function Settings() {
           disabled={driftToggle.disabled}
         />
 
+        <Switch
+          label={t('settings.diagnostics')}
+          description={t('settings.diagnostics_description')}
+          note={monitorOn === false ? t('settings.diagnostics_needs_monitor') : undefined}
+          checked={showDiagnostics.value && monitorOn !== false}
+          onChange={setShowDiagnostics}
+          disabled={monitorOn !== true}
+        />
+
         <AddressField
           kind="speaker"
           id="settings-speaker-ip"
@@ -333,10 +341,9 @@ export function Settings() {
           onRemove={handleRemoveSpeaker}
           removing={removingIp !== null}
         />
-      </Card>
+      </SettingsSection>
 
-      {/* About Section */}
-      <Card id="about" title={t('settings.about')}>
+      <SettingsSection id="about" title={t('settings.about')}>
         <DescriptionList
           kind="readout"
           rows={[
@@ -353,7 +360,7 @@ export function Settings() {
             },
           ]}
         />
-        <div className={styles.updates}>
+        <Cluster>
           <Button
             kind="link"
             icon="external"
@@ -362,11 +369,9 @@ export function Settings() {
           >
             {t('settings.check_for_updates')}
           </Button>
-          <p id="settings-updates-hint" className={styles.hint}>
-            {t('settings.check_for_updates_description')}
-          </p>
-        </div>
-      </Card>
-    </div>
+        </Cluster>
+        <p id="settings-updates-hint">{t('settings.check_for_updates_description')}</p>
+      </SettingsSection>
+    </>
   );
 }

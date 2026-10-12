@@ -1,6 +1,6 @@
 import type { JSX } from 'preact';
 import { useTranslation } from 'react-i18next';
-import { Card, SetList } from '@thaumic-cast/ui';
+import { SetList, SettingsSection } from '@thaumic-cast/ui';
 import type { RemovedSet } from '../../lib/room-sets';
 import type { SavedSetsResult } from '../hooks/useSavedSets';
 
@@ -14,8 +14,9 @@ interface SetsSectionProps {
 }
 
 /**
- * Settings › Saved sets: the sets saved in the popup, each with Rename and Remove (C-setlist).
- * Remove is at once; the page's Toast offers Undo. Last cast and Everywhere are not listed.
+ * Settings › Saved sets: the sets saved in the popup, each with Rename and Remove (C-setlist),
+ * under a line on where they live and how one is made. Remove is at once; the page's Toast offers
+ * Undo. Last cast and Everywhere are not listed.
  * @param props - Component props
  * @param props.saved - The saved sets and their actions
  * @param props.onRemoved - Called with a removed set
@@ -25,7 +26,7 @@ interface SetsSectionProps {
 export function SetsSection({ saved, onRemoved, onChange }: SetsSectionProps): JSX.Element {
   const { t } = useTranslation();
   return (
-    <Card title={t('sets_section_title')}>
+    <SettingsSection title={t('sets_section_title')} description={t('sets_section_hint')}>
       <SetList
         sets={saved.sets.saved.map((set) => ({
           id: set.id,
@@ -54,6 +55,6 @@ export function SetsSection({ saved, onRemoved, onChange }: SetsSectionProps): J
           emptyBody: t('sets_empty_body'),
         }}
       />
-    </Card>
+    </SettingsSection>
   );
 }

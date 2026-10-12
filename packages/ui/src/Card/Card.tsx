@@ -63,12 +63,7 @@ export function Card({
 }: CardProps): JSX.Element {
   const headingId = useId();
   const className = cx(styles.card, flush && styles.flush);
-  // The body is the settings grid its rows share (F-grid), with or without a heading.
-  const body = (
-    <div class={styles.body} data-settings-grid="card">
-      {children}
-    </div>
-  );
+  const body = <div class={styles.body}>{children}</div>;
   if (!title && labelledBy) {
     return (
       <section id={id} class={className} aria-labelledby={labelledBy}>

@@ -204,7 +204,7 @@ test('a row that needs another setting, or is locked, is aria-disabled', async (
 
 test('no settings label is overlapped or cut off, at any card width', async ({ page }) => {
   const cut = await light(page, 'settings-row')
-    .locator('[data-setrow] > p:first-child')
+    .locator('[data-setrow] > div > p:first-child')
     .evaluateAll((els) =>
       els.filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent),
     );

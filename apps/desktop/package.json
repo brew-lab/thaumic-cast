@@ -32,6 +32,8 @@
     "wouter-preact": "^3.9.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.63.0",
     "@preact/preset-vite": "^2.0.0",
     "@tauri-apps/cli": "^2.10.0",
     "typescript": "^7.0.2",

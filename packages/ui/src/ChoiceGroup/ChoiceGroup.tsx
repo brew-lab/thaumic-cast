@@ -35,8 +35,9 @@ export interface ChoiceGroupProps<T extends string> {
  * A set of mutually exclusive choices, each with a description (DESIGN.md M-choice). It is
  * a `<fieldset>` of Radio options; each option is one control that takes the state layer,
  * carries the ring and takes the bevel on focus and press (nothing scales), and the chosen
- * one stays calm at rest (the dot, no fill, no weight change). Under 25rem the options are one column; from 25rem they flow into
- * `--track-option` columns. The group bleeds by the option's padding, so each radio lines
+ * one stays calm at rest (the dot, no fill, no weight change). Under 25rem the options are
+ * one column; from 25rem they flow into at most two `--track-option` columns, so four read
+ * two by two and never three and an orphan. The group bleeds by the option's padding, so each radio lines
  * up with the text above it. It absorbs OptionGroup; the radio-card frame is retired.
  * @param props - Component props
  * @param props.legend - The group's name

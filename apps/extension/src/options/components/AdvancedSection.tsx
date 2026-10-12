@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { AppType } from '@thaumic-cast/protocol';
-import { Card, SettingsRow, Slider, Switch } from '@thaumic-cast/ui';
+import { SettingsRow, SettingsSection, Slider, Switch } from '@thaumic-cast/ui';
 import type { CompanionCapability } from '../../lib/audio-resolver';
 import { captureToggleState } from '../../lib/capture-capability';
 import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
@@ -21,10 +21,10 @@ interface AdvancedSectionProps {
 const isWindows = isWindowsPlatform();
 
 /**
- * Advanced settings section for experimental features.
- * Includes video sync, keep tab audible and the start level limit. A control that cannot act
- * is disabled and says why: keeping the tab awake under browser-wide capture,
- * and browser-wide capture against a companion that cannot capture.
+ * Settings › Finer points: the start level limit first ("Start no louder than", with its Slider
+ * while it is on), then video sync, keeping the tab awake and browser-wide capture. A control that
+ * cannot act is disabled and says why: keeping the tab awake under browser-wide capture, and
+ * browser-wide capture against a companion that cannot capture.
  * @param props - Component props
  * @param props.settings - Current extension settings
  * @param props.onUpdate - Callback to update settings
@@ -93,28 +93,7 @@ export function AdvancedSection({
   }, [settings.captureMode, onUpdate]);
 
   return (
-    <Card title={t('advanced_section_title')}>
-      <Switch
-        label={t('video_sync_enable')}
-        description={t('video_sync_description')}
-        note={
-          videoSyncNeedsAccess
-            ? `${t('video_sync_next_cast')} ${t('video_sync_needs_access')}`
-            : t('video_sync_next_cast')
-        }
-        checked={settings.videoSyncEnabled}
-        onChange={handleVideoSyncToggle}
-      />
-
-      <Switch
-        label={t('keep_tab_audible_enable')}
-        description={t('keep_tab_audible_description')}
-        note={browserWide ? t('keep_tab_audible_browser_capture_note') : undefined}
-        checked={settings.keepTabAudible}
-        onChange={handleKeepTabAudibleToggle}
-        disabled={browserWide}
-      />
-
+    <SettingsSection title={t('advanced_section_title')}>
       <SettingsRow
         control={
           <Switch
@@ -139,6 +118,27 @@ export function AdvancedSection({
         }
       />
 
+      <Switch
+        label={t('video_sync_enable')}
+        description={t('video_sync_description')}
+        note={
+          videoSyncNeedsAccess
+            ? `${t('video_sync_next_cast')} ${t('video_sync_needs_access')}`
+            : t('video_sync_next_cast')
+        }
+        checked={settings.videoSyncEnabled}
+        onChange={handleVideoSyncToggle}
+      />
+
+      <Switch
+        label={t('keep_tab_audible_enable')}
+        description={t('keep_tab_audible_description')}
+        note={browserWide ? t('keep_tab_audible_browser_capture_note') : undefined}
+        checked={settings.keepTabAudible}
+        onChange={handleKeepTabAudibleToggle}
+        disabled={browserWide}
+      />
+
       {isWindows && captureToggle.visible && (
         <Switch
           label={t('capture_mode_browser_enable')}
@@ -153,6 +153,6 @@ export function AdvancedSection({
           disabled={captureToggle.disabled}
         />
       )}
-    </Card>
+    </SettingsSection>
   );
 }

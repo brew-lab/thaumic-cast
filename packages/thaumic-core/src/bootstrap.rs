@@ -7,10 +7,12 @@
 //! - **Testability**: Easy to swap implementations for testing
 //! - **Maintainability**: Service creation logic is isolated from usage
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
+use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
@@ -123,6 +125,31 @@ impl BootstrappedServices {
         // Then clear all streams and stop playback
         self.stream_coordinator.clear_all().await
     }
+
+    /// "Stop all casts": clears every stream, as [`Self::clear_all_streams`]
+    /// does, and reports how many casts it ended and how many of those were
+    /// started on another machine (counted before the clear, as
+    /// [`WsConnectionManager::remote_peers`] counts them).
+    ///
+    /// `host_ip` is this machine's advertised address, so a browser here
+    /// pointed at the LAN address still counts as local.
+    pub async fn stop_all_casts(&self, host_ip: Option<IpAddr>) -> StopAllOutcome {
+        let remote = self.ws_manager.remote_peers(host_ip).streams;
+        let stopped = self.clear_all_streams().await;
+        StopAllOutcome {
+            stopped,
+            remote: remote.min(stopped),
+        }
+    }
+}
+
+/// What "Stop all casts" ended, for the feedback after it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct StopAllOutcome {
+    /// Casts it ended, on every machine.
+    pub stopped: usize,
+    /// How many of them were started on another machine.
+    pub remote: usize,
 }
 
 /// Creates the shared HTTP client for all Sonos communication.

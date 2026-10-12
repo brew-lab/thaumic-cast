@@ -15,6 +15,8 @@ import './catalogue.css';
 import { render } from 'preact';
 import { applyTheme, type ThemePreference } from '../src/theme';
 import { Catalogue } from './Catalogue';
+import { OptionsPageFrame } from './sections/pages';
+import { DesktopFrame, DialogFrame, WizardFrame } from './sections/desktop';
 
 const requested = new URLSearchParams(location.search).get('theme');
 const initial: ThemePreference = requested === 'light' || requested === 'dark' ? requested : 'auto';
@@ -24,8 +26,21 @@ applyTheme(initial);
 lowerStylesheets();
 addEventListener('load', lowerStylesheets);
 
+// What owns its document or the window (OptionsShell, a modal Dialog, the desktop's shells)
+// is drawn alone, in an iframe of this page.
+const FRAMES = {
+  options: OptionsPageFrame,
+  dialog: DialogFrame,
+  desktop: DesktopFrame,
+  wizard: WizardFrame,
+};
+const frame = new URLSearchParams(location.search).get('frame') as keyof typeof FRAMES | null;
+const Frame = frame ? FRAMES[frame] : undefined;
+
 const root = document.getElementById('app');
-if (root) render(<Catalogue initialTheme={initial} />, root);
+if (root) {
+  render(Frame ? <Frame /> : <Catalogue initialTheme={initial} />, root);
+}
 
 // The page draws some 80 Clacks and live gradients at once, more than any surface ever
 // shows. A section out of view pauses its animations, so the ones in view (a fold, a

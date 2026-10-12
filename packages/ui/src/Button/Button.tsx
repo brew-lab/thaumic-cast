@@ -64,9 +64,12 @@ export interface ButtonProps extends DataAttributes {
   labels?: ActionLabels;
   /** Done and failed return to idle when this changes; there are no timers. */
   resetKey?: unknown;
-  /** The link kind's destination: renders an `<a>`. */
+  /**
+   * A destination: renders an `<a>` drawn as the kind (the link kind, or a tonal "Back to
+   * Speakers"). Pressed by Enter alone, as a link is.
+   */
   href?: string;
-  /** Where the link opens, for the link kind with `href`. */
+  /** Where the link opens, with `href`. */
   target?: '_blank';
   /** Disabled: 38 % ink, a 12 % fill, and the rest shape. */
   disabled?: boolean;
@@ -162,7 +165,7 @@ export function Button({
   const glyph = glyphKey(status, icon);
   const morph = useMorph(status, words, glyph);
   // A link is pressed by Enter alone; a button by Enter and Space.
-  const isLink = kind === 'link' && Boolean(href);
+  const isLink = Boolean(href);
   const press = usePress(isLink ? ['enter'] : undefined);
   const leaving = morph.leaving;
 

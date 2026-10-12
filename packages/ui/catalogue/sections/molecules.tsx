@@ -16,6 +16,7 @@ import { PageHeader } from '../../src/PageHeader';
 import { SegmentedControl } from '../../src/SegmentedControl';
 import { Select } from '../../src/Select';
 import { SettingsRow } from '../../src/SettingsRow';
+import { SettingsSection } from '../../src/SettingsSection';
 import { Slider } from '../../src/Slider';
 import { Switch } from '../../src/Switch';
 import { TextInput } from '../../src/TextInput';
@@ -34,7 +35,7 @@ const never = <T,>(): Promise<T> => new Promise<T>(() => {});
  * @param props.selector - Which button to press
  * @returns The specimen
  */
-function Pressed({
+export function Pressed({
   children,
   selector = 'button',
 }: {
@@ -53,7 +54,7 @@ function Pressed({
  * @param accept - Whether it takes the text
  * @returns The fake clipboard
  */
-const fakeClipboard = (accept: boolean): ClipboardEnv => ({
+export const fakeClipboard = (accept: boolean): ClipboardEnv => ({
   clipboard: {
     write: () => (accept ? Promise.resolve() : Promise.reject(new Error('refused'))),
     writeText: () => (accept ? Promise.resolve() : Promise.reject(new Error('refused'))),
@@ -266,20 +267,20 @@ export function SettingsRowSpecimen(): JSX.Element {
     <div class="stack" data-density="desktop">
       <p class="label">Compact (a card under 25rem)</p>
       <div class="width-compact">
-        <Card title="Audio" level={3}>
+        <SettingsSection title="Audio" headingLevel={3}>
           <SettingsRows />
-        </Card>
+        </SettingsSection>
       </div>
       <p class="label">Medium (25 to 45rem)</p>
       <div class="width-medium">
-        <Card title="Audio" level={3}>
+        <SettingsSection title="Audio" headingLevel={3}>
           <SettingsRows />
-        </Card>
+        </SettingsSection>
       </div>
       <p class="label">Wide (from 45rem)</p>
-      <Card title="Audio" level={3}>
+      <SettingsSection title="Audio" headingLevel={3}>
         <SettingsRows />
-      </Card>
+      </SettingsSection>
     </div>
   );
 }

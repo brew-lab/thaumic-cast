@@ -42,7 +42,8 @@
    * F-grid: in a settings grid the row takes the shared tracks: the words in the label
    * track, the switch at the end of the control track, in line with every other row's
    * control, with the settings grid's column gap. A Switch-only SettingsRow always hands
-   * its tracks on; a Card body shares its tracks from 25rem (under it each row keeps its own).
+   * its tracks on; a SettingsSection shares its tracks from 25rem (under it each row keeps
+   * its own).
    */
   [data-settings-grid='row'] > .row {
     grid-column: 1 / -1;
@@ -51,7 +52,7 @@
   }
 
   @container card (inline-size >= 25rem) {
-    [data-settings-grid='card'] > .row {
+    [data-settings-grid='section'] > .row {
       grid-column: 1 / -1;
       grid-template-columns: subgrid;
       column-gap: var(--space-5);

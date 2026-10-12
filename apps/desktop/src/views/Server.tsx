@@ -1,27 +1,32 @@
-import { useEffect } from 'preact/hooks';
-import { stats, fetchStats, clearAllConnections, restartServer, stopAll } from '../state/store';
+import { useEffect, useState } from 'preact/hooks';
+import {
+  stats,
+  fetchStats,
+  clearAllConnections,
+  restartServer,
+  anythingCasting,
+} from '../state/store';
 import {
   Button,
-  Card,
   CopyField,
   DescriptionList,
+  Dialog,
   PageHeader,
   SettingsRow,
+  SettingsSection,
 } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
-import styles from './Server.module.css';
+import { StopAllDialog } from '../components/StopAllDialog';
 
 /**
- * Server management page.
- *
- * Displays server status, connection info, and provides controls for:
- * - Restarting the server
- * - Disconnecting all clients
- * - Stopping all streams
+ * Server management page (DESIGN.md L-desktop): the address and the counts, then the three
+ * server-wide actions, whose Buttons share one width. Disconnect and Stop ask first in a
+ * Dialog; Stop is disabled while nothing casts, as in the tray.
  * @returns The rendered Server page
  */
 export function Server() {
   const { t } = useTranslation();
+  const [confirm, setConfirm] = useState<'disconnect' | 'stop' | null>(null);
 
   useEffect(() => {
     fetchStats();
@@ -39,11 +44,10 @@ export function Server() {
     stats.value ? `http://${stats.value.localIp}:${stats.value.port}` : '';
 
   return (
-    <div className={styles.server}>
+    <>
       <PageHeader title={t('nav.server')} />
 
-      {/* Status Section */}
-      <Card title={t('server.running')}>
+      <SettingsSection title={t('server.running')}>
         <DescriptionList
           kind="stat"
           rows={[
@@ -75,10 +79,9 @@ export function Server() {
             },
           ]}
         />
-      </Card>
+      </SettingsSection>
 
-      {/* Actions Section */}
-      <Card title={t('server.actions')}>
+      <SettingsSection title={t('server.actions')}>
         <SettingsRow
           label={t('server.restart')}
           help={t('server.restart_description')}
@@ -100,8 +103,7 @@ export function Server() {
           control={
             <Button
               kind="outline"
-              onAction={clearAllConnections}
-              labels={{ busy: t('server.disconnecting') }}
+              onClick={() => setConfirm('disconnect')}
               aria-label={t('server.disconnect_all')}
             >
               {t('server.disconnect')}
@@ -117,14 +119,30 @@ export function Server() {
               kind="filled"
               danger
               icon="stop"
-              onAction={stopAll}
+              disabled={!anythingCasting.value}
+              onClick={() => setConfirm('stop')}
               aria-label={t('server.stop_streams')}
             >
               {t('server.stop')}
             </Button>
           }
         />
-      </Card>
-    </div>
+      </SettingsSection>
+
+      <Dialog
+        open={confirm === 'disconnect'}
+        title={t('server.disconnect_all')}
+        description={t('server.disconnect_description')}
+        cancelLabel={t('cancel')}
+        closeLabel={t('close')}
+        confirm={{
+          label: t('server.disconnect'),
+          busy: t('server.disconnecting'),
+          onAction: clearAllConnections,
+        }}
+        onClose={() => setConfirm(null)}
+      />
+      <StopAllDialog open={confirm === 'stop'} onClose={() => setConfirm(null)} />
+    </>
   );
 }

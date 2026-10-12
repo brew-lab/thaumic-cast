@@ -44,30 +44,4 @@
     gap: var(--card-gap);
     min-inline-size: 0;
   }
-
-  /*
-   * F-grid: settings rows subgrid their card. While the body holds settings rows
-   * ([data-setrow]: SettingsRow, Switch), it is the grid they share: a label track and an
-   * auto control track, so every row's control sits in one column, and from a 45rem card a
-   * help track. Everything else in the body spans the row. Under 25rem each row keeps its
-   * own tracks: one shared column as wide as the widest control would squeeze every label.
-   * SettingsSection (Phase 4) takes this over.
-   */
-  @container card (inline-size >= 25rem) {
-    .body:has(> [data-setrow]) {
-      display: grid;
-      grid-template-columns: minmax(min-content, 1fr) auto;
-      gap: var(--card-gap) var(--space-5);
-    }
-
-    .body:has(> [data-setrow]) > * {
-      grid-column: 1 / -1;
-    }
-  }
-
-  @container card (inline-size >= 45rem) {
-    .body:has(> [data-setrow]) {
-      grid-template-columns: minmax(min-content, 1fr) auto minmax(0, 1fr);
-    }
-  }
 }

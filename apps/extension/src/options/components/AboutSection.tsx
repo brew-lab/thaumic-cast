@@ -1,7 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Button, Card, DescriptionList, type DescriptionRow } from '@thaumic-cast/ui';
+import { Button, DescriptionList, SettingsSection, type DescriptionRow } from '@thaumic-cast/ui';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
 import type { ConnectionStatus } from '../../popup/hooks/useConnectionStatus';
@@ -86,8 +86,8 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
   ];
 
   return (
-    <Card id={ABOUT_ID} title={t('about_section_title')}>
+    <SettingsSection id={ABOUT_ID} title={t('about_section_title')}>
       <DescriptionList kind="readout" rows={rows} />
-    </Card>
+    </SettingsSection>
   );
 }

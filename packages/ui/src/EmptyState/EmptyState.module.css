@@ -111,4 +111,9 @@
       align-items: center;
     }
   }
+
+  /* In a SettingsSection the section pads: no padding of its own (Saved sets, empty). */
+  :where([data-settings-grid='section']) .empty {
+    padding: 0;
+  }
 }

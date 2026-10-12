@@ -1,4 +1,4 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Link } from 'wouter-preact';
 import { Trans, useTranslation } from 'react-i18next';
@@ -7,50 +7,35 @@ import {
   transportStates,
   castingSpeakers,
   castingCasts,
+  castingStreams,
   networkHealth,
   fetchGroups,
   debouncedFetchGroups,
   refreshTopology,
-  stopAll,
-  stats,
+  anythingCasting,
+  showDiagnostics,
+  speakerNoticeReadings,
   updateTransportState,
   updateNetworkHealth,
-  type ZoneGroup,
-  type Speaker,
 } from '../state/store';
 import { type NetworkHealthPayload, type TransportStatePayload } from '../lib/events';
-import { DeviceCard } from '../components/DeviceCard';
+import { reserveMeter, roomCards } from '../lib/rooms';
+import { currentReadings } from '../lib/speaker-notices';
+import { ListenUrl } from '../components/ListenUrl';
 import { SpeakerNotices } from '../components/SpeakerNotices';
-import { Button, Card, Cluster, EmptyState, Notice, PageHeader } from '@thaumic-cast/ui';
+import { StopAllDialog } from '../components/StopAllDialog';
+import { Button, Card, EmptyState, Notice, PageHeader, RoomCard } from '@thaumic-cast/ui';
 import styles from './Speakers.module.css';
 
 /**
- * Extracts the coordinator as a Speaker from a ZoneGroup.
- * @param group - The zone group
- * @returns The coordinator speaker, or undefined if not found
- */
-function getCoordinator(group: ZoneGroup): Speaker | undefined {
-  const member = group.members.find((m) => m.uuid === group.coordinatorUuid);
-  if (!member) return undefined;
-  return {
-    uuid: member.uuid,
-    name: group.name,
-    model: member.model,
-    ip: member.ip,
-  };
-}
-
-/**
- * Speakers page.
- *
- * Displays discovered Sonos devices and provides controls for:
- * - Scanning for new devices
- * - Casting audio to speakers
- * - Stopping all playback
+ * Speakers page (DESIGN.md L-desktop, C-roomcard): one read-only RoomCard per room, casting
+ * rooms first. Ask again asks the network once more; Stop all casts, shown only while
+ * something casts, asks first in a Dialog.
  * @returns The rendered Speakers page
  */
 export function Speakers() {
   const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
@@ -90,22 +75,21 @@ export function Speakers() {
     };
   }, []);
 
-  const groupsWithCoordinators = groups.value
-    .map((group) => ({ group, coordinator: getCoordinator(group) }))
-    .filter((item): item is { group: ZoneGroup; coordinator: Speaker } => item.coordinator != null);
-  const speakerCount = groupsWithCoordinators.length;
-  const streamCount = stats.value?.streamCount ?? 0;
+  const cards = roomCards(groups.value, castingSpeakers.value, transportStates.value);
+  const readings = currentReadings(speakerNoticeReadings.value, castingStreams.value);
 
   return (
-    <div className={styles.speakers}>
+    <>
       <PageHeader
         title={t('nav.speakers')}
         summary={t('speakers.summary', {
-          speakers: t('speakers.summary_speakers', { count: speakerCount }),
-          streams: t('speakers.summary_streaming', { count: streamCount }),
+          rooms: t('speakers.summary_rooms', { count: cards.length }),
+          streams: t('speakers.summary_streaming', {
+            count: cards.filter((c) => c.casting).length,
+          }),
         })}
         actions={
-          <Cluster>
+          <>
             <Button
               size="md"
               icon="refresh"
@@ -114,10 +98,18 @@ export function Speakers() {
             >
               {t('speakers.scan')}
             </Button>
-            <Button size="md" kind="filled" danger icon="stop" onAction={stopAll}>
-              {t('speakers.stop_all')}
-            </Button>
-          </Cluster>
+            {anythingCasting.value && (
+              <Button
+                size="md"
+                kind="filled"
+                danger
+                icon="stop"
+                onClick={() => setConfirming(true)}
+              >
+                {t('speakers.stop_all')}
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -132,7 +124,7 @@ export function Speakers() {
 
       <SpeakerNotices />
 
-      {groupsWithCoordinators.length === 0 ? (
+      {cards.length === 0 ? (
         <Card>
           <EmptyState
             body={`${t('speakers.none')} ${t('speakers.scan_hint')}`}
@@ -146,19 +138,37 @@ export function Speakers() {
         </Card>
       ) : (
         <div className={styles.grid}>
-          {groupsWithCoordinators.map(({ group, coordinator }) => (
-            <DeviceCard
-              key={coordinator.uuid}
-              speaker={coordinator}
-              isCoordinator={true}
-              memberCount={group.members.length}
-              transportState={transportStates.value[group.coordinatorIp]}
-              isCasting={castingSpeakers.value.has(group.coordinatorIp)}
-              cast={castingCasts.value[group.coordinatorIp]}
-            />
-          ))}
+          {cards.map(({ room, model, casting, badge }) => {
+            const cast = castingCasts.value[room.ip];
+            const meter = showDiagnostics.value && casting ? reserveMeter(readings[room.ip]) : null;
+            return (
+              <RoomCard
+                key={room.id}
+                name={room.name}
+                sub={
+                  room.groupedWith.length > 0
+                    ? t('device.grouped_with', { names: room.groupedWith.join(', ') })
+                    : [model, room.ip].filter(Boolean).join(' · ')
+                }
+                badge={badge && { tone: badge.tone, label: t(badge.key) }}
+                copy={cast && <ListenUrl cast={cast} />}
+                meter={
+                  meter && {
+                    name: t('device.reserve'),
+                    label: t('device.reserve_label', { name: room.name }),
+                    value: meter.value,
+                    max: meter.max,
+                    low: meter.low,
+                    valueText: t('device.reserve_ms', { value: meter.value }),
+                  }
+                }
+              />
+            );
+          })}
         </div>
       )}
-    </div>
+
+      <StopAllDialog open={confirming} onClose={() => setConfirming(false)} />
+    </>
   );
 }

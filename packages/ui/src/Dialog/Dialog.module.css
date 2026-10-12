@@ -1,0 +1,89 @@
+@layer components {
+  /*
+   * C-dialog. The native dialog in the top layer (no z-index), on --surface with the one
+   * shadow and the dialog radius, at most --dialog-inline wide and never closer than
+   * --space-5 to the window's edges. It is the `dialog` container: under 25rem of it the
+   * actions stack, the confirm last. The scrim is the ::backdrop; webkit-fallbacks.css sets
+   * --scrim on it for engines whose ::backdrop inherits nothing (before Safari 17.4).
+   */
+  .dialog {
+    --dialog-pad: var(--space-5);
+    --dialog-edge: var(--space-5);
+
+    container: dialog / inline-size;
+    inline-size: calc(100% - 2 * var(--dialog-edge));
+    max-inline-size: var(--dialog-inline);
+    max-block-size: calc(100% - 2 * var(--dialog-edge));
+    margin: auto;
+    padding: var(--dialog-pad);
+    border: 0;
+    border-radius: var(--radius-dialog);
+    background: var(--surface);
+    color: var(--on-surface);
+    box-shadow: var(--shadow-overlay);
+    font-size: var(--text-4);
+    line-height: var(--leading-4);
+    overflow-y: auto;
+  }
+
+  :where([data-density='desktop']) .dialog {
+    font-size: var(--text-4-fixed);
+  }
+
+  .dialog::backdrop {
+    background: var(--scrim);
+  }
+
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  /* The title, and Close at its end. */
+  .head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .title {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    margin: 0;
+    color: var(--title-ink);
+    font-family: var(--font-head);
+    font-size: var(--text-5);
+    font-weight: var(--weight-head);
+    line-height: var(--leading-5);
+    letter-spacing: var(--tracking-5);
+    text-wrap: balance;
+  }
+
+  .head > :last-child {
+    flex: none;
+  }
+
+  .description {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+    text-wrap: pretty;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-block-start: var(--space-2);
+  }
+
+  @container dialog (inline-size < 25rem) {
+    .actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+}

@@ -1,0 +1,37 @@
+@layer components {
+  /*
+   * L-page. The document scrolls; the shell is the `app` container and pads the page
+   * (--space-6 block, --space-5 inline); the column is the `content` container, so fluid
+   * type and space follow the 40rem column, not the tab. The root's scroll padding keeps a
+   * section a link opens clear of the top, and a focused control clear of the bar at the end
+   * (its block size, --overlay-end, which the StickyActionBar publishes, plus --space-3).
+   * The page's end padding sits before the bar, not after it, so at the end of the page the
+   * bar still meets the window's end.
+   */
+  :root:has(.shell) {
+    scroll-padding-block: var(--space-6) calc(var(--overlay-end, 0rem) + var(--space-3));
+  }
+
+  .shell {
+    container: app / inline-size;
+    padding-block: var(--space-6) 0;
+    padding-inline: var(--space-5);
+    color: var(--on-surface);
+    font-size: var(--text-4);
+    line-height: var(--leading-4);
+  }
+
+  .column {
+    container: content / inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    min-inline-size: 0;
+    max-inline-size: var(--page-max);
+    margin-inline: auto;
+  }
+
+  .column > [data-sticky-bar] {
+    margin-block-start: var(--space-6);
+  }
+}

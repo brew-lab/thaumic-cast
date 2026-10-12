@@ -25,15 +25,16 @@ test('every frame is drawn in the range it names', async ({ page }) => {
 test('settings rows end their controls in one column from 25rem', async ({ page }) => {
   // The desktop density's medium frame of the settings card.
   const frame = light(page, 'container-frames')
-    .locator('.stack', { has: page.getByRole('heading', { name: /^SettingsRow on its card/ }) })
+    .locator('.stack', { has: page.getByRole('heading', { name: /^SettingsRow on its section/ }) })
     .last()
     .locator('.frame[data-range="medium"]')
     .nth(1);
   const result = await frame.evaluate((el) => {
-    const body = el.querySelector('[data-settings-grid="card"]');
+    const body = el.querySelector('[data-settings-grid="section"]');
     const ends = [...el.querySelectorAll('[data-setrow][data-width="narrow"]')].map((row) => {
       const control =
-        row.querySelector('button[role="switch"]') ?? row.children[1]?.firstElementChild;
+        row.querySelector('button[role="switch"]') ??
+        row.querySelector(':scope > div > p + div')?.firstElementChild;
       return control ? Math.round(control.getBoundingClientRect().right) : -1;
     });
     return {

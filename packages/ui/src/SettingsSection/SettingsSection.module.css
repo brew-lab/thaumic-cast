@@ -1,0 +1,105 @@
+@layer components {
+  /*
+   * C-section. The heading (and its line), then the items: one settings grid (F-grid). From
+   * a 25rem card the items are a grid of a label track and one auto control track (from 45rem
+   * a help track too); rows subgrid it (SettingsRow, Switch) and everything else spans it.
+   * Under 25rem the items stack and each row keeps its own tracks.
+   *
+   * Rules: each item after the first takes a --line-hair --divider edge at its block start,
+   * with the gap again under it, so the line sits midway (no Divider element, no bookkeeping
+   * of which children render). Gap decorations (row-rule) would say this in one line, but
+   * neither the extension's floor (Chromium 125) nor the desktop's WebKit has them, so the
+   * fallback would be the only path most people get. No rule runs round a Notice, and none
+   * parts a subheading (h3) from what it heads, or help (p) from what it explains: those
+   * sit --space-2 from their neighbour instead.
+   */
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .description {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    text-wrap: pretty;
+  }
+
+  .items {
+    --section-gap: var(--card-gap);
+    --section-tight: var(--space-2);
+    --section-rule: var(--divider);
+    --section-sub: var(--text-3);
+    --section-sub-leading: var(--leading-3);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--section-gap);
+    min-inline-size: 0;
+  }
+
+  :where([data-density='desktop']) .items {
+    --section-sub: var(--text-4-fixed);
+    --section-sub-leading: var(--leading-4);
+  }
+
+  .items > * + * {
+    padding-block-start: var(--section-gap);
+    border-block-start: var(--line-hair) solid var(--section-rule);
+  }
+
+  .items > :is([data-notice], [data-notice] + *, h3 + *, * + p) {
+    padding-block-start: 0;
+    border-block-start: 0;
+  }
+
+  .items > :is(h3 + *, * + p) {
+    margin-block-start: calc(var(--section-tight) - var(--section-gap));
+  }
+
+  /* A subheading ("For the next tab cast") reads as a row's name: the body face in 600. */
+  .items > h3 {
+    margin: 0;
+    color: var(--on-surface);
+    font-family: var(--font-body);
+    font-size: var(--section-sub);
+    font-weight: var(--weight-strong);
+    line-height: var(--section-sub-leading);
+  }
+
+  @supports (text-box: trim-both cap alphabetic) {
+    .items > h3 {
+      text-box: normal;
+    }
+  }
+
+  /* Help for the item before it, as a row's help reads. */
+  .items > p {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    text-wrap: pretty;
+  }
+
+  @container card (inline-size >= 25rem) {
+    .items {
+      display: grid;
+      grid-template-columns: minmax(min-content, 1fr) auto;
+      gap: var(--section-gap) var(--space-5);
+    }
+
+    .items > * {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @container card (inline-size >= 45rem) {
+    .items {
+      grid-template-columns: minmax(min-content, 1fr) auto minmax(0, 1fr);
+    }
+  }
+}

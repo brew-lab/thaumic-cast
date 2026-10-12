@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
+/** The preview's port; CATALOGUE_PORT moves it, so two worktrees can test at once. */
+const port = Number(process.env.CATALOGUE_PORT ?? 4179);
 
 /**
  * The catalogue checks (DESIGN.md §10 row 6): axe in both themes, the behaviour tests, and
@@ -29,7 +31,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4179',
+    baseURL: `http://127.0.0.1:${port}`,
     reducedMotion: 'reduce',
   },
   projects: [
@@ -43,9 +45,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run catalogue:build && bunx vite preview --config catalogue/vite.config.ts',
+    command: `bun run catalogue:build && bunx vite preview --config catalogue/vite.config.ts --port ${port}`,
     cwd: uiRoot,
-    url: 'http://127.0.0.1:4179',
+    url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

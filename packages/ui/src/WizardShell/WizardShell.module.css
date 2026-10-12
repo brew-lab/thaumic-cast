@@ -1,0 +1,30 @@
+@layer components {
+  /*
+   * L-wizard, full. The window (the `app` container, as tall as the window, on --ground);
+   * main is the `content` container and the one scroller; the Wizard sits in a --page-max
+   * column, centred, padded as the DesktopShell's views are.
+   */
+  .shell {
+    container: app / inline-size;
+    display: grid;
+    block-size: 100dvb;
+    background-color: var(--ground);
+    color: var(--on-surface);
+  }
+
+  /* The end scroll padding clears the Wizard's sticky footer: its rule, gap, md row and pad. */
+  .main {
+    container: content / inline-size;
+    min-block-size: 0;
+    overflow-y: auto;
+    scroll-padding-block-end: calc(
+      var(--line-hair) + var(--space-4) + var(--control-md) + var(--space-5) + var(--space-3)
+    );
+  }
+
+  .column {
+    max-inline-size: calc(var(--page-max) + 2 * var(--space-7));
+    margin-inline: auto;
+    padding: var(--space-7);
+  }
+}

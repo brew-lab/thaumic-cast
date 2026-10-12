@@ -13,8 +13,13 @@ export interface EmptyStateProps {
   kind?: 'empty' | 'searching' | 'offline';
   /** A short title, in Geist, above the body. The popup's one-sentence states have none. */
   title?: string;
-  /** What happened and what to do. */
-  body: ComponentChildren;
+  /**
+   * The title's heading level, when the empty state is the page's whole content (Not found's
+   * title is its `h1`). Without it the title is a paragraph.
+   */
+  level?: 1 | 2 | 3;
+  /** What happened and what to do; left out when the title says it all (Not found). */
+  body?: ComponentChildren;
   /** One action, a Button. */
   action?: ComponentChildren;
   /** A line with a link under the action ("added by its IP address"). */
@@ -30,6 +35,7 @@ export interface EmptyStateProps {
  * @param props - Component props
  * @param props.kind - empty, searching or offline
  * @param props.title - A short title
+ * @param props.level - The title's heading level
  * @param props.body - What happened and what to do
  * @param props.action - One action
  * @param props.link - A line with a link
@@ -38,11 +44,13 @@ export interface EmptyStateProps {
 export function EmptyState({
   kind = 'empty',
   title,
+  level,
   body,
   action,
   link,
 }: EmptyStateProps): JSX.Element {
   const searching = kind === 'searching';
+  const Title = level ? (`h${level}` as const) : 'p';
   return (
     <div class={styles.root} aria-busy={searching ? 'true' : undefined}>
       <div class={cx(styles.empty, styles[kind])}>
@@ -50,8 +58,8 @@ export function EmptyState({
           {searching ? <Clacks /> : <Mark />}
         </span>
         <div class={styles.words}>
-          {title && <p class={styles.title}>{title}</p>}
-          <p class={styles.body}>{body}</p>
+          {title && <Title class={styles.title}>{title}</Title>}
+          {body && <p class={styles.body}>{body}</p>}
         </div>
         {(action || link) && (
           <div class={styles.actions}>

@@ -42,6 +42,24 @@ describe('design tokens', () => {
     expect(tokens?.[1]).not.toMatch(/^\s*import\b/m);
   });
 
+  it('should set the scrim on ::backdrop for each theme in the WebKit fallbacks', async () => {
+    // Before Safari 17.4 ::backdrop inherits nothing from :root, so the Dialog's scrim would be
+    // transparent at the desktop's floor without these rules.
+    const files = await renderTokens();
+    const css = Object.entries(files).find(([path]) => path.endsWith('webkit-fallbacks.css'))?.[1];
+    for (const selector of [
+      '::backdrop {',
+      ":root:not([data-theme='light']) ::backdrop {",
+      ":root[data-theme='dark'] ::backdrop {",
+    ]) {
+      const rule = css?.slice(css.indexOf(selector)).split('}')[0] ?? '';
+      expect({ selector, scrim: /--scrim: oklch\(/.test(rule) }).toEqual({
+        selector,
+        scrim: true,
+      });
+    }
+  });
+
   it('should write every drawn hex as oklch() that maps back to the same hex', () => {
     const hexes = tableHexes();
     expect(hexes.length).toBeGreaterThan(90);

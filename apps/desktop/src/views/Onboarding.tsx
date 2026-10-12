@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'preact/hooks';
-import { Wizard } from '@thaumic-cast/ui';
+import { Wizard, WizardShell } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useOnboarding } from '../hooks/useOnboarding';
 import { startNetworkServices } from '../state/store';
@@ -8,7 +8,6 @@ import { FirewallStep } from '../components/onboarding/FirewallStep';
 import { SpeakerStep } from '../components/onboarding/SpeakerStep';
 import { ExtensionStep } from '../components/onboarding/ExtensionStep';
 import { ReadyStep } from '../components/onboarding/ReadyStep';
-import styles from './Onboarding.module.css';
 
 const STEP_KEYS = ['welcome', 'firewall', 'speakers', 'extension', 'ready'] as const;
 
@@ -96,7 +95,7 @@ export function Onboarding(): preact.JSX.Element {
   };
 
   return (
-    <div className={styles.onboarding}>
+    <WizardShell>
       <Wizard
         currentStep={currentStep}
         totalSteps={totalSteps}
@@ -112,6 +111,6 @@ export function Onboarding(): preact.JSX.Element {
       >
         {renderStep()}
       </Wizard>
-    </div>
+    </WizardShell>
   );
 }

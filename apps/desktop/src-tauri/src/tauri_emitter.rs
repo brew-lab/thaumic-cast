@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use tauri::{AppHandle, Emitter};
+use thaumic_core::events::frontend_event;
 use thaumic_core::{
-    EventEmitter, LatencyEvent, NetworkEvent, SonosEvent, StreamEvent, TopologyEvent,
+    BroadcastEvent, EventEmitter, LatencyEvent, NetworkEvent, SonosEvent, StreamEvent,
+    TopologyEvent,
 };
 
 /// Event emitter that forwards events to the Tauri frontend.
@@ -40,8 +42,13 @@ impl TauriEventEmitter {
         *self.app_handle.write() = Some(handle);
     }
 
-    /// Emits an event to the Tauri frontend if the app handle is set.
-    fn emit_to_tauri<T: serde::Serialize + Clone>(&self, event_name: &str, payload: T) {
+    /// Emits the frontend's event for `event`, if it has one and the app
+    /// handle is set. The names and payloads are core's
+    /// [`frontend_event`], shared with the real-app test bridge.
+    fn emit_to_tauri(&self, event: &BroadcastEvent) {
+        let Some((event_name, payload)) = frontend_event(event) else {
+            return;
+        };
         if let Some(handle) = self.app_handle.read().as_ref() {
             if let Err(e) = handle.emit(event_name, payload) {
                 log::warn!(
@@ -62,178 +69,22 @@ impl Default for TauriEventEmitter {
 
 impl EventEmitter for TauriEventEmitter {
     fn emit_stream(&self, event: StreamEvent) {
-        match &event {
-            StreamEvent::Created { stream_id, .. } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct StreamCreatedPayload {
-                    stream_id: String,
-                }
-                self.emit_to_tauri(
-                    "stream-created",
-                    StreamCreatedPayload {
-                        stream_id: stream_id.clone(),
-                    },
-                );
-            }
-            StreamEvent::Ended { stream_id, .. } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct StreamEndedPayload {
-                    stream_id: String,
-                }
-                self.emit_to_tauri(
-                    "stream-ended",
-                    StreamEndedPayload {
-                        stream_id: stream_id.clone(),
-                    },
-                );
-            }
-            StreamEvent::PlaybackStarted {
-                stream_id,
-                speaker_ip,
-                ..
-            } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct PlaybackStartedPayload {
-                    stream_id: String,
-                    speaker_ip: String,
-                }
-                self.emit_to_tauri(
-                    "playback-started",
-                    PlaybackStartedPayload {
-                        stream_id: stream_id.clone(),
-                        speaker_ip: speaker_ip.clone(),
-                    },
-                );
-            }
-            StreamEvent::PlaybackStopped {
-                stream_id,
-                speaker_ip,
-                reason,
-                ..
-            } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct PlaybackStoppedPayload {
-                    stream_id: String,
-                    speaker_ip: String,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    reason: Option<thaumic_core::SpeakerRemovalReason>,
-                }
-                self.emit_to_tauri(
-                    "playback-stopped",
-                    PlaybackStoppedPayload {
-                        stream_id: stream_id.clone(),
-                        speaker_ip: speaker_ip.clone(),
-                        reason: *reason,
-                    },
-                );
-            }
-            StreamEvent::PlaybackStopFailed {
-                stream_id,
-                speaker_ip,
-                error,
-                reason,
-                ..
-            } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct PlaybackStopFailedPayload {
-                    stream_id: String,
-                    speaker_ip: String,
-                    error: String,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    reason: Option<thaumic_core::SpeakerRemovalReason>,
-                }
-                self.emit_to_tauri(
-                    "playback-stop-failed",
-                    PlaybackStopFailedPayload {
-                        stream_id: stream_id.clone(),
-                        speaker_ip: speaker_ip.clone(),
-                        error: error.clone(),
-                        reason: *reason,
-                    },
-                );
-            }
-            // Late audio from a browser is the casting extension's to show,
-            // and the frontend knows its own settings.
-            StreamEvent::IngestGaps { .. } | StreamEvent::CompanionAudioChanged { .. } => {}
-        }
+        self.emit_to_tauri(&BroadcastEvent::Stream(event));
     }
 
     fn emit_sonos(&self, event: SonosEvent) {
-        // Emit transport state changes to Tauri frontend for UI reactivity
-        if let SonosEvent::TransportState {
-            speaker_ip, state, ..
-        } = &event
-        {
-            #[derive(serde::Serialize, Clone)]
-            #[serde(rename_all = "camelCase")]
-            struct TransportStatePayload {
-                speaker_ip: String,
-                state: String,
-            }
-            self.emit_to_tauri(
-                "transport-state-changed",
-                TransportStatePayload {
-                    speaker_ip: speaker_ip.clone(),
-                    state: state.to_string(),
-                },
-            );
-        }
+        self.emit_to_tauri(&BroadcastEvent::Sonos(event));
     }
 
     fn emit_network(&self, event: NetworkEvent) {
-        match &event {
-            NetworkEvent::HealthChanged { health, reason, .. } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct NetworkHealthPayload {
-                    health: String,
-                    reason: Option<String>,
-                }
-                self.emit_to_tauri(
-                    "network-health-changed",
-                    NetworkHealthPayload {
-                        health: format!("{:?}", health).to_lowercase(),
-                        reason: reason.clone(),
-                    },
-                );
-            }
-            NetworkEvent::SpeakerHealth { .. } => {
-                // Relayed as the wire event itself (camelCase fields and its
-                // `type` tag): the frontend reads it as the extension does,
-                // and a field added to the event needs no change here.
-                self.emit_to_tauri("speaker-health", &event);
-            }
-        }
+        self.emit_to_tauri(&BroadcastEvent::Network(event));
     }
 
     fn emit_topology(&self, event: TopologyEvent) {
-        match &event {
-            TopologyEvent::GroupsDiscovered { groups, .. } => {
-                #[derive(serde::Serialize, Clone)]
-                #[serde(rename_all = "camelCase")]
-                struct DiscoveryCompletePayload {
-                    group_count: usize,
-                }
-                self.emit_to_tauri(
-                    "discovery-complete",
-                    DiscoveryCompletePayload {
-                        group_count: groups.len(),
-                    },
-                );
-            }
-            // Household changes are for the log and the extension; the
-            // desktop frontend shows nothing for them.
-            TopologyEvent::MemberChanged { .. } => {}
-        }
+        self.emit_to_tauri(&BroadcastEvent::Topology(event));
     }
 
-    fn emit_latency(&self, _event: LatencyEvent) {
-        // Latency events are not forwarded to the Tauri frontend
-        // They're only sent to the extension via WebSocket
+    fn emit_latency(&self, event: LatencyEvent) {
+        self.emit_to_tauri(&BroadcastEvent::Latency(event));
     }
 }

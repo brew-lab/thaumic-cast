@@ -58,6 +58,12 @@ export interface SpeakerNoticeReading {
   streamId: string;
   /** The notice, absent when there is nothing to tell the user. */
   notice?: SpeakerNotice;
+  /** The reserve, in ms, for the diagnostics Meter. */
+  reserveMs?: number;
+  /** The level under which the reserve counts as low, in ms. */
+  floorMs?: number;
+  /** The reserve the speaker settled at on this connection, in ms. */
+  targetMs?: number;
 }
 
 /** Speaker IP → the stream it is playing now, from the playback sessions. */
