@@ -3,7 +3,7 @@
  * Button states specimen (sections/button-states.tsx). Under automation the demo does not
  * loop: a press starts an action, and "Next step" settles it or returns a result to idle.
  *
- * The motion tests turn reduced motion off and slow --dur-change four times, then log every
+ * The motion tests turn reduced motion off and slow --dur-change eight times, then log every
  * animation frame in the page while one change runs: which words show and how much, the
  * Button's box and its neighbour's.
  */
@@ -31,8 +31,11 @@ interface Blocks {
   worst: number[];
 }
 
-/** The slowed --dur-change, in ms. */
-const D = 4 * 268;
+/**
+ * The slowed --dur-change, in ms: eight times, so a loaded runner's headless WebKit (some
+ * six frames a second) still logs more than ten frames of every change.
+ */
+const D = 8 * 268;
 
 /**
  * A Button in the light panel of the specimen.
@@ -242,6 +245,8 @@ test.describe('with motion', () => {
   test('a change never changes the block size of a Button, its parent or its row', async ({
     page,
   }) => {
+    // Six changes, each waited out at the slowed --dur-change.
+    test.slow();
     const hosts = page.locator('#button-states [data-scheme="light"] .states-host > button');
     // Every kind in both sizes and densities, with and without a glyph, plus every context.
     expect(
