@@ -1,5 +1,275 @@
 # @thaumic-cast/ui
 
+## 4.0.0
+
+### Minor Changes
+
+- [#235](https://github.com/brew-lab/thaumic-cast/pull/235) [`aa16e97`](https://github.com/brew-lab/thaumic-cast/commit/aa16e9734156a630366037fd69dcb5f5ebc857dd) Thanks [@skezo](https://github.com/skezo)! - feat(ui): build the extension and the desktop app from the design system's atoms
+
+  The design system's 23 basic parts (buttons, icon buttons, text fields, switches, checkboxes, radio buttons, the
+  theme picker, dropdowns, sliders, status badges and dots, the busy indicator, artwork, tooltips, chips, headings,
+  navigation items, the brand mark, the step dots and the reserve meter) are built, each drawn in every state in light
+  and dark on the catalogue page and checked for accessibility. The extension's popup and settings page and the
+  desktop app now use them, so both apps take the new look: the purple palette, Geist headings, the bevelled shape on
+  hover and focus, a clearer focus ring, and Stop shown as a square with the word "Stop" rather than a cross. The
+  theme in Settings is now a three-way switch (Auto, Light, Dark), the on/off settings are switches, and the desktop's
+  sidebar narrows below a smaller window width. Results such as "Copied" are read out by screen readers once, from one
+  place per screen. Nothing changes in how casting works.
+
+- [#234](https://github.com/brew-lab/thaumic-cast/pull/234) [`07d890b`](https://github.com/brew-lab/thaumic-cast/commit/07d890b7001e8f773f76865573c6c2a018af0b23) Thanks [@skezo](https://github.com/skezo)! - feat(ui): lay the design system's foundations
+
+  The shared UI package now carries the foundations of the design system, written up in `packages/ui/DESIGN.md`. The
+  design tokens (colours, type, space, shape, motion and sizes, in light and dark) are generated from one table, so they
+  match the drawings exactly and cannot drift; a test fails if the generated files go stale. The desktop gets a copy of
+  the colour tokens for the older WebKit on macOS 13. Geist, the heading face, is bundled as one self-hosted file with
+  its licence, so no build fetches a font from the web. Three small building blocks arrive: a row layout, an icon that
+  draws only the 33 glyphs the design uses, and one announcer per screen that tells screen readers about results without
+  repeating itself or speaking when the screen opens. A catalogue page shows all of it in light and dark and is checked
+  for accessibility in CI, and `bun run lint:ds` reports where the apps still differ from the design system. Nothing in
+  the extension or the desktop app looks different yet.
+
+- [#237](https://github.com/brew-lab/thaumic-cast/pull/237) [`be8288c`](https://github.com/brew-lab/thaumic-cast/commit/be8288c8a819b6169e8451dd157aa2c959d1ab9e) Thanks [@skezo](https://github.com/skezo)! - feat(ui): build the settings pages and the notices from the design system's molecules
+
+  The design system's shared molecules are built and drawn on the catalogue page in every state, in light and
+  dark: fields, settings rows, choice groups, copy and address fields, readouts, folds, empty states, notices,
+  toasts, page titles, wizard steps and cards. The extension's settings page and the desktop app's Speakers,
+  Server and Settings views now use them: settings sit in rows with their help beside or under them, choices
+  flow into columns, and every page has one large title. The server address and speaker address tests are one
+  control that only shows busy on its button, says "Try again" when nothing answers, and now says straight away
+  when a server address cannot be right. Copy buttons say "Copied" for a moment after a copy, and
+  the Server page's copy button has a name at last. Every warning keeps its place but is read out by screen
+  readers once, from one place per screen, instead of interrupting. Nothing changes in how casting works.
+
+  Controls are now compact by default: buttons, fields and dropdowns are 32 px tall everywhere, and only the action a
+  screen exists for (Stop all casts and Ask again, the setup steps, Cast) stays large. On the desktop app and under touch
+  every control still answers a press across 44 px, so nothing got harder to hit on a touchscreen. Addresses you copy
+  are shown as plain text with a small Copy button beside them, the theme switch is the same height as everything
+  else, and the popup's Mute and Remove buttons are a little larger.
+
+- [#242](https://github.com/brew-lab/thaumic-cast/pull/242) [`8b5579f`](https://github.com/brew-lab/thaumic-cast/commit/8b5579f77bde5164366a21eb6ee31eecee0b00f5) Thanks [@skezo](https://github.com/skezo)! - feat(desktop): rebuild the window and confirm Stop all casts
+
+  The Speakers page shows one card per room, with the rooms that are casting first. A grouped room
+  says which rooms it is grouped with, and says Casting, not "In use", when the Sonos app groups it
+  with a room that is casting. A speaker's name is never squeezed beside its status. "Stop all casts"
+  only shows while something is casting, and now asks first. Afterwards a message says how many casts
+  stopped, and how many of them were started on another computer. On the Server page the three action
+  buttons are one width, Stop is greyed out while nothing casts, and "Disconnect" asks first too. In
+  the tray, "Stop all casts" is greyed out while nothing casts.
+
+  Settings gains "Show diagnostics", which puts each casting speaker's reserve on its card (it needs
+  speaker monitoring). Setup counts rooms rather than speakers, and lists each room with its group.
+  Its Carry on button stays in view on a step taller than the window. A page that does not exist now
+  says so with a way back to Speakers. The window opens a little taller.
+
+- [#242](https://github.com/brew-lab/thaumic-cast/pull/242) [`8b5579f`](https://github.com/brew-lab/thaumic-cast/commit/8b5579f77bde5164366a21eb6ee31eecee0b00f5) Thanks [@skezo](https://github.com/skezo)! - feat(extension): tidy the settings page
+
+  Every setting on the settings page now lines up: in each section the switches and lists end on one
+  edge, including Theme, and a thin line divides one setting from the next. The four Quality choices
+  read two by two, from Economical to Luxurious, "Finer points" comes before "Saved sets", and "Start
+  no louder than" comes first in it. Saved sets says where sets are kept and how to make one.
+
+  When the settings cannot be saved or loaded, the page now says so at the top instead of failing
+  silently. While the settings load, the page says so with the moving dots. The "removed" message with
+  Undo keeps clear of whatever has focus.
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(ui): build the popup's components from the design system
+
+  The design system's popup parts are built and drawn on the catalogue page in every state, in light and dark: the
+  room rows (choosing a room, a room in a running cast, and a read-only list), and the start level, which shows the
+  level a room will start at, "…" while it is not known and "Fixed" for a fixed output, and opens a slider to set it
+  by hand for this cast only. Nothing is sent to a speaker before Cast. The extension's popup moves onto them in a
+  later change, so nothing changes on screen yet.
+
+  The media head shows what a tab or the whole browser is playing, with the live dot while sound goes out. On an open
+  cast it sits on a band tinted from the artwork, worked out per theme from the artwork's hue, with a purple-grey band
+  for grey artwork; on a red band, Stop moves off it.
+
+  A cast's volume is one line for one room, and from two rooms a master that shows the rooms' average, then a fold
+  listing each room's level, with the rooms and "Add a room" inside it. The last room has no Remove button, since Stop
+  ends the cast. "Sync video" is one switch with its state beside the name, and the fine-tune slider sits in a fold.
+
+  The popup's header shows the mark, lit while casting, and who it is talking to, and never a count; a change of status
+  is read out once. The cast button counts rooms ("Cast to 3 rooms"), keeps one line under it for what else will
+  happen, shows a failure as a line above it, and has an add mode with Cancel and "Add 2 rooms". Everything wrong with a
+  cast sits at that cast: the first problem in full, the rest as one line each, and one line on a folded cast.
+
+  The room picker lists sets first (Last cast, saved sets, and Everywhere from three rooms), then the rooms. From eight
+  rooms they fold: shut, it shows only the chosen rooms; open, a search filters them without ever unticking one, and
+  says how many chosen rooms it hides. Chosen rooms can be saved as a set on this device. While nothing is connected
+  the picker is disabled and says why.
+
+  This tab's card shows what it plays over the room picker. A running cast is a tile that folds: compact, it shows
+  what plays, Stop, one volume line and one problem line; open, the artwork band with the playback controls and "Go to
+  tab", then the volume, the problems, notes and "Sync video". A single cast is always open. Stop never says "Stopping…"
+  and offers no Undo.
+
+  The popup's frame is one scrolling page with the action bar stuck to its end. The bar holds the toast and the cast
+  button, measures itself, and the page keeps that much room at its end, so a control you tab to is never hidden under
+  the bar. Its top line shows only while there is more page under it, in browsers that can tell.
+
+  The popup's frame is the container of anything positioned inside it, so a visually hidden label no longer makes the
+  document scroll as well as the frame, and the room picker's fold spans its card, so a room's start level is no longer
+  cut off at the fold's edge.
+
+  The old speaker selector and speaker volume row are gone, now that the popup is built from these parts.
+
+  When the focused control goes away, the popup moves focus to the next one; the set form opens on its name field and
+  focuses it again when the name is missing. Without the cast button the popup keeps its padding at the end, and the
+  button's band reaches the window's edge. "Add a room" scrolls its list into view above the add mode's buttons. A cast
+  tile opens and shuts at once with its head row and Stop in one place, and turns its chevron like every other fold. A
+  chosen room whose level is not known shows "…" on a button that opens the slider at the limit. A joining room keeps
+  its columns, greyed. A set's room count sits at the row's end in quieter text, notice lines line up with their first
+  line, and WebKit no longer shows a second clear button in the search.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show an update as a mark on Settings
+
+  When a newer desktop app or server is out, the popup no longer adds a row under the Cast button, which on a long
+  popup sat below the fold. Instead the Settings button at the top carries a small dot and is named "Settings, update
+  available", with that name shown when you point at it or focus it. Pressing it opens Settings at About, where the
+  update's link is. Nothing in the popup moves when the mark appears. The popup's frame has no end row any more.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(ui): mark an IconButton
+
+  An icon button can now carry a mark: a small dot in the theme's primary colour at its top corner, ringed so it
+  reads on the button and on the page, in light and dark. It says something waits behind the button, such as
+  Settings while an update exists, and the button's name says it too. The dot sits outside the shape that focus and
+  a press draw, so neither cuts it off, and nothing moves when it appears. The catalogue draws it in every state.
+
+### Patch Changes
+
+- [#233](https://github.com/brew-lab/thaumic-cast/pull/233) [`6bb6bd8`](https://github.com/brew-lab/thaumic-cast/commit/6bb6bd8c4d2f57701edf82c7a37eca6ed8b5d9dd) Thanks [@skezo](https://github.com/skezo)! - feat(core): start every cast at a safe volume
+
+  A cast used to start at whatever level the room was left at, so after a party it could start at 80 or more. Now a cast starts no louder than 30. A room that is louder is turned down to 30 just before the cast plays; a quieter room is left where it is, so Thaumic Cast never turns a room up to start. In a Sonos group each room is set on its own, so a quiet room stays quiet. If a room's level cannot be read, it starts at 30. The limit is in Settings, under "Start no louder than", where it can be changed or turned off.
+
+  Before you cast, the volume slider for each speaker no longer changes the speaker straight away, so you can no longer turn up someone else's music by accident. It now sets the level the cast will start at, and shows the room's level now beside it, for example "Now 72; starts at 30". A level you set here is used for this cast only, and can be above the limit.
+
+  A speaker shows "…" until it has reported its level, instead of a made-up 50. A speaker with a fixed line-level output, such as a Port, shows "Fixed" instead of a slider, and its volume is never changed.
+
+  The start level is set by the desktop app or server, so both behave the same. An older desktop app or server ignores it and starts casts at the room's level, as before.
+
+- [#238](https://github.com/brew-lab/thaumic-cast/pull/238) [`08418b9`](https://github.com/brew-lab/thaumic-cast/commit/08418b9126a375f446369a34f2dfc2a4faa1bede) Thanks [@skezo](https://github.com/skezo)! - fix(ui): make the design system hold up on every browser the apps support
+
+  On the desktop app's older WebKit (macOS 13 and Linux), cards keep their edge, fields and lists keep their
+  fill, headings and warning glyphs keep their colour, and "Casting now" no longer disappears. The desktop app
+  now needs macOS 13 or later with its Safari updates, and the extension Chrome 125 or later; both are written
+  into the builds.
+
+  Settings line up: every setting's control ends in one column and its help starts at one edge, and the note
+  under a switch keeps clear of it. Pages no longer shift sideways when a scrollbar appears on Windows, and the
+  page titles and spacing follow the width of the column rather than the window. Notices and toasts arrive with a
+  short fade instead of jumping in, folds open and shut smoothly where the browser can, and a speaker's address
+  field grows with the address. Pressing a button on the desktop app no longer changes its corner where the
+  browser cannot draw the full shape, numbers that update keep their place, and the popup's setup screens are as
+  tall as their content. Nothing changes in how casting works.
+
+  A review pass on top: a pressed or open dropdown keeps showing its value, the theme switch no longer
+  covers its label in a narrow settings card, and on/off settings read like every other setting, with
+  their help in the same place and size. A paused speaker on the desktop reads "Paused", never the raw
+  state, and the badge sits beside the speaker's name. Numbers on the Server page line up with the text
+  beside them, a toast's message is never cut short, Undo can show that it is working or that it failed,
+  pressing Esc to hide a tooltip no longer dismisses a toast, controls inside a disabled group look
+  disabled, a click anywhere in a text field's box puts the cursor in it, and the popup's room list no
+  longer scrolls inside itself. "Start no louder than" shows its level.
+
+  After the owner's review: status colours are one set throughout, so every red, amber and green
+  matches its swatch, and "Stop all casts" uses the same red as the rest. Buttons keep their shape
+  when pressed, "Stop" and "Stop all casts" respond to hover, focus and press like every other
+  button, and a button that shows "Working…", "Done" or "Try again" fades between them without
+  changing size. Ticking a checkbox is one smooth movement, the Appearance switch fades between
+  choices, and the dropdown's options take the shape instead of its box. Folds open and shut
+  smoothly and the fold's heading stays still when pressed. The speaker reserve reading on the
+  desktop is a name and a value over a full-width bar, status dots line up with their words, the
+  busy badge is evenly spaced, the radio dot is centred, and the logo sits level with the name in
+  the desktop sidebar.
+
+  A last motion pass: a button's old words leave before its new ones arrive, so they never overlap,
+  and a button with an icon keeps its words centred. A button that is working keeps its shape under
+  the pointer. The Appearance switch's words change colour ahead of their fill, a switch no longer
+  stretches when pressed if reduced motion is on, and on macOS and Linux a fold's content fades in
+  with its arrow. A fold's heading now shows its hover and press layer.
+
+  The shape follows the press: buttons, switches, checkboxes and the other controls only change
+  colour when the pointer passes over them, and take their angled shape when focused from the
+  keyboard or pressed. A quick click, a tap, Enter or Space plays the whole change and back, even
+  on a button that starts working from that click, and nothing shrinks when pressed. With reduced
+  motion on, the shape changes at once. A list opened with the mouse no longer outlines its chosen
+  option.
+
+  The Copy button beside an address or a cast's URL changes to "Copied" and back in one smooth
+  movement, without a jump at either end, and is no longer a little too narrow for its words. On
+  Windows, the dropdown's open list no longer leaves an empty strip down its edge.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): rename and remove saved sets in Settings, and tidy the popup
+
+  Settings has a "Saved sets" section: each set you saved in the popup, with its room count, Rename
+  and Remove. Remove takes the set out at once, and Undo puts it back where it was. With no sets, the
+  section says where they come from.
+
+  The setup screens use the popup's own spacing and no longer change the popup's height from one step
+  to the next. A room row in the popup takes the angled shape when pressed or focused, like every other
+  control. A cast with every room in it no longer offers "Add a room", and the cast of the tab you are
+  on no longer offers "Go to tab". The open cast's artwork colour reaches the card's edges, and no
+  empty line sits under the Cast button.
+
+  A long set name wraps in its row instead of widening the popup, and Escape cancels a rename. The
+  Cast button no longer moves when a line appears under it. A popup that takes a room from another
+  cast no longer tells you that room left the other cast.
+
+- [#241](https://github.com/brew-lab/thaumic-cast/pull/241) [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732) Thanks [@skezo](https://github.com/skezo)! - feat(extension): cast chosen rooms as one Sonos group
+
+  With a desktop app or server that can regroup, a cast now plays exactly the rooms you chose, as one Sonos group,
+  and nothing else. A chosen room in a Sonos group with rooms you did not choose leaves that group until you stop,
+  and the companion puts it back afterwards. The line under the Cast button says so once: "Kitchen leaves its Sonos
+  group until you stop." When a chosen room leads a group that is playing, the rooms it leaves behind carry on with
+  their music from the top, and the line says that too: "Music in Patio starts again from the top." The line then
+  leaves out "Whatever the speaker is playing will stop.", which beside it would read as if Patio stopped. A cast's
+  volume
+  moves every room in its group together, and Undo after Remove puts a room back at its own level. A room that did not
+  start shows "did not join" on its row, with Try again. Resuming from the tab names the cast's rooms again, so a room
+  someone moved elsewhere is left where it is. A room of the cast is named by its room in notes and in the toolbar
+  badge's tooltip.
+
+  An older companion cannot regroup, so a cast to it still goes to the chosen rooms' whole Sonos groups, and the line
+  still says which other rooms play too. The extension learns which it is talking to from the companion's `/health`,
+  read again before every cast.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`c219d46`](https://github.com/brew-lab/thaumic-cast/commit/c219d4693303063d6934d3cec8d28d20b980b97e) Thanks [@skezo](https://github.com/skezo)! - feat(extension): show speaker notices instead of buffer advice
+
+  The popup warned when the path to a speaker was unstable and told the user to raise the network buffer, which cannot
+  help: that buffer only evens out how audio reaches the desktop app or server, not how it reaches the speaker. The
+  link-quality warning is gone. The popup now shows the notice the companion decided on for each speaker it is casting
+  to, worded for where the fix lives: a Wi-Fi stall that outlasted the speaker head start (or nearly did) says how much
+  audio it held back and which head start would have covered it, then where to change it: the desktop app's Settings >
+  Speakers, `pcm_connect_burst_ms` in the server's config, or the environment variable that fixes it; a stall no head
+  start covers suggests moving the speaker or using Ethernet; a speaker running low or being drained by its clock says
+  so, with restart advice only when a restart would refill it. A dismissed notice stays dismissed while the companion
+  repeats it and returns only as a new episode or an escalation, and dismissed head-start advice for a speaker is
+  remembered for 24 hours, so the next cast does not repeat it unless the advice goes higher. Separately, when audio
+  from the browser reached the companion late often enough to give every speaker a gap, the popup says so and suggests
+  the smoothing step that would cover it, with a shortcut to the audio settings, unless the capture-health warning
+  already explains it. The extension keeps the companion's speaker head start and speaker monitor settings current for
+  this wording. The protocol drops the retired link-quality event and the time to empty, and the shared Alert takes a
+  translated label for its dismiss button.
+
+- [#186](https://github.com/brew-lab/thaumic-cast/pull/186) [`a8b9c7e`](https://github.com/brew-lab/thaumic-cast/commit/a8b9c7eb726234e71a5f58888d05e0fd051b106d) Thanks [@skezo](https://github.com/skezo)! - fix(ui): restore button group spacing and let the theme change without a reload
+
+  Two faults, both a class name that never resolved. The button group built its spacing and alignment class names from
+  its props, but the build exports only camel-case keys while the stylesheet uses hyphenated names, so those lookups
+  found nothing and were dropped, leaving every wizard screen without spacing or alignment. The sidebar brand icon had
+  the same fault. Separately, the page wrote an inline colour scheme before painting, which outranks the stylesheet that
+  maps the theme attribute, so once written it never changed and choosing a theme had no visible effect until a reload.
+  The attribute alone is enough, because the style block on the same page already maps it.
+
+  Closes [#110](https://github.com/brew-lab/thaumic-cast/issues/110)
+  Closes [#114](https://github.com/brew-lab/thaumic-cast/issues/114)
+
+- [#239](https://github.com/brew-lab/thaumic-cast/pull/239) [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce) Thanks [@skezo](https://github.com/skezo)! - feat(ui): export the tokens on their own
+
+  The script tokens can now be imported as `@thaumic-cast/ui/tokens`, without the components, Preact or any CSS, so the extension's background can read the toolbar badge's colours from the design system. A test keeps the generated `tokens.ts` free of imports.
+
+- Updated dependencies [[`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`44b237d`](https://github.com/brew-lab/thaumic-cast/commit/44b237db820faf85e1bf5eaea043888888e64386), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`6bb6bd8`](https://github.com/brew-lab/thaumic-cast/commit/6bb6bd8c4d2f57701edf82c7a37eca6ed8b5d9dd), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`644a955`](https://github.com/brew-lab/thaumic-cast/commit/644a955100483f155176286cf74fa0bb2627a400), [`dd1bf05`](https://github.com/brew-lab/thaumic-cast/commit/dd1bf057cdffa6806ee3bad2fc55a4e5c3843564), [`0a7c6b6`](https://github.com/brew-lab/thaumic-cast/commit/0a7c6b67299c159410efc4eaa8d27a1c922d653e), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`a079ad9`](https://github.com/brew-lab/thaumic-cast/commit/a079ad9f678a2ad25553e0d0b6c3c90e427989da), [`f833ba4`](https://github.com/brew-lab/thaumic-cast/commit/f833ba45fb46cddcc4802af40fc3977b907a50fa), [`b36848b`](https://github.com/brew-lab/thaumic-cast/commit/b36848b0eeaa0d4b0c9f902debd9e55b9143a4e7), [`d859dd1`](https://github.com/brew-lab/thaumic-cast/commit/d859dd162638a89695000a88d444021b2fe26732), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`ca7f19d`](https://github.com/brew-lab/thaumic-cast/commit/ca7f19dfa1385c2a4bd7cb1d18074a8d9f5215ad), [`d8efc83`](https://github.com/brew-lab/thaumic-cast/commit/d8efc833ce9a7dab677cea30d9e490fbe72c25f6), [`67f86db`](https://github.com/brew-lab/thaumic-cast/commit/67f86db9a81fc1c9ed6850af9a3c91a66c0d350d), [`c219d46`](https://github.com/brew-lab/thaumic-cast/commit/c219d4693303063d6934d3cec8d28d20b980b97e), [`09d86b0`](https://github.com/brew-lab/thaumic-cast/commit/09d86b033f9b2db0408d7066839a25a9a158db1d), [`6ed39cd`](https://github.com/brew-lab/thaumic-cast/commit/6ed39cd3c0ae72678b56fa1a2f72ee650d650674), [`2c6fcaf`](https://github.com/brew-lab/thaumic-cast/commit/2c6fcaf8b317333dbcc09261be9f2fd077b8a6ce), [`602c9ee`](https://github.com/brew-lab/thaumic-cast/commit/602c9ee2ff71b41f4added085bda4a48c1d1154c), [`0a1e5cf`](https://github.com/brew-lab/thaumic-cast/commit/0a1e5cf39cfdf535d7030182a32b121660c3bbba)]:
+  - @thaumic-cast/protocol@0.6.0
+
 ## 3.0.0
 
 ### Minor Changes
