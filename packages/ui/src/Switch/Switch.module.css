@@ -79,7 +79,7 @@
   .track::after {
     content: '';
     position: absolute;
-    inset: calc(min(0rem, (var(--switch-h) - var(--target-min)) / 2));
+    inset: calc(min(0rem, (var(--switch-h) - var(--hit-min)) / 2));
   }
 
   .thumb {

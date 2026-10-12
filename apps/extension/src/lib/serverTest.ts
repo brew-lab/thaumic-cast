@@ -113,3 +113,47 @@ export async function connectToServer(url: string): Promise<ServerTestResult> {
 
   return result;
 }
+
+/**
+ * Whether an address could be a companion's at all: an http or https URL. Anything else is
+ * invalid before any request is made (DESIGN.md P-forms).
+ *
+ * @param value - The typed address
+ * @returns True if it parses as an http or https URL
+ */
+export function isServerUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** What the AddressField shows and says for a connection attempt (DESIGN.md M-address). */
+export type ServerAddressResult =
+  | { ok: true; message: string; detail?: string; said: string }
+  | { ok: false; error: string };
+
+/**
+ * Words a connection attempt for the AddressField: the result line and what the Announcer
+ * says on success, or the answer on failure.
+ *
+ * @param result - The connection test result
+ * @param t - The translation function
+ * @returns The AddressField result
+ */
+export function serverAddressResult(
+  result: ServerTestResult,
+  t: (key: string, params?: Record<string, unknown>) => string,
+): ServerAddressResult {
+  if (!result.success) {
+    return { ok: false, error: t(getServerTestErrorKey(result) ?? 'server_test_failed') };
+  }
+  const message = t('server_test_success');
+  const detail =
+    result.latency === undefined
+      ? undefined
+      : t('server_status_latency', { latency: result.latency });
+  return { ok: true, message, detail, said: detail ? `${message}, ${detail}` : message };
+}

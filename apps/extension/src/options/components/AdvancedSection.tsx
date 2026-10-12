@@ -2,13 +2,12 @@ import type { JSX } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { AppType } from '@thaumic-cast/protocol';
-import { Card, Select, Switch } from '@thaumic-cast/ui';
+import { Card, Select, SettingsRow, Switch } from '@thaumic-cast/ui';
 import type { CompanionCapability } from '../../lib/audio-resolver';
 import { captureToggleState } from '../../lib/capture-capability';
 import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
 import { startCeilingChoices } from '../../lib/start-level';
 import { hasVideoSyncHostAccess, requestVideoSyncHostAccess } from '../../lib/video-sync-access';
-import styles from '../Options.module.css';
 
 interface AdvancedSectionProps {
   settings: ExtensionSettings;
@@ -97,32 +96,35 @@ export function AdvancedSection({
 
   return (
     <Card title={t('advanced_section_title')}>
-      <div className={styles.cardContent}>
-        <Switch
-          label={t('video_sync_enable')}
-          description={t('video_sync_description')}
-          note={
-            videoSyncNeedsAccess
-              ? `${t('video_sync_next_cast')} ${t('video_sync_needs_access')}`
-              : t('video_sync_next_cast')
-          }
-          checked={settings.videoSyncEnabled}
-          onChange={handleVideoSyncToggle}
-        />
+      <Switch
+        label={t('video_sync_enable')}
+        description={t('video_sync_description')}
+        note={
+          videoSyncNeedsAccess
+            ? `${t('video_sync_next_cast')} ${t('video_sync_needs_access')}`
+            : t('video_sync_next_cast')
+        }
+        checked={settings.videoSyncEnabled}
+        onChange={handleVideoSyncToggle}
+      />
 
-        <Switch
-          label={t('keep_tab_audible_enable')}
-          description={t('keep_tab_audible_description')}
-          note={browserWide ? t('keep_tab_audible_browser_capture_note') : undefined}
-          checked={settings.keepTabAudible}
-          onChange={handleKeepTabAudibleToggle}
-          disabled={browserWide}
-        />
+      <Switch
+        label={t('keep_tab_audible_enable')}
+        description={t('keep_tab_audible_description')}
+        note={browserWide ? t('keep_tab_audible_browser_capture_note') : undefined}
+        checked={settings.keepTabAudible}
+        onChange={handleKeepTabAudibleToggle}
+        disabled={browserWide}
+      />
 
-        <div className={styles.field}>
+      <SettingsRow
+        label={t('start_ceiling_enable')}
+        help={t('start_ceiling_description')}
+        control={(a11y) => (
           <Select
             id="start-ceiling-select"
             label={t('start_ceiling_enable')}
+            hideLabel
             value={settings.startCeilingEnabled ? String(settings.startCeiling) : 'off'}
             options={[
               ...startCeilingChoices(settings.startCeiling).map((level) => ({
@@ -132,35 +134,32 @@ export function AdvancedSection({
               { value: 'off', label: t('start_ceiling_off') },
             ]}
             onChange={handleStartCeilingChange}
-            aria-describedby="start-ceiling-desc"
-          />
-          <span id="start-ceiling-desc" className={styles.hint}>
-            {t('start_ceiling_description')}
-          </span>
-        </div>
-
-        <Switch
-          label={t('sync_speakers_enable')}
-          description={t('sync_speakers_description')}
-          checked={settings.syncSpeakers}
-          onChange={handleSyncSpeakersToggle}
-        />
-
-        {isWindows && captureToggle.visible && (
-          <Switch
-            label={t('capture_mode_browser_enable')}
-            description={t('capture_mode_browser_description')}
-            note={
-              captureToggle.noteKeys.length > 0
-                ? captureToggle.noteKeys.map((key) => t(key)).join(' ')
-                : undefined
-            }
-            checked={browserWide}
-            onChange={handleCaptureModeToggle}
-            disabled={captureToggle.disabled}
+            aria-describedby={a11y['aria-describedby']}
           />
         )}
-      </div>
+      />
+
+      <Switch
+        label={t('sync_speakers_enable')}
+        description={t('sync_speakers_description')}
+        checked={settings.syncSpeakers}
+        onChange={handleSyncSpeakersToggle}
+      />
+
+      {isWindows && captureToggle.visible && (
+        <Switch
+          label={t('capture_mode_browser_enable')}
+          description={t('capture_mode_browser_description')}
+          note={
+            captureToggle.noteKeys.length > 0
+              ? captureToggle.noteKeys.map((key) => t(key)).join(' ')
+              : undefined
+          }
+          checked={browserWide}
+          onChange={handleCaptureModeToggle}
+          disabled={captureToggle.disabled}
+        />
+      )}
     </Card>
   );
 }

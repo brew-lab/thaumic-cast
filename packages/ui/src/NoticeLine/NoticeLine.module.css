@@ -1,0 +1,147 @@
+@layer components {
+  /*
+   * M-noticeline. One row on the tone's container: the glyph, the words (which wrap, never
+   * truncate), then one trailing part and the X. Details open under a hairline in the same
+   * box. Its Buttons and X are re-pointed to the ink, the ring gap to the fill.
+   */
+  .line {
+    --noticeline-bg: var(--container);
+    --noticeline-fg: var(--on-surface);
+    --noticeline-glyph: var(--on-surface-variant);
+    --noticeline-rule: color-mix(in oklch, var(--noticeline-fg) 22%, var(--noticeline-bg));
+    --noticeline-pad-start: var(--space-3-5);
+    --noticeline-pad-end: var(--space-1);
+    --noticeline-shadow: none;
+    --noticeline-fill: color-mix(in oklch, var(--noticeline-fg) var(--layer), transparent);
+    --ring-gap: var(--noticeline-bg);
+
+    min-inline-size: 0;
+    border-radius: var(--radius-notice);
+    background: var(--noticeline-bg);
+    color: var(--noticeline-fg);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  .warning {
+    --noticeline-bg: var(--warning-container);
+    --noticeline-fg: var(--on-warning-container);
+    --noticeline-glyph: light-dark(var(--on-warning-container), var(--warning-ink));
+  }
+
+  .danger {
+    --noticeline-bg: var(--danger-container);
+    --noticeline-fg: var(--on-danger-container);
+    --noticeline-glyph: light-dark(var(--on-danger-container), var(--danger-ink));
+  }
+
+  .row,
+  .opener {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2-5);
+    min-block-size: var(--control-md);
+    padding-block: var(--space-2);
+    padding-inline: var(--noticeline-pad-start) var(--noticeline-pad-end);
+  }
+
+  .row:not(:has(.trail, .dismiss)) {
+    --noticeline-pad-end: var(--noticeline-pad-start);
+  }
+
+  .glyph,
+  .chevron {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    block-size: calc(1lh);
+    color: var(--noticeline-glyph);
+  }
+
+  .glyph > svg,
+  .chevron > svg {
+    --icon-size: var(--icon-sm);
+  }
+
+  .words {
+    flex: 1 1 0;
+    min-inline-size: 0;
+    text-wrap: pretty;
+  }
+
+  .lead {
+    font-weight: var(--weight-strong);
+  }
+
+  .trail {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .trail > :is(button, a) {
+    --btn-fg: var(--noticeline-fg);
+    --btn-trail: var(--noticeline-fg);
+  }
+
+  /* The action is outline; Details (which has aria-expanded) stays quiet. */
+  .trail > :is(button, a):not([aria-expanded]) {
+    --btn-edge: var(--noticeline-fg);
+  }
+
+  /* The X's hit area reaches past its box; keep it --gap-target from the action's. */
+  .dismiss {
+    flex: none;
+    margin-inline-start: calc(max(0rem, var(--gap-target) - var(--space-2-5)));
+  }
+
+  .dismiss > button {
+    --ib-fg: var(--noticeline-fg);
+  }
+
+  .details {
+    margin-inline: var(--noticeline-pad-start);
+    padding-block: var(--space-2) var(--space-3);
+    border-block-start: var(--line-hair) solid var(--noticeline-rule);
+  }
+
+  /* The slot line is one control: the whole row opens the compact cast. */
+  .opener {
+    --noticeline-pad-end: var(--noticeline-pad-start);
+
+    inline-size: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: var(--radius-notice);
+    background: var(--noticeline-fill);
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    box-shadow: var(--noticeline-shadow);
+    cursor: pointer;
+    transition: --layer var(--dur-effects) var(--ease-effects);
+  }
+
+  .opener:is(:hover, [data-force='hover']) {
+    --layer: var(--layer-hover);
+  }
+
+  .opener:is(:focus-visible, [data-force='focus']) {
+    --layer: var(--layer-focus);
+    --noticeline-shadow:
+      0 0 0 var(--line-bold) var(--ring-gap), 0 0 0 calc(2 * var(--line-bold)) var(--focus);
+
+    outline: var(--line-bold) solid transparent;
+  }
+
+  .opener:is(:active, [data-force='press']) {
+    --layer: var(--layer-press);
+  }
+
+  @media (forced-colors: active) {
+    .line {
+      border: var(--line-hair) solid CanvasText;
+    }
+  }
+}

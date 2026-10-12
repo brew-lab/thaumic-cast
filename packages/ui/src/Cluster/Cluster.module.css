@@ -1,6 +1,6 @@
 @layer components {
   .cluster {
-    --cluster-gap: var(--space-3);
+    --cluster-gap: var(--gap-target);
     --cluster-justify: flex-start;
 
     display: flex;

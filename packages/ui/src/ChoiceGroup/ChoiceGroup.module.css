@@ -1,0 +1,50 @@
+@layer components {
+  /*
+   * M-choice. A fieldset of Radio options. The options bleed by their own padding
+   * (--choice-pad), so each radio lines up with the text above. Under a 25rem `card`: one
+   * column; from 25rem: --track-option columns. The option's look is the Radio's.
+   */
+  .group {
+    --choice-pad: var(--space-3);
+    --choice-col-min: var(--track-option);
+    --choice-legend: var(--text-3);
+    --choice-legend-leading: var(--leading-3);
+    --choice-legend-ink: var(--on-surface);
+
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  :where([data-density='desktop']) .group {
+    --choice-legend: var(--text-4-fixed);
+    --choice-legend-leading: var(--leading-4);
+  }
+
+  .legend {
+    margin-block-end: var(--space-2);
+    padding: 0;
+    color: var(--choice-legend-ink);
+    font-size: var(--choice-legend);
+    font-weight: var(--weight-strong);
+    line-height: var(--choice-legend-leading);
+  }
+
+  .options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+    margin-inline: calc(-1 * var(--choice-pad));
+  }
+
+  @container card (inline-size >= 25rem) {
+    .options {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--choice-col-min)), 1fr));
+    }
+  }
+
+  .disabled {
+    --choice-legend-ink: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+  }
+}

@@ -1,10 +1,9 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Card, SegmentedControl } from '@thaumic-cast/ui';
+import { Card, SegmentedControl, SettingsRow } from '@thaumic-cast/ui';
 import type { ExtensionSettings, ThemeMode } from '../../lib/settings';
 import { applyTheme } from '../../lib/theme';
-import styles from '../Options.module.css';
 
 interface AppearanceSectionProps {
   settings: ExtensionSettings;
@@ -31,23 +30,24 @@ export function AppearanceSection({ settings, onUpdate }: AppearanceSectionProps
 
   return (
     <Card title={t('appearance_section_title')}>
-      <div className={styles.cardContent}>
-        <div className={styles.field}>
+      <SettingsRow
+        label={t('appearance_theme')}
+        help={settings.theme === 'auto' ? t('appearance_theme_auto_desc') : undefined}
+        control={(a11y) => (
           <SegmentedControl
             label={t('appearance_theme')}
+            hideLabel
             value={settings.theme}
             onChange={handleThemeChange}
+            aria-describedby={a11y['aria-describedby']}
             options={[
               { value: 'auto', label: t('appearance_theme_auto'), glyph: 'contrast' },
               { value: 'light', label: t('appearance_theme_light'), glyph: 'sun' },
               { value: 'dark', label: t('appearance_theme_dark'), glyph: 'moon' },
             ]}
           />
-          {settings.theme === 'auto' && (
-            <span className={styles.hint}>{t('appearance_theme_auto_desc')}</span>
-          )}
-        </div>
-      </div>
+        )}
+      />
     </Card>
   );
 }

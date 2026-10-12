@@ -35,6 +35,11 @@ export interface DensityToken {
   popup: string;
   /** The desktop and options value (`[data-density='desktop']`). */
   desktop: string;
+  /**
+   * The popup value under touch (`@media (any-pointer: coarse)`). Only hit areas use it;
+   * nothing drawn changes with the pointer.
+   */
+  coarse?: string;
 }
 
 /** The OKLCH lightness stops of the primitive ladders (DESIGN.md T-colour). */
@@ -287,12 +292,22 @@ export const PLAIN: TokenGroup[] = [
   },
 ];
 
-/** Tokens that `[data-density]` sets (DESIGN.md T-target and T-size). */
+/**
+ * Tokens that `[data-density]` sets (DESIGN.md T-target, T-size and F-size). sm is 32 on
+ * every surface; density sets md, the hit floor, the gap between hit areas and the selection
+ * controls' geometry, never sm. The fallback, if the Surface Go 2 tap test fails, is one
+ * value: desktop `control-sm` 2.25rem.
+ */
 export const DENSITY: Record<string, DensityToken> = {
   'control-xs': { popup: '1.75rem', desktop: '1.75rem' },
-  'control-sm': { popup: '2rem', desktop: '2.5rem' },
+  'control-sm': { popup: '2rem', desktop: '2rem' },
   'control-md': { popup: '2.25rem', desktop: '2.75rem' },
   'target-min': { popup: '1.5rem', desktop: '2.75rem' },
+  'hit-min': { popup: '1.5rem', desktop: '2.75rem', coarse: '2.75rem' },
+  'gap-target': {
+    popup: 'max(var(--space-3), var(--hit-min) - var(--control-xs))',
+    desktop: 'max(var(--space-3), var(--hit-min) - var(--control-xs))',
+  },
   'size-box': { popup: '1.125rem', desktop: '1.25rem' },
   'size-switch-w': { popup: '2.5rem', desktop: '3rem' },
   'size-switch-h': { popup: '1.5rem', desktop: '1.75rem' },
@@ -319,6 +334,7 @@ export const TIMINGS = {
   TOOLTIP_DELAY_MS: 500,
   ANNOUNCE_GAP_MS: 150,
   BUSY_MIN_MS: 600,
+  COPY_CONFIRM_MS: 2000,
 } as const;
 
 /** Colours drawn by Chrome or the OS, outside CSS (DESIGN.md T-chrome). */

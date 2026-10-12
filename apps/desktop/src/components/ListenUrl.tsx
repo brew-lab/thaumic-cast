@@ -1,16 +1,12 @@
-import { useEffect, useId, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Button, TextInput, useAnnouncer } from '@thaumic-cast/ui';
+import { CopyField } from '@thaumic-cast/ui';
 import { createLogger } from '@thaumic-cast/shared';
 import { fetchStats, getPlatform, stats, type Platform } from '../state/store';
 import { listenUrl, type SpeakerCast } from '../lib/listen-url';
-import { copyPendingText } from '../lib/clipboard';
 import styles from './ListenUrl.module.css';
 
 const log = createLogger('ListenUrl');
-
-/** How long the button reads "Copied" after a copy (ms). */
-const COPIED_FEEDBACK_DURATION_MS = 2000;
 
 /** The platform, asked for once and shared by every card. */
 let platformRequest: Promise<Platform> | null = null;
@@ -50,25 +46,20 @@ async function freshListenUrl(cast: SpeakerCast): Promise<string> {
   return url;
 }
 
-/** What the last click came to, for the note and the screen reader. */
-type CopyResult = 'idle' | 'copied' | 'refused' | 'unavailable';
-
 /**
- * The "Copy URL" control on a casting speaker's card: copies the URL a player
- * such as VLC or a browser can open to hear the cast, with a short note on
- * what it is. If the clipboard refuses, the URL is shown selected in a field
- * for copying by hand.
+ * The "Copy URL" control on a casting speaker's card (DESIGN.md M-copy, P-copy):
+ * copies the URL a player such as VLC or a browser can open to hear the cast,
+ * with a short note on what it is. The URL is worked out at the click, from a
+ * refreshed address, and the clipboard write starts inside the click. If the
+ * clipboard refuses, the URL is shown selected in a field for copying by hand.
+ * "Copied" holds until the cast changes or the action is pressed again.
  * @param props - Component props
  * @param props.cast - The cast the card's speaker is playing
  * @returns The rendered control
  */
 export function ListenUrl({ cast }: ListenUrlProps) {
   const { t } = useTranslation();
-  const [result, setResult] = useState<CopyResult>('idle');
-  const [manualUrl, setManualUrl] = useState<string | null>(null);
-  const fieldRef = useRef<HTMLInputElement>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
-  const failedNoteId = useId();
 
   useEffect(() => {
     let live = true;
@@ -81,94 +72,26 @@ export function ListenUrl({ cast }: ListenUrlProps) {
     };
   }, []);
 
-  // A new cast on this card has a new URL; drop what was shown for the old one.
-  useEffect(() => {
-    setResult('idle');
-    setManualUrl(null);
-  }, [cast.streamId, cast.codec]);
-
-  useEffect(() => {
-    if (result !== 'copied') return;
-    const timer = setTimeout(() => setResult('idle'), COPIED_FEEDBACK_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [result]);
-
-  // Runs on every refusal, even when the URL is the same as last time.
-  const selectField = () => {
-    requestAnimationFrame(() => fieldRef.current?.select());
-  };
-
-  const copy = async () => {
-    // The clipboard write must start before anything is awaited: WebKit only
-    // allows it during the click itself.
-    const pending = freshListenUrl(cast);
-    try {
-      await copyPendingText(pending);
-      setManualUrl(null);
-      setResult('copied');
-    } catch (error) {
-      const url = await pending.catch(() => null);
-      if (!url) {
-        log.warn('No URL to copy: the address is not known:', error);
-        setManualUrl(null);
-        setResult('unavailable');
-        return;
-      }
-      log.warn('The clipboard refused the URL; showing it to copy by hand:', error);
-      setManualUrl(url);
-      setResult('refused');
-      selectField();
-    }
-  };
-
-  const { say } = useAnnouncer();
-  const copied = result === 'copied';
-  const announcement =
-    result === 'copied'
-      ? t('device.listen_url_copied')
-      : result === 'refused'
-        ? t('device.listen_url_copy_failed')
-        : result === 'unavailable'
-          ? t('device.listen_url_unavailable')
-          : '';
-
-  // Each result is said once through the surface's Announcer.
-  useEffect(() => {
-    if (announcement) say(announcement);
-  }, [announcement, say]);
-
   return (
     <div className={styles.listen}>
-      <Button size="sm" icon={copied ? 'check' : 'copy'} onClick={copy}>
-        {copied ? t('device.listen_url_copied') : t('device.listen_url_copy')}
-      </Button>
-      {manualUrl && (
-        <>
-          <div className={styles.field}>
-            <TextInput
-              ref={fieldRef}
-              kind="address"
-              readOnly
-              value={manualUrl}
-              onInput={() => {}}
-              aria-label={t('device.listen_url_field')}
-              aria-describedby={failedNoteId}
-              onFocus={(event) => (event.currentTarget as HTMLInputElement).select()}
-            />
-          </div>
-          <p id={failedNoteId} className={styles.note}>
-            {t('device.listen_url_copy_failed')}
-          </p>
-        </>
-      )}
-      {result === 'unavailable' && (
-        <p className={styles.note}>{t('device.listen_url_unavailable')}</p>
-      )}
-      <p className={styles.note}>{t('device.listen_url_hint')}</p>
-      {/* Browser-wide capture is Windows-only and always casts PCM. */}
-      {cast.codec === 'pcm' && mayCaptureBrowserWide(platform) && (
-        <p className={styles.note}>{t('device.listen_url_echo')}</p>
-      )}
+      <CopyField
+        getValue={() => freshListenUrl(cast)}
+        action={t('device.listen_url_copy')}
+        done={t('device.listen_url_copied')}
+        refusedNote={t('device.listen_url_copy_failed')}
+        unavailableNote={t('device.listen_url_unavailable')}
+        reveal="onRefusal"
+        resetKey={`${cast.streamId}:${cast.codec}`}
+        help={
+          <>
+            <p>{t('device.listen_url_hint')}</p>
+            {/* Browser-wide capture is Windows-only and always casts PCM. */}
+            {cast.codec === 'pcm' && mayCaptureBrowserWide(platform) && (
+              <p>{t('device.listen_url_echo')}</p>
+            )}
+          </>
+        }
+      />
     </div>
   );
 }

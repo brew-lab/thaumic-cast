@@ -29,6 +29,8 @@ export interface SegmentedControlProps<T extends string> extends DataAttributes 
   options: readonly SegmentOption<T>[];
   /** Disabled. */
   disabled?: boolean;
+  /** Ties the help to the group (a SettingsRow's help). */
+  'aria-describedby'?: string;
 }
 
 /**
@@ -61,6 +63,7 @@ export function SegmentedControl<T extends string>({
       class={cx(styles.group, disabled && styles.disabled)}
       role="radiogroup"
       disabled={disabled}
+      aria-describedby={rest['aria-describedby']}
     >
       <legend class={hideLabel ? 'visually-hidden' : styles.legend}>{label}</legend>
       <span class={styles.track} {...dataAttributes(rest)}>

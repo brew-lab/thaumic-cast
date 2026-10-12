@@ -21,7 +21,7 @@ import { useChromeMessage } from './useChromeMessage';
 import { useMountedRef } from './useMountedRef';
 
 export interface UseCaptureHealthResult {
-  /** Whether the popup should currently render the Alert. */
+  /** Whether the popup should currently render the Notice. */
   showAlert: boolean;
   /** Dismisses the current detection event — cleared automatically on a fresh edge. */
   dismiss: () => void;
@@ -31,7 +31,7 @@ const DISMISSED_AT_STORAGE_KEY = 'dismissedCaptureHealthAt';
 
 /**
  * Tracks capture-health state and exposes a dismissible alert signal.
- * @returns Alert visibility flag and dismiss callback
+ * @returns Notice visibility flag and dismiss callback
  */
 export function useCaptureHealth(): UseCaptureHealthResult {
   const [health, setHealth] = useState<CaptureHealthState>({
@@ -94,7 +94,7 @@ export function useCaptureHealth(): UseCaptureHealthResult {
   }, [health.detectedAt]);
 
   // Suppress until dismissedAt has loaded, otherwise a previously-dismissed
-  // event would flash the alert on every popup open. Alert is decoupled from
+  // event would flash the alert on every popup open. Notice is decoupled from
   // `health.degraded` — sticky behavior means we show whenever there's an
   // un-dismissed detection event, regardless of current degraded status.
   const showAlert =

@@ -24,13 +24,13 @@ export interface UseCompanionVersionResult {
   companion: CompanionInfo | null;
   /**
    * Raw "is the companion out of date?" — true regardless of whether the
-   * Alert has been dismissed. Drives the persistent footer "Update available"
+   * Notice has been dismissed. Drives the persistent footer "Update available"
    * link.
    */
   hasMismatch: boolean;
-  /** Whether the popup should currently render the dismissible Alert. */
+  /** Whether the popup should currently render the dismissible Notice. */
   showMismatchWarning: boolean;
-  /** Dismisses the Alert for the companion's current `appVersion` bucket. */
+  /** Dismisses the Notice for the companion's current `appVersion` bucket. */
   dismissMismatchWarning: () => void;
 }
 
@@ -81,8 +81,8 @@ export function useCompanionVersion(connection: ConnectionStatus): UseCompanionV
   return {
     companion,
     hasMismatch: hasVersionMismatch(companion),
-    // Suppress the Alert until the dismissal record has loaded from storage,
-    // otherwise a previously-dismissed bucket would flash the Alert on every
+    // Suppress the Notice until the dismissal record has loaded from storage,
+    // otherwise a previously-dismissed bucket would flash the Notice on every
     // popup open before `getDismissedCompanionVersion()` resolves.
     showMismatchWarning: dismissedLoaded && shouldWarnAboutVersion(companion, dismissed),
     dismissMismatchWarning,

@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect } from 'preact/hooks';
 import { stats, fetchStats, clearAllConnections, restartServer, stopAll } from '../state/store';
-import { Button, Card, IconButton } from '@thaumic-cast/ui';
+import {
+  Button,
+  Card,
+  CopyField,
+  DescriptionList,
+  PageHeader,
+  SettingsRow,
+} from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import styles from './Server.module.css';
-
-/** Duration to show "copied" feedback before reverting to copy icon (ms). */
-const COPIED_FEEDBACK_DURATION_MS = 2000;
 
 /**
  * Server management page.
@@ -18,7 +22,6 @@ const COPIED_FEEDBACK_DURATION_MS = 2000;
  */
 export function Server() {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -26,61 +29,61 @@ export function Server() {
     return () => clearInterval(interval);
   }, []);
 
-  const copyAddress = () => {
-    if (stats.value) {
-      const url = `http://${stats.value.localIp}:${stats.value.port}`;
-      navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), COPIED_FEEDBACK_DURATION_MS);
-    }
-  };
+  const address = stats.value ? `${stats.value.localIp}:${stats.value.port}` : undefined;
+
+  /**
+   * The address with its scheme, as copied: what a browser or a player can open.
+   * @returns The address, or nothing while it is not known
+   */
+  const copyValue = async (): Promise<string> =>
+    stats.value ? `http://${stats.value.localIp}:${stats.value.port}` : '';
 
   return (
     <div className={styles.server}>
-      <h2 className={styles.pageTitle}>{t('nav.server')}</h2>
+      <PageHeader title={t('nav.server')} />
 
       {/* Status Section */}
-      <Card
-        title={t('server.running')}
-        titleLevel="h3"
-        className={`${styles.section} ${styles.statusCard}`}
-      >
-        <dl className={styles.statusGrid}>
-          <div className={styles.statusItem}>
-            <dt className={styles.statusLabel}>{t('server.address')}</dt>
-            <dd className={styles.addressRow}>
-              <code className={styles.statusValue}>
-                {stats.value ? `${stats.value.localIp}:${stats.value.port}` : '---'}
-              </code>
-              <IconButton
-                glyph={copied ? 'check' : 'copy'}
-                label={t('server.copy_address')}
-                tooltip
-                onPress={copyAddress}
-              />
-            </dd>
-          </div>
-
-          <div className={styles.statusItem}>
-            <dt className={styles.statusLabel}>{t('server.clients')}</dt>
-            <dd className={styles.statusValue}>{stats.value?.connectionCount ?? 0}</dd>
-          </div>
-
-          <div className={styles.statusItem}>
-            <dt className={styles.statusLabel}>{t('server.streams')}</dt>
-            <dd className={styles.statusValue}>{stats.value?.streamCount ?? 0}</dd>
-          </div>
-        </dl>
+      <Card title={t('server.running')}>
+        <DescriptionList
+          kind="stat"
+          rows={[
+            {
+              key: 'address',
+              term: t('server.address'),
+              value: (
+                <CopyField
+                  value={address}
+                  getValue={address ? copyValue : undefined}
+                  action={t('server.copy_address')}
+                  done={t('device.listen_url_copied')}
+                  refusedNote={t('device.listen_url_copy_failed')}
+                  unavailableNote={t('device.listen_url_unavailable')}
+                />
+              ),
+            },
+            {
+              key: 'clients',
+              term: t('server.clients'),
+              value: stats.value?.connectionCount ?? 0,
+              count: true,
+            },
+            {
+              key: 'streams',
+              term: t('server.streams'),
+              value: stats.value?.streamCount ?? 0,
+              count: true,
+            },
+          ]}
+        />
       </Card>
 
       {/* Actions Section */}
-      <Card title={t('server.actions')} titleLevel="h3" className={styles.section}>
-        <div className={styles.actionList}>
-          <div className={styles.actionRow}>
-            <div className={styles.actionInfo}>
-              <h4 className={styles.actionTitle}>{t('server.restart')}</h4>
-              <p className={styles.actionDescription}>{t('server.restart_description')}</p>
-            </div>
+      <Card title={t('server.actions')}>
+        <SettingsRow
+          label={t('server.restart')}
+          help={t('server.restart_description')}
+          controlWidth="action"
+          control={
             <Button
               icon="refresh"
               onAction={restartServer}
@@ -88,38 +91,40 @@ export function Server() {
             >
               {t('server.restart')}
             </Button>
-          </div>
-
-          <div className={styles.actionRow}>
-            <div className={styles.actionInfo}>
-              <h4 className={styles.actionTitle}>{t('server.disconnect_all')}</h4>
-              <p className={styles.actionDescription}>{t('server.disconnect_description')}</p>
-            </div>
+          }
+        />
+        <SettingsRow
+          label={t('server.disconnect_all')}
+          help={t('server.disconnect_description')}
+          controlWidth="action"
+          control={
             <Button
               kind="outline"
               onAction={clearAllConnections}
               labels={{ busy: t('server.disconnecting') }}
+              aria-label={t('server.disconnect_all')}
             >
               {t('server.disconnect')}
             </Button>
-          </div>
-
-          <div className={styles.actionRow}>
-            <div className={styles.actionInfo}>
-              <h4 className={styles.actionTitle}>{t('server.stop_streams')}</h4>
-              <p className={styles.actionDescription}>{t('server.stop_streams_description')}</p>
-            </div>
+          }
+        />
+        <SettingsRow
+          label={t('server.stop_streams')}
+          help={t('server.stop_streams_description')}
+          controlWidth="action"
+          control={
             <Button
               kind="filled"
               danger
               icon="stop"
               onAction={stopAll}
               labels={{ busy: t('server.stopping') }}
+              aria-label={t('server.stop_streams')}
             >
               {t('server.stop')}
             </Button>
-          </div>
-        </div>
+          }
+        />
       </Card>
     </div>
   );

@@ -191,6 +191,8 @@ export const TOKEN_NAMES = [
   '--control-sm',
   '--control-md',
   '--target-min',
+  '--hit-min',
+  '--gap-target',
   '--size-box',
   '--size-switch-w',
   '--size-switch-h',
@@ -252,6 +254,9 @@ export const ANNOUNCE_GAP_MS = 150;
 
 /** DESIGN.md T-motion: a timing used from script, in ms. */
 export const BUSY_MIN_MS = 600;
+
+/** DESIGN.md T-motion: a timing used from script, in ms. */
+export const COPY_CONFIRM_MS = 2000;
 
 /** Container-query breakpoints in rem: the only literals allowed in `@container` (F-grid). */
 export const CONTAINER_BREAKPOINTS_REM = [20, 25, 45] as const;

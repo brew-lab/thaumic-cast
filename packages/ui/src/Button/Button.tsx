@@ -17,7 +17,10 @@ export interface ButtonProps extends DataAttributes {
   kind?: 'filled' | 'tonal' | 'outline' | 'quiet' | 'link';
   /** Filled or tonal only. Tonal danger with the `stop` glyph is Stop; filled is Stop all. */
   danger?: boolean;
-  /** The density sets the height: sm `--control-sm`, md `--control-md`. */
+  /**
+   * sm (the default) is 32 on every surface. md is the prominent size (36 in the popup, 44
+   * in a window), only for the action a view, step, bar or dialog exists for (F-size).
+   */
   size?: 'sm' | 'md';
   /** A glyph in the start slot. */
   icon?: GlyphName;
@@ -35,8 +38,16 @@ export interface ButtonProps extends DataAttributes {
   fullWidth?: boolean;
   /** An async action: busy, then done or failed, said through the Announcer. */
   onAction?: () => Promise<unknown>;
-  /** A plain click handler, for actions with no async result. */
+  /**
+   * A plain click handler, for actions with no async result. It runs before `onAction`, and
+   * calling `event.preventDefault()` in it stops the action (a field that is not valid yet).
+   */
   onClick?: (event: MouseEvent) => void;
+  /**
+   * A result held from outside, for an action with no busy step (CopyField's `done`): it
+   * shows the result's label and glyph until it changes. Without it the Button keeps its own.
+   */
+  status?: 'idle' | 'done';
   /** The words for busy, done and failed. */
   labels?: ActionLabels;
   /** Done and failed return to idle when this changes; there are no timers. */
@@ -76,7 +87,8 @@ export interface ButtonProps extends DataAttributes {
  * @param props.align - Centre or start
  * @param props.fullWidth - Fill the container
  * @param props.onAction - An async action
- * @param props.onClick - A click handler
+ * @param props.onClick - A click handler, which can stop the action
+ * @param props.status - A result held from outside
  * @param props.labels - Busy, done and failed words
  * @param props.resetKey - Returns done or failed to idle when it changes
  * @param props.href - Renders a link
@@ -90,7 +102,7 @@ export interface ButtonProps extends DataAttributes {
 export function Button({
   kind = 'tonal',
   danger = false,
-  size = 'md',
+  size = 'sm',
   icon,
   trail,
   pressed,
@@ -100,6 +112,7 @@ export function Button({
   fullWidth = false,
   onAction,
   onClick,
+  status: heldStatus,
   labels,
   resetKey,
   href,
@@ -111,7 +124,8 @@ export function Button({
   ...rest
 }: ButtonProps): JSX.Element {
   const { say } = useAnnouncer();
-  const { status, run } = useAction(onAction, { labels, resetKey, say });
+  const { status: ownStatus, run } = useAction(onAction, { labels, resetKey, say });
+  const status: ActionStatus = heldStatus === 'done' ? 'done' : ownStatus;
   const busy = status === 'busy';
   const isDanger = danger && (kind === 'filled' || kind === 'tonal');
 
@@ -121,7 +135,7 @@ export function Button({
       return;
     }
     onClick?.(event);
-    if (onAction) run();
+    if (onAction && !event.defaultPrevented) run();
   };
 
   const lead = leadFor(status, icon);
@@ -176,6 +190,7 @@ export function Button({
     id,
     class: className,
     'data-status': status === 'idle' ? undefined : status,
+    'data-size': size,
     'aria-label': rest['aria-label'],
     'aria-describedby': rest['aria-describedby'],
     'aria-busy': busy ? ('true' as const) : undefined,

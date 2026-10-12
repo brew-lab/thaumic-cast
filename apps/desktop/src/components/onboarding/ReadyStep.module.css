@@ -1,22 +1,4 @@
 @layer app {
-  .summary-box {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    margin: 0;
-    padding: var(--space-4);
-    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
-    border-radius: var(--radius-card);
-    background: var(--surface);
-    list-style: none;
-  }
-
-  .summary-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
   .intro-text {
     margin: 0;
     text-wrap: pretty;
@@ -31,12 +13,5 @@
   .section-body {
     margin: 0;
     color: var(--on-surface-variant);
-  }
-
-  .autostart {
-    padding: var(--space-4);
-    border: var(--line-hair) solid light-dark(var(--outline-variant), transparent);
-    border-radius: var(--radius-card);
-    background: var(--surface);
   }
 }

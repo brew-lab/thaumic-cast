@@ -73,6 +73,7 @@ export function IconButton({
     <button
       type="button"
       class={cx(styles.iconButton, styles[kind], styles[size])}
+      data-size={size}
       aria-label={label}
       aria-pressed={pressed === undefined ? undefined : pressed}
       aria-busy={busy ? 'true' : undefined}

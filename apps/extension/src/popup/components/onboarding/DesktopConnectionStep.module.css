@@ -5,19 +5,4 @@
     font-size: var(--text-3);
     line-height: var(--leading-3);
   }
-
-  .manual-form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-
-  .test-error {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--danger-ink);
-    font-size: var(--text-3);
-    line-height: var(--leading-3);
-  }
 }

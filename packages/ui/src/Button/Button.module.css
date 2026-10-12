@@ -21,7 +21,7 @@
     --btn-check: var(--primary);
     --btn-failed-bg: var(--danger-container);
     --btn-failed-fg: var(--on-danger-container);
-    --btn-hit: var(--target-min);
+    --btn-hit: var(--hit-min);
     --btn-fill: color-mix(in oklch, var(--btn-fg) var(--layer), var(--btn-bg));
     --btn-trail: var(--btn-fg);
 
@@ -71,7 +71,11 @@
     padding-inline-end: var(--btn-pad-icon);
   }
 
-  /* Sizes: the density sets the px (T-target), never a container. */
+  /*
+   * Sizes (F-size). sm is 32 on every surface, with the 13 px label and the 16 px glyph.
+   * md is the prominent size: 36 in the popup and 44 in a window, with the 14 px label and,
+   * in a window, the 20 px glyph. Touch never changes the box; the hit area grows instead.
+   */
   .sm {
     --btn-h: var(--control-sm);
     --btn-pad: var(--space-4);
@@ -79,17 +83,8 @@
     --btn-font: var(--text-3);
   }
 
-  :where([data-density='desktop']) .button {
-    --btn-icon: var(--icon-md);
-    --btn-font: var(--text-4-fixed);
-  }
-
-  :where([data-density='desktop']) .sm {
-    --btn-pad: calc(2 * var(--space-3));
-    --btn-pad-icon: calc(var(--btn-pad) - var(--space-2));
-  }
-
   :where([data-density='desktop']) .md {
+    --btn-icon: var(--icon-md);
     --btn-pad: calc(var(--space-4) + var(--space-3));
   }
 

@@ -21,7 +21,7 @@ import {
 import { type NetworkHealthPayload, type TransportStatePayload } from '../lib/events';
 import { DeviceCard } from '../components/DeviceCard';
 import { SpeakerNotices } from '../components/SpeakerNotices';
-import { Alert, Button, Cluster } from '@thaumic-cast/ui';
+import { Button, Card, Cluster, EmptyState, Notice, PageHeader } from '@thaumic-cast/ui';
 import styles from './Speakers.module.css';
 
 /**
@@ -98,57 +98,59 @@ export function Speakers() {
 
   return (
     <div className={styles.speakers}>
-      <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          <h2 className={styles.pageTitle}>{t('nav.speakers')}</h2>
-          <span className={styles.summary}>
-            {t('speakers.summary', {
-              speakers: t('speakers.summary_speakers', { count: speakerCount }),
-              streams: t('speakers.summary_streaming', { count: streamCount }),
-            })}
-          </span>
-        </div>
-        <Cluster>
-          <Button
-            icon="refresh"
-            onAction={refreshTopology}
-            labels={{ busy: t('speakers.scanning') }}
-          >
-            {t('speakers.scan')}
-          </Button>
-          <Button
-            kind="filled"
-            danger
-            icon="stop"
-            onAction={stopAll}
-            labels={{ busy: t('speakers.stopping') }}
-          >
-            {t('speakers.stop_all')}
-          </Button>
-        </Cluster>
-      </div>
+      <PageHeader
+        title={t('nav.speakers')}
+        summary={t('speakers.summary', {
+          speakers: t('speakers.summary_speakers', { count: speakerCount }),
+          streams: t('speakers.summary_streaming', { count: streamCount }),
+        })}
+        actions={
+          <Cluster>
+            <Button
+              size="md"
+              icon="refresh"
+              onAction={refreshTopology}
+              labels={{ busy: t('speakers.scanning') }}
+            >
+              {t('speakers.scan')}
+            </Button>
+            <Button
+              size="md"
+              kind="filled"
+              danger
+              icon="stop"
+              onAction={stopAll}
+              labels={{ busy: t('speakers.stopping') }}
+            >
+              {t('speakers.stop_all')}
+            </Button>
+          </Cluster>
+        }
+      />
 
       {networkHealth.value.health === 'degraded' && (
-        <Alert variant="warning" className={styles.networkAlert}>
-          {t(`network.${networkHealth.value.reason}`, {
+        <Notice
+          tone="warning"
+          text={t(`network.${networkHealth.value.reason}`, {
             defaultValue: t('network.speakers_not_responding'),
           })}
-        </Alert>
+        />
       )}
 
       <SpeakerNotices />
 
       {groupsWithCoordinators.length === 0 ? (
-        <div className={styles.emptyState}>
-          <p className={styles.emptyTitle}>{t('speakers.none')}</p>
-          <p className={styles.emptyDescription}>{t('speakers.scan_hint')}</p>
-          <p className={styles.emptyDescription}>
-            <Trans
-              i18nKey="speakers.manual_add_hint"
-              components={[<Link key={0} href="/settings#speakers" />]}
-            />
-          </p>
-        </div>
+        <Card>
+          <EmptyState
+            body={`${t('speakers.none')} ${t('speakers.scan_hint')}`}
+            link={
+              <Trans
+                i18nKey="speakers.manual_add_hint"
+                components={[<Link key={0} href="/settings#speakers" />]}
+              />
+            }
+          />
+        </Card>
       ) : (
         <div className={styles.grid}>
           {groupsWithCoordinators.map(({ group, coordinator }) => (

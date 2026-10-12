@@ -12,26 +12,18 @@
   :root {
     /* Surfaces and text */
     --color-border: var(--outline-variant);
-    --color-text: var(--on-surface);
-    --color-text-muted: var(--on-surface-variant);
 
     /* Inks */
     --color-primary: var(--primary);
-    --color-focus: var(--focus);
 
     /* Old controls, until each is rebuilt */
     --card-bg: var(--surface);
     --card-border: light-dark(var(--outline-variant), transparent);
-    --card-shadow: none;
     --card-radius: var(--radius-card);
-    --card-padding: var(--space-4);
 
-    /* Space and radius: the old steps that land on a v1 step map to it */
-    --space-xs: var(--space-2);
+    /* Space: the old steps the Wizard still reads */
     --space-sm: var(--space-3);
-    --space-md: 1rem;
     --space-lg: 1.5rem;
-    --radius-sm: var(--radius-pressed);
 
     /* Motion: the v1 durations and easing; reduced motion turns the transitions off */
     --transition-color: color var(--dur-fast) var(--ease-effects);

@@ -27,7 +27,10 @@ export interface SelectProps<T extends string | number> extends DataAttributes {
   options: readonly SelectOption<T>[];
   /** Called with the chosen value. */
   onChange: (value: T) => void;
-  /** The density sets the height: sm `--control-sm`, md `--control-md`. */
+  /**
+   * sm (the default) is 32 on every surface; md is 36 in the popup and 44 in a window
+   * (F-size). On a window the <select> is the 44 hit area, inside the drawn box.
+   */
   size?: 'sm' | 'md';
   /** Invalid: a 2 px danger edge and `aria-invalid`. The message is the caller's. */
   error?: boolean;
@@ -72,7 +75,7 @@ export function Select<T extends string | number>({
   value,
   options,
   onChange,
-  size = 'md',
+  size = 'sm',
   error = false,
   busy = false,
   disabled = false,
@@ -86,7 +89,7 @@ export function Select<T extends string | number>({
       <label for={selectId} class={hideLabel ? 'visually-hidden' : styles.label}>
         {label}
       </label>
-      <span class={cx(styles.control, styles[size], error && styles.invalid)}>
+      <span class={cx(styles.control, styles[size], error && styles.invalid)} data-size={size}>
         <select
           id={selectId}
           class={styles.select}

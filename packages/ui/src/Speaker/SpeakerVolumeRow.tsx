@@ -93,7 +93,7 @@ export function SpeakerVolumeRow({
         {statusIndicator}
         {onRemove && removeLabel && (
           <span class={styles.remove}>
-            <IconButton glyph="stop" label={removeLabel} size="sm" onPress={onRemove} />
+            <IconButton glyph="stop" label={removeLabel} onPress={onRemove} />
           </span>
         )}
       </div>
@@ -104,7 +104,6 @@ export function SpeakerVolumeRow({
             pressedGlyph="volume-off"
             pressed={muted}
             label={muteLabel}
-            size="sm"
             disabled={disabled}
             onPress={control.toggleMute}
           />

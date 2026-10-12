@@ -27,6 +27,7 @@
     "tokens": "bun scripts/generate-tokens.ts",
     "tokens:check": "bun scripts/generate-tokens.ts --check",
     "catalogue": "vite --config catalogue/vite.config.ts",
+    "catalogue:lan": "vite --config catalogue/vite.config.ts --host 0.0.0.0 --port 4180 --strictPort",
     "catalogue:build": "vite build --config catalogue/vite.config.ts",
     "test:catalogue": "playwright test --config catalogue/playwright.config.ts"
   },

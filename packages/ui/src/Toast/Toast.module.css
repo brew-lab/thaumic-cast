@@ -1,0 +1,80 @@
+@layer components {
+  /*
+   * M-toast. The inverse surface; the action, the glyph and the ring take the semantic
+   * tokens that read as the other theme's inks on it (--primary-container is the light
+   * purple in light and the deep one in dark; --outline-variant likewise). No tones and no
+   * shadow (it is in flow). The text wraps to two lines at most.
+   */
+  .toast {
+    --toast-bg: var(--inverse-surface);
+    --toast-fg: var(--on-inverse-surface);
+    --toast-action: var(--primary-container);
+    --toast-glyph: var(--outline-variant);
+    --ring-gap: var(--toast-bg);
+    --focus: var(--primary-container);
+
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-block-size: var(--control-sm);
+    padding-block: var(--space-1);
+    padding-inline: var(--space-4) var(--space-1);
+    border-radius: var(--radius-notice);
+    background: var(--toast-bg);
+    color: var(--toast-fg);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+  }
+
+  :where([data-density='desktop']) .toast {
+    font-size: var(--text-4-fixed);
+    line-height: var(--leading-4);
+  }
+
+  .glyph {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    color: var(--toast-glyph);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--icon-sm);
+  }
+
+  .text {
+    flex: 1 1 0;
+    min-inline-size: 0;
+    margin: 0;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    text-wrap: pretty;
+  }
+
+  .action,
+  .dismiss {
+    flex: none;
+  }
+
+  /* The X's hit area reaches past its box; keep it --gap-target from the action's. */
+  .dismiss {
+    margin-inline-start: calc(max(0rem, var(--gap-target) - var(--space-3)));
+  }
+
+  .action > button {
+    --btn-fg: var(--toast-action);
+  }
+
+  .dismiss > button {
+    --ib-fg: var(--toast-fg);
+  }
+
+  @media (forced-colors: active) {
+    .toast {
+      border: var(--line-hair) solid CanvasText;
+    }
+  }
+}

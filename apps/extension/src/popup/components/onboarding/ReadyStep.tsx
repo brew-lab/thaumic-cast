@@ -1,5 +1,5 @@
 import { DEFAULT_MAX_CONCURRENT_STREAMS } from '@thaumic-cast/protocol';
-import { WizardStep, Alert } from '@thaumic-cast/ui';
+import { WizardStep, Notice } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import styles from './ReadyStep.module.css';
@@ -26,7 +26,7 @@ export function ReadyStep(): preact.JSX.Element {
 
       <p className={styles.performanceText}>{t('onboarding.ready.performance_body')}</p>
 
-      <Alert variant="warning">{t('onboarding.ready.battery_warning')}</Alert>
+      <Notice tone="warning" text={t('onboarding.ready.battery_warning')} />
     </WizardStep>
   );
 }

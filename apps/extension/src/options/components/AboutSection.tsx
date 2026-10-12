@@ -1,11 +1,10 @@
 import type { JSX } from 'preact';
 import { useCallback } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
-import { Button, Card } from '@thaumic-cast/ui';
+import { Button, Card, DescriptionList, type DescriptionRow } from '@thaumic-cast/ui';
 import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
 import type { ConnectionStatus } from '../../popup/hooks/useConnectionStatus';
-import styles from '../Options.module.css';
 
 /**
  * About section showing extension information and — when the extension is
@@ -35,53 +34,44 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
     : null;
   const mismatch = hasVersionMismatch(companion);
 
+  const update = mismatch && (
+    <>
+      {' · '}
+      <Button kind="link" icon="external" onClick={handleOpenReleases}>
+        {t('update_available')}
+      </Button>
+    </>
+  );
+
+  const companionValue = !companion ? (
+    t('about_companion_not_connected')
+  ) : companion.appVersion && companion.protocolVersion ? (
+    <>
+      {t(companionTypeLabelKey(companion.appType))} ·{' '}
+      {t('about_version', { version: companion.appVersion })}
+      {update}
+      <br />
+      {t('about_companion_protocol', { version: companion.protocolVersion })}
+    </>
+  ) : (
+    <>
+      {t('about_companion_unknown_version')}
+      {update}
+    </>
+  );
+
+  const rows: readonly DescriptionRow[] = [
+    {
+      key: 'extension',
+      term: t('about_extension_name'),
+      value: t('about_version', { version }),
+    },
+    { key: 'companion', term: t('about_companion_heading'), value: companionValue },
+  ];
+
   return (
     <Card title={t('about_section_title')}>
-      <div className={styles.cardContent}>
-        <div>
-          <div className={styles.strong}>{t('about_extension_name')}</div>
-          <div className={styles.hint}>{t('about_version', { version })}</div>
-        </div>
-
-        <div>
-          <div className={styles.strong}>{t('about_companion_heading')}</div>
-          {companion ? (
-            companion.appVersion && companion.protocolVersion ? (
-              <>
-                <div className={styles.hint}>
-                  {t(companionTypeLabelKey(companion.appType))} ·{' '}
-                  {t('about_version', { version: companion.appVersion })}
-                  {mismatch && (
-                    <>
-                      {' · '}
-                      <Button kind="link" icon="external" onClick={handleOpenReleases}>
-                        {t('update_available')}
-                      </Button>
-                    </>
-                  )}
-                </div>
-                <div className={styles.hint}>
-                  {t('about_companion_protocol', { version: companion.protocolVersion })}
-                </div>
-              </>
-            ) : (
-              <div className={styles.hint}>
-                {t('about_companion_unknown_version')}
-                {mismatch && (
-                  <>
-                    {' · '}
-                    <Button kind="link" icon="external" onClick={handleOpenReleases}>
-                      {t('update_available')}
-                    </Button>
-                  </>
-                )}
-              </div>
-            )
-          ) : (
-            <div className={styles.hint}>{t('about_companion_not_connected')}</div>
-          )}
-        </div>
-      </div>
+      <DescriptionList kind="readout" rows={rows} />
     </Card>
   );
 }

@@ -1,0 +1,177 @@
+@layer components {
+  /*
+   * M-notice. The tone sets the container, the on-container ink and the glyph (in dark, the
+   * set's ink). The Buttons and the X are re-pointed to the ink, the ring gap to the fill.
+   * Its own `notice` container puts the action under the text below 25rem and beside it
+   * from 25rem. The density sets the padding, the glyph and the text size.
+   */
+  .notice {
+    --notice-bg: var(--container);
+    --notice-fg: var(--on-surface);
+    --notice-glyph: var(--on-surface-variant);
+    --notice-rule: color-mix(in oklch, var(--notice-fg) 22%, var(--notice-bg));
+    --notice-radius: var(--radius-notice);
+    --notice-pad-block: var(--space-3);
+    --notice-pad-inline: var(--space-4);
+    --notice-pad-end: var(--notice-pad-inline);
+    --notice-gap: var(--space-3);
+    --notice-icon: var(--icon-sm);
+    --notice-text: var(--text-3);
+    --notice-leading: var(--leading-3);
+    --ring-gap: var(--notice-bg);
+
+    container: notice / inline-size;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'glyph body dismiss'
+      '. details details'
+      '. also also';
+    column-gap: var(--notice-gap);
+    min-inline-size: 0;
+    margin: 0;
+    padding-block: var(--notice-pad-block);
+    padding-inline: var(--notice-pad-inline) var(--notice-pad-end);
+    border-radius: var(--notice-radius);
+    background: var(--notice-bg);
+    color: var(--notice-fg);
+    font-size: var(--notice-text);
+    line-height: var(--notice-leading);
+    user-select: text;
+  }
+
+  :where([data-density='desktop']) .notice {
+    --notice-pad-block: var(--space-3-5);
+    --notice-pad-inline: calc(var(--space-4) + var(--space-2));
+    --notice-icon: var(--icon-md);
+    --notice-text: var(--text-4-fixed);
+    --notice-leading: var(--leading-4);
+  }
+
+  .dismissible {
+    --notice-pad-end: var(--space-2);
+  }
+
+  .info {
+    --notice-bg: var(--container);
+    --notice-fg: var(--on-surface);
+    --notice-glyph: var(--on-surface-variant);
+  }
+
+  .warning {
+    --notice-bg: var(--warning-container);
+    --notice-fg: var(--on-warning-container);
+    --notice-glyph: light-dark(var(--on-warning-container), var(--warning-ink));
+  }
+
+  .danger {
+    --notice-bg: var(--danger-container);
+    --notice-fg: var(--on-danger-container);
+    --notice-glyph: light-dark(var(--on-danger-container), var(--danger-ink));
+  }
+
+  .glyph {
+    grid-area: glyph;
+    display: inline-grid;
+    place-items: center;
+    block-size: calc(1lh);
+    color: var(--notice-glyph);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--notice-icon);
+  }
+
+  .body {
+    grid-area: body;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .words {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    text-wrap: pretty;
+  }
+
+  .lead,
+  .text,
+  .also {
+    margin: 0;
+  }
+
+  .lead {
+    font-weight: var(--weight-strong);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .actions > :is(button, a) {
+    --btn-fg: var(--notice-fg);
+    --btn-trail: var(--notice-fg);
+  }
+
+  /* The action is outline; Details (which has aria-expanded) stays quiet. */
+  .actions > :is(button, a):not([aria-expanded]) {
+    --btn-edge: var(--notice-fg);
+  }
+
+  @container notice (inline-size >= 25rem) {
+    .body {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-4);
+    }
+
+    .words {
+      flex: 1 1 0;
+    }
+
+    .actions {
+      flex: none;
+    }
+  }
+
+  /* The X's hit area reaches past its box; keep it --gap-target from the action's. */
+  .dismiss {
+    grid-area: dismiss;
+    margin-inline-start: calc(max(0rem, var(--gap-target) - var(--notice-gap)));
+    align-self: start;
+    margin-block: calc(-1 * var(--space-1));
+  }
+
+  .dismiss > button {
+    --ib-fg: var(--notice-fg);
+  }
+
+  .details,
+  .also {
+    margin-block-start: var(--space-3);
+    padding-block-start: var(--space-3);
+    border-block-start: var(--line-hair) solid var(--notice-rule);
+  }
+
+  .details {
+    grid-area: details;
+  }
+
+  .also {
+    grid-area: also;
+    font-weight: var(--weight-strong);
+  }
+
+  @media (forced-colors: active) {
+    .notice {
+      border: var(--line-hair) solid CanvasText;
+    }
+  }
+}

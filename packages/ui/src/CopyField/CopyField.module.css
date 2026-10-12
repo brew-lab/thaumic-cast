@@ -1,0 +1,108 @@
+@layer components {
+  /*
+   * M-copy. The value is text, not a box: a readout value in machine text that wraps
+   * anywhere. The quiet sm action sits beside it while the whole value fits, and wraps under
+   * it otherwise, at its own size. Under 20rem of its own `field` container the action is an
+   * icon-only square. It is sm on every surface (F-size).
+   */
+  .copy {
+    container: field / inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--gap-target);
+  }
+
+  /* Text, like the values beside it: never cut off, wrapping anywhere when it must. */
+  .value {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    color: var(--on-surface);
+    font-size: var(--text-3);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-3);
+    user-select: text;
+  }
+
+  :where([data-density='desktop']) .value {
+    font-size: var(--text-4-fixed);
+    line-height: var(--leading-4);
+  }
+
+  /* Focused only by script, when the clipboard refuses; the ring is an outline round text. */
+  .value:focus {
+    border-radius: var(--radius-pressed);
+    outline: var(--line-bold) solid var(--focus);
+    outline-offset: var(--line-bold);
+    box-shadow: none;
+  }
+
+  .value::selection {
+    background: var(--primary-container);
+    color: var(--on-primary-container);
+  }
+
+  .action,
+  .square {
+    display: grid;
+    flex: none;
+    max-inline-size: 100%;
+  }
+
+  .square {
+    display: none;
+  }
+
+  @container field (inline-size < 20rem) {
+    .always .action {
+      display: none;
+    }
+
+    .always .square {
+      display: grid;
+    }
+  }
+
+  .note,
+  .help {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    text-wrap: pretty;
+  }
+
+  .note {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+  }
+
+  .help {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .help > * {
+    margin: 0;
+  }
+
+  .glyph {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    block-size: calc(1lh);
+  }
+
+  .glyph > svg {
+    --icon-size: var(--icon-sm);
+  }
+}

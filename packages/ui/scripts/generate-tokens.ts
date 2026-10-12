@@ -190,6 +190,11 @@ function renderCss(): string {
     Object.entries(DENSITY)
       .map(([name, v]) => `    --${name}: ${v[key]};`)
       .join('\n');
+  const coarse = (): string =>
+    Object.entries(DENSITY)
+      .filter(([, v]) => v.coarse)
+      .map(([name, v]) => `      --${name}: ${v.coarse};`)
+      .join('\n');
   return `/*
  * ${HEADER}
  */
@@ -228,6 +233,14 @@ ${density('popup')}
 
   [data-density='desktop'] {
 ${density('desktop')}
+  }
+
+  /* F-size: under touch the popup's hit floor rises to the window's; nothing drawn changes. */
+  @media (any-pointer: coarse) {
+    :root,
+    [data-density='popup'] {
+${coarse()}
+    }
   }
 
   /* T-focus: Increase Contrast (macOS) raises the hairlines to the control edge. */

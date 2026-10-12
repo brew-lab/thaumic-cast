@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useMemo } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
+import { PageHeader } from '@thaumic-cast/ui';
 import { ServerSection } from './components/ServerSection';
 import { AudioSection } from './components/AudioSection';
 import { AppearanceSection } from './components/AppearanceSection';
@@ -44,7 +45,7 @@ export function Options(): JSX.Element {
   if (settingsLoading) {
     return (
       <div className={styles.container} aria-busy="true">
-        <h1 className={styles.title}>{t('settings_title')}</h1>
+        <PageHeader title={t('settings_title')} />
         <div className={styles.loading}>{t('loading_settings')}</div>
       </div>
     );
@@ -52,7 +53,7 @@ export function Options(): JSX.Element {
 
   return (
     <div className={styles.container}>
-      <h1 className={styles.title}>{t('settings_title')}</h1>
+      <PageHeader title={t('settings_title')} />
 
       <AppearanceSection settings={settings} onUpdate={updateSettings} />
 
