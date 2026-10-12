@@ -19,8 +19,13 @@ export interface SliderProps extends DataAttributes {
    * read in place of a number. A made-up level is never shown.
    */
   value: number | undefined;
-  /** Words for the value, read as `aria-valuetext`: "30", "+120 ms". */
+  /** Words for the value, read as `aria-valuetext` and shown in the readout: "30", "+120 ms". */
   format?: (value: number) => string;
+  /**
+   * Words read as `aria-valuetext` when they say more than the readout shows: StartLine
+   * reads "30, capped from 72" while its readout shows "30". Defaults to `format`.
+   */
+  valueText?: (value: number) => string;
   /** Read in place of the value while it is not known ("Not known yet"). */
   unknownText?: string;
   /** A centre value (trim: 0): the fill runs from it, and a mark shows it. */
@@ -67,6 +72,7 @@ export interface SliderProps extends DataAttributes {
  * @param props.step - One step
  * @param props.value - The value, or undefined while unknown
  * @param props.format - Words for the value
+ * @param props.valueText - Words read as `aria-valuetext`, when they say more
  * @param props.unknownText - Read while the value is unknown
  * @param props.centre - A centre value
  * @param props.mark - A ghost tick
@@ -86,6 +92,7 @@ export function Slider({
   step = 1,
   value,
   format = String,
+  valueText = format,
   unknownText = '…',
   centre,
   mark,
@@ -124,7 +131,7 @@ export function Slider({
         value={shown}
         disabled={disabled || unknown}
         aria-label={label}
-        aria-valuetext={unknown ? unknownText : format(shown)}
+        aria-valuetext={unknown ? unknownText : valueText(shown)}
         aria-describedby={rest['aria-describedby']}
         onInput={(event) => onChange(read(event))}
         onChange={(event) => onCommit?.(read(event))}

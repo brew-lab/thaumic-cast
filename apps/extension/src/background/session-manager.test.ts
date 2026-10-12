@@ -78,6 +78,35 @@ describe('registerSession', () => {
     });
   });
 
+  it('should keep the chosen rooms, and drop a room with the target it played through', () => {
+    registerSession(
+      1,
+      'stream-1',
+      [KITCHEN, OFFICE],
+      ['Kitchen', 'Office'],
+      ENCODER,
+      false,
+      'tab',
+      false,
+      {
+        ids: ['RINCON_K', 'RINCON_P', 'RINCON_O'],
+        targets: { RINCON_K: KITCHEN, RINCON_P: KITCHEN, RINCON_O: OFFICE },
+      },
+    );
+    expect(getActiveCasts()[0].roomIds).toEqual(['RINCON_K', 'RINCON_P', 'RINCON_O']);
+
+    removeSpeakerFromSession(1, KITCHEN);
+
+    expect(getActiveCasts()[0].roomIds).toEqual(['RINCON_O']);
+    expect(getSession(1)?.roomTargets).toEqual({ RINCON_O: OFFICE });
+  });
+
+  it('should name no rooms for a session started without them', () => {
+    register(1, 'stream-1');
+
+    expect(getActiveCasts()[0].roomIds).toEqual([]);
+  });
+
   it('should replace an earlier session for the same tab', () => {
     register(1, 'stream-1');
     register(1, 'stream-2', [OFFICE]);
@@ -278,6 +307,8 @@ describe('restoring persisted sessions', () => {
           captureMode: 'tab',
           videoSync: false,
           videoSyncOn: false,
+          roomIds: [],
+          roomTargets: {},
         },
       ],
     ]);

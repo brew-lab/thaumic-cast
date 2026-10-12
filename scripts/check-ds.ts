@@ -35,9 +35,11 @@ export const CLEAN_PATHS = [
   /^packages\/ui\/src\/(Artwork|Badge|BrandBlock|Button|Checkbox|Chip|Clacks|Divider|IconButton|Meter|NavItem|Radio|SectionHeader|SegmentedControl|Select|Slider|StatusDot|StepIndicator|Switch|TextInput|Tooltip|utils)\//,
   // Phase 2: the molecules and Card.
   /^packages\/ui\/src\/(AddressField|Card|ChoiceGroup|CopyField|DescriptionList|Disclosure|EmptyState|Field|Notice|NoticeLine|PageHeader|SettingsRow|Toast|WizardStep)\//,
-  // Phase 1: every app file, except the layouts Phases 3 and 4 rebuild wholesale (the cast
-  // card and its list, the app shells and the onboarding frames).
-  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/Onboarding\.module\.css$)(?!extension\/src\/popup\/components\/(ActiveCastCard\.(tsx|module\.css)|ActiveCastsList\.module\.css|Onboarding\.module\.css)$)[^/]+\/src\/.*\.(tsx|css)$/,
+  // Phase 3: the popup's molecules, components and shells.
+  /^packages\/ui\/src\/(CastBar|CastTile|TabCard|GroupVolume|MediaHeader|NoticeSlot|PopupHeader|PopupShell|StickyActionBar|RoomPicker|RoomRow|StartLevel|VideoSync)\//,
+  // Every app file (Phase 1; the popup since Phase 3), except the layouts Phase 4 rebuilds
+  // wholesale: the desktop shell and the two onboarding frames.
+  /^apps\/(?!desktop\/src\/App\.(css|module\.css)$)(?!desktop\/src\/views\/Onboarding\.module\.css$)(?!extension\/src\/popup\/components\/Onboarding\.module\.css$)[^/]+\/src\/.*\.(tsx|css)$/,
 ];
 
 /** One finding: the check it breaks, where, and what. */

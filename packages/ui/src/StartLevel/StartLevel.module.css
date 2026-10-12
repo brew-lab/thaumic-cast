@@ -1,0 +1,63 @@
+@layer components {
+  /*
+   * M-startlevel. The LevelButton is a quiet sm Button re-pointed to the row's ink, with a
+   * hairline edge at rest and a calm container fill while open (never a shape at rest). The
+   * StartLine is the Slider, its value and a caption. A RoomRow places the two parts by
+   * their grid areas; on their own they stack.
+   */
+  .level,
+  .line {
+    --startlevel-edge: var(--outline-variant);
+    --startlevel-open-bg: var(--container);
+    --startlevel-fg: var(--on-surface);
+    --startlevel-caption: var(--on-surface-variant);
+  }
+
+  .level {
+    grid-area: level;
+    align-self: center;
+    display: inline-flex;
+    justify-content: flex-end;
+  }
+
+  .level > button {
+    --btn-fg: var(--startlevel-fg);
+    --btn-trail: var(--startlevel-fg);
+    --btn-edge: var(--startlevel-edge);
+
+    font-variant-numeric: var(--num);
+  }
+
+  /* Open is calm: the container fill and the turned chevron, no edge. */
+  .open > button {
+    --btn-bg: var(--startlevel-open-bg);
+    --btn-edge: transparent;
+  }
+
+  /* "…" and "Fixed" are text, not a control. */
+  .text {
+    padding-inline: var(--space-3);
+    color: var(--startlevel-fg);
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
+    font-variant-numeric: var(--num);
+  }
+
+  /* Under a RoomRow it lines up with the room's name (the row sets the indent). */
+  .line {
+    grid-area: line;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    padding-inline: calc(0rem + var(--startlevel-indent, 0rem)) var(--space-3);
+    padding-block-end: var(--space-2);
+  }
+
+  .caption {
+    color: var(--startlevel-caption);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
+}

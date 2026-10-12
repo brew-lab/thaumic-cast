@@ -1,0 +1,9 @@
+@layer components {
+  /* C-noticeslot. The first item in full, the rest as lines, .25rem apart. */
+  .slot {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+}

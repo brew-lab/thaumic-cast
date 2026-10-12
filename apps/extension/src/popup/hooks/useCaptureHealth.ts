@@ -17,17 +17,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { CaptureHealthState } from '../../background/capture-health-state';
+import { CAPTURE_HEALTH_DISMISSED_KEY } from '../../lib/speaker-notices';
 import { useChromeMessage } from './useChromeMessage';
 import { useMountedRef } from './useMountedRef';
 
 export interface UseCaptureHealthResult {
   /** Whether the popup should currently render the Notice. */
   showAlert: boolean;
+  /** The tab whose cast drops frames: the notice sits in that cast's slot. */
+  tabId: number | null;
   /** Dismisses the current detection event — cleared automatically on a fresh edge. */
   dismiss: () => void;
 }
 
-const DISMISSED_AT_STORAGE_KEY = 'dismissedCaptureHealthAt';
+const DISMISSED_AT_STORAGE_KEY = CAPTURE_HEALTH_DISMISSED_KEY;
 
 /**
  * Tracks capture-health state and exposes a dismissible alert signal.
@@ -100,5 +103,5 @@ export function useCaptureHealth(): UseCaptureHealthResult {
   const showAlert =
     dismissedLoaded && health.detectedAt !== null && health.detectedAt !== dismissedAt;
 
-  return { showAlert, dismiss };
+  return { showAlert, dismiss, tabId: health.tabId };
 }

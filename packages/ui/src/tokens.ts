@@ -84,6 +84,12 @@ export const TOKEN_NAMES = [
   '--live-stop-4',
   '--live-stop-5',
   '--live-drift-from',
+  '--seed-card',
+  '--seed-title',
+  '--seed-sub',
+  '--seed-primary',
+  '--seed-rim',
+  '--seed-track',
   '--font-body',
   '--font-head',
   '--weight-body',
@@ -259,6 +265,9 @@ export const BUSY_MIN_MS = 600;
 
 /** DESIGN.md T-motion: a timing used from script, in ms. */
 export const COPY_CONFIRM_MS = 2000;
+
+/** DESIGN.md T-motion: a timing used from script, in ms. */
+export const SEARCH_SETTLE_MS = 500;
 
 /** Container-query breakpoints in rem: the only literals allowed in `@container` (F-grid). */
 export const CONTAINER_BREAKPOINTS_REM = [20, 25, 45] as const;

@@ -1,17 +1,19 @@
 /*
  * The popup's global CSS. The theme switch, the body defaults and the focus ring are in
  * @thaumic-cast/ui/base.css.
- */
-
-/*
- * Until Phase 3's PopupShell: the document is the one scroller (L-popup), with a stable
- * gutter, and the body is the `app` container the fluid tokens resolve against. Its inline
- * size is the popup's, set here because a container's own content no longer sizes it (Chrome
- * sizes the popup to the body).
+ *
+ * The PopupShell is the one scroller (L-popup): it is as wide as the popup and at most as
+ * tall, with its own stable gutter, so the document itself never scrolls and keeps no
+ * gutter. Until Phase 4's WizardShell, the onboarding frame scrolls the document, so the
+ * document keeps a stable gutter while no shell is on the page.
  */
 @layer app {
   :root {
     scrollbar-gutter: stable;
+  }
+
+  :root:has([data-scroller]) {
+    scrollbar-gutter: auto;
   }
 
   body {

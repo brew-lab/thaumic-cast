@@ -15,7 +15,12 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { ActiveCast, AppType } from '@thaumic-cast/protocol';
 import type { IngestGapsEntry } from '../../lib/message-schemas';
-import { INGEST_GAPS_NOTICE_MS, ingestGapsLine, type NoticeLine } from '../../lib/speaker-notices';
+import {
+  INGEST_GAPS_DISMISSED_KEY,
+  INGEST_GAPS_NOTICE_MS,
+  ingestGapsLine,
+  type NoticeLine,
+} from '../../lib/speaker-notices';
 import { useChromeMessage } from './useChromeMessage';
 import { useMountedRef } from './useMountedRef';
 
@@ -39,7 +44,7 @@ export interface UseIngestGapsResult {
 
 type IngestGapsSnapshot = Record<string, IngestGapsEntry>;
 
-const DISMISSED_STORAGE_KEY = 'dismissedIngestGapsAt';
+const DISMISSED_STORAGE_KEY = INGEST_GAPS_DISMISSED_KEY;
 
 /**
  * Checks that a stored value is a map of stream ID to dismissed timestamp.

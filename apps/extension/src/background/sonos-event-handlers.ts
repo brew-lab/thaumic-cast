@@ -41,6 +41,13 @@ import {
   hasSession,
 } from './session-manager';
 import { notifyPopup } from './notification-service';
+import {
+  castRoomsOf,
+  recordCastEnded,
+  recordSpeakerLeft,
+  recordStopFailed,
+  speakerNameOf,
+} from './away-log';
 import { offscreenBroker } from './offscreen-broker';
 import { noop } from '../lib/noop';
 import {
@@ -484,6 +491,7 @@ async function handleSpeakerRemoval(
   removeSpeakerFromSession(tabId, speakerIp);
 
   // Check if session still has other speakers
+  const speakerName = speakerNameOf(speakerIp);
   if (hasSession(tabId)) {
     log.info(`Removed speaker ${speakerIp} from cast for tab ${tabId} due to ${reason}`);
 
@@ -493,6 +501,7 @@ async function handleSpeakerRemoval(
       speakerIp,
       reason,
     });
+    await recordSpeakerLeft(tabId, speakerName, reason);
   } else {
     log.info(`Stopping cast for tab ${tabId} due to ${reason} (last speaker)`);
 
@@ -504,6 +513,7 @@ async function handleSpeakerRemoval(
       speakerIp,
       reason,
     });
+    await recordCastEnded(tabId, speakerName, speakerName, reason);
   }
 }
 
@@ -523,16 +533,21 @@ async function handleStreamEnded(streamId: string): Promise<void> {
 
   log.info(`Stream ${streamId} ended, cleaning up session for tab ${session.tabId}`);
 
+  const { tabId } = session;
+  const speakerIp = session.speakerIps[0];
+  const castRooms = castRoomsOf(session.speakerIps);
+
   // Stop the capture in offscreen
-  await stopCastForTab(session.tabId);
+  await stopCastForTab(tabId);
 
   // Notify popup that the cast was stopped (use first speaker for backward compat)
   notifyPopup({
     type: 'CAST_AUTO_STOPPED',
-    tabId: session.tabId,
-    speakerIp: session.speakerIps[0],
+    tabId,
+    speakerIp,
     reason: 'stream_ended',
   });
+  await recordCastEnded(tabId, castRooms, speakerNameOf(speakerIp), 'stream_ended');
 }
 
 /**
@@ -629,6 +644,8 @@ function handlePlaybackStopFailed(streamId: string, speakerIp: string, error: st
     speakerIp,
     error,
   });
+  // A popup that shut before the answer came hears of it in its away line.
+  void recordStopFailed(session.tabId, speakerNameOf(speakerIp));
 }
 
 /**

@@ -557,8 +557,8 @@ export function SwitchSpecimen(): JSX.Element {
   return (
     <div class="stack narrow">
       <Switch
-        label="Sync video"
-        description="Holds the picture back until the speakers catch up."
+        label="Video sync"
+        description="Plays the sound early, so a film's lips and words arrive together."
         checked={on}
         onChange={setOn}
       />
@@ -600,7 +600,7 @@ export function SwitchSpecimen(): JSX.Element {
         disabled
       />
       <Switch
-        label="Sync video"
+        label="Video sync"
         badge={<Badge tone="neutral" label="In step" />}
         description="With a Badge after the name; its words are part of the name."
         checked
@@ -1080,15 +1080,15 @@ export function TooltipSpecimen(): JSX.Element {
   return (
     <div class="stack">
       <Cluster>
-        <IconButton glyph="refresh" label="Measure video sync again" tooltip />
+        <IconButton glyph="refresh" label="Ask again" tooltip />
         <Tooltip content="Settings">
           <IconButton glyph="settings" label="Settings" kind="tonal" />
         </Tooltip>
       </Cluster>
       <span class="label">Shown (the real tooltip, opened without a hover)</span>
       <div class="tooltip-stage">
-        <Tooltip content="Measure video sync again" defaultOpen>
-          <IconButton glyph="refresh" label="Measure video sync again" />
+        <Tooltip content="Ask again" defaultOpen>
+          <IconButton glyph="refresh" label="Ask again" />
         </Tooltip>
       </div>
     </div>

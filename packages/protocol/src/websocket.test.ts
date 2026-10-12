@@ -48,7 +48,10 @@ describe('WsMessageSchema', () => {
     expect(parsed.type).toBe('START_PLAYBACK');
     if (parsed.type !== 'START_PLAYBACK') return;
     expect(parsed.payload.speakerIps).toEqual(['192.168.1.10', '192.168.1.11']);
-    expect(parsed.payload.startVolume).toEqual({ limit: 30, speakers: { '192.168.1.11': 45 } });
+    expect(parsed.payload.startVolume).toEqual({
+      limit: 30,
+      rooms: { RINCON_000E58A0B1C2D01400: 45 },
+    });
   });
 
   it('should leave the start volume out of a START_PLAYBACK that has none', () => {
@@ -68,10 +71,8 @@ describe('WsMessageSchema', () => {
 
     expect(WsMessageSchema.safeParse(message({ limit: 101 })).success).toBe(false);
     expect(WsMessageSchema.safeParse(message({ limit: -1 })).success).toBe(false);
-    expect(WsMessageSchema.safeParse(message({ speakers: { [SPEAKER]: 30.5 } })).success).toBe(
-      false,
-    );
-    expect(WsMessageSchema.safeParse(message({ limit: 0, speakers: {} })).success).toBe(true);
+    expect(WsMessageSchema.safeParse(message({ rooms: { RINCON_A: 30.5 } })).success).toBe(false);
+    expect(WsMessageSchema.safeParse(message({ limit: 0, rooms: {} })).success).toBe(true);
   });
 
   it('should require a message on ERROR payloads', () => {

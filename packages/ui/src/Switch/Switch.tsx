@@ -12,10 +12,10 @@ export interface SwitchProps extends DataAttributes {
   checked: boolean;
   /** Called with the new state. */
   onChange: (checked: boolean) => void;
-  /** The row's name, e.g. "Sync video". */
+  /** The row's name, e.g. "Video sync". */
   label: string;
   /**
-   * A Badge after the name ("In step" on Sync video). The name and the Badge label the
+   * A Badge after the name ("In step" on Video sync). The name and the Badge label the
    * switch, so its words are part of the one name; the description and note describe it.
    */
   badge?: ComponentChildren;

@@ -1,0 +1,36 @@
+@layer components {
+  /*
+   * C-castbar. The failure line, the md Button full width (or Cancel and Add), and one
+   * polite line, always reserved, so the bar never jumps when it fills.
+   */
+  .bar {
+    --castbar-line: var(--on-surface-variant);
+
+    display: flex;
+    flex-direction: column;
+
+    /* Wider than the focus ring (2 + 2 px), so a focused Cast never touches its line. */
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  .add {
+    display: flex;
+    gap: var(--space-3);
+  }
+
+  .grow {
+    display: flex;
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+
+  .line {
+    min-block-size: calc(1lh);
+    margin: 0;
+    color: var(--castbar-line);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+    text-wrap: pretty;
+  }
+}

@@ -2,11 +2,10 @@ import type { JSX } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import type { AppType } from '@thaumic-cast/protocol';
-import { Card, Select, SettingsRow, Switch } from '@thaumic-cast/ui';
+import { Card, SettingsRow, Slider, Switch } from '@thaumic-cast/ui';
 import type { CompanionCapability } from '../../lib/audio-resolver';
 import { captureToggleState } from '../../lib/capture-capability';
 import { isWindowsPlatform, type ExtensionSettings } from '../../lib/settings';
-import { startCeilingChoices } from '../../lib/start-level';
 import { hasVideoSyncHostAccess, requestVideoSyncHostAccess } from '../../lib/video-sync-access';
 
 interface AdvancedSectionProps {
@@ -79,13 +78,16 @@ export function AdvancedSection({
     await onUpdate({ syncSpeakers: !settings.syncSpeakers });
   }, [settings.syncSpeakers, onUpdate]);
 
-  const handleStartCeilingChange = useCallback(
-    async (value: string) => {
-      if (value === 'off') {
-        await onUpdate({ startCeilingEnabled: false });
-      } else {
-        await onUpdate({ startCeilingEnabled: true, startCeiling: Number(value) });
-      }
+  const handleStartCeilingToggle = useCallback(async () => {
+    await onUpdate({ startCeilingEnabled: !settings.startCeilingEnabled });
+  }, [settings.startCeilingEnabled, onUpdate]);
+
+  // The Slider moves at once; the limit is saved when the change is committed, not on every step.
+  const [ceiling, setCeiling] = useState(settings.startCeiling);
+  useEffect(() => setCeiling(settings.startCeiling), [settings.startCeiling]);
+  const handleStartCeilingCommit = useCallback(
+    async (level: number) => {
+      await onUpdate({ startCeiling: level });
     },
     [onUpdate],
   );
@@ -118,25 +120,27 @@ export function AdvancedSection({
       />
 
       <SettingsRow
-        label={t('start_ceiling_enable')}
-        help={t('start_ceiling_description')}
-        control={(a11y) => (
-          <Select
-            id="start-ceiling-select"
+        control={
+          <Switch
             label={t('start_ceiling_enable')}
-            hideLabel
-            value={settings.startCeilingEnabled ? String(settings.startCeiling) : 'off'}
-            options={[
-              ...startCeilingChoices(settings.startCeiling).map((level) => ({
-                value: String(level),
-                label: String(level),
-              })),
-              { value: 'off', label: t('start_ceiling_off') },
-            ]}
-            onChange={handleStartCeilingChange}
-            aria-describedby={a11y['aria-describedby']}
+            description={t('start_ceiling_description')}
+            checked={settings.startCeilingEnabled}
+            onChange={handleStartCeilingToggle}
           />
-        )}
+        }
+        detail={
+          settings.startCeilingEnabled && (
+            <Slider
+              label={t('start_ceiling_enable')}
+              min={0}
+              max={100}
+              value={ceiling}
+              onChange={setCeiling}
+              onCommit={handleStartCeilingCommit}
+              readout={3}
+            />
+          )
+        }
       />
 
       <Switch

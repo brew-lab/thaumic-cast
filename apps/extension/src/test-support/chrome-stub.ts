@@ -53,6 +53,9 @@ export const chromeStorageData = {
 /** Every message handed to `chrome.runtime.sendMessage`, oldest first. */
 export const runtimeMessages: unknown[] = [];
 
+/** Every `chrome.action` write, oldest first, as `[method, details]`. */
+export const actionCalls: [string, unknown][] = [];
+
 /** Every message handed to `chrome.tabs.sendMessage`, oldest first. */
 export const tabMessages: { tabId: number; message: unknown }[] = [];
 
@@ -86,6 +89,7 @@ export function resetChromeStub(): void {
   scriptingCalls.length = 0;
   grantedOrigins.clear();
   tabUrls.clear();
+  actionCalls.length = 0;
 }
 
 const chromeStub = {
@@ -149,6 +153,21 @@ const chromeStub = {
   },
   i18n: {
     getUILanguage: (): string => 'en-US',
+    getMessage: (name: string): string => (name === 'extensionName' ? 'Thaumic Cast' : ''),
+  },
+  action: {
+    async setBadgeText(details: unknown): Promise<void> {
+      actionCalls.push(['setBadgeText', details]);
+    },
+    async setBadgeBackgroundColor(details: unknown): Promise<void> {
+      actionCalls.push(['setBadgeBackgroundColor', details]);
+    },
+    async setBadgeTextColor(details: unknown): Promise<void> {
+      actionCalls.push(['setBadgeTextColor', details]);
+    },
+    async setTitle(details: unknown): Promise<void> {
+      actionCalls.push(['setTitle', details]);
+    },
   },
 };
 

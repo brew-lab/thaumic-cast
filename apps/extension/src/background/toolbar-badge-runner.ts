@@ -1,0 +1,126 @@
+/**
+ * Toolbar Badge Runner
+ *
+ * Keeps the toolbar badge in step with the background's state: it gathers
+ * the sources `toolbar-badge.ts` reads and writes the result whenever
+ * something the badge depends on may have changed.
+ *
+ * Triggers: every popup notification (they are sent exactly when casts,
+ * health, gaps, capture health or the connection change), every change to
+ * the away log, a dismissal the popup stores, and the browser theme.
+ */
+
+import { createLogger } from '@thaumic-cast/shared';
+import { getAwayEvents, onAwayEventsChanged } from './away-log';
+import { getCaptureHealthState } from './capture-health-state';
+import { getConnectionState } from './connection-state';
+import { getIngestGaps } from './ingest-gaps-state';
+import { notificationService } from './notification-service';
+import type { BackgroundToPopupMessage } from '../lib/messages';
+import { getAllSessions } from './session-manager';
+import { getSpeakerHealth } from './speaker-health-state';
+import { getSpeakerGroups } from './sonos-state';
+import {
+  TOOLBAR_DARK_KEY,
+  badgeFor,
+  badgeItems,
+  isToolbarDark,
+  readDismissals,
+  writeBadge,
+  type BadgeSources,
+} from './toolbar-badge';
+import {
+  CAPTURE_HEALTH_DISMISSED_KEY,
+  INGEST_GAPS_DISMISSED_KEY,
+  INGEST_GAPS_NOTICE_MS,
+  NO_REPLY_DISMISSED_KEY,
+  SPEAKER_NOTICES_DISMISSED_KEY,
+} from '../lib/speaker-notices';
+
+const log = createLogger('ToolbarBadge');
+
+/** Changes this close together are written once. */
+const REFRESH_DELAY_MS = 100;
+
+/**
+ * Gathers the badge's sources from the background's state now.
+ * @returns The sources
+ */
+export async function currentBadgeSources(): Promise<BadgeSources> {
+  const connection = getConnectionState();
+  const groups = getSpeakerGroups();
+  return {
+    casts: getAllSessions().map(({ streamId, tabId }) => ({ streamId, tabId })),
+    networkHealth: connection.networkHealth,
+    networkHealthReason: connection.networkHealthReason,
+    speakerHealth: getSpeakerHealth(),
+    speakerName: (speakerIp) => groups.getGroupName(speakerIp),
+    ...(await readDismissals()),
+    ingestGaps: getIngestGaps(),
+    captureHealth: getCaptureHealthState(),
+    away: await getAwayEvents(),
+    now: Date.now(),
+  };
+}
+
+/** Popup notifications that never change what the badge says. */
+const IGNORED: ReadonlySet<BackgroundToPopupMessage['type']> = new Set([
+  'TAB_STATE_CHANGED',
+  'VOLUME_UPDATE',
+  'MUTE_UPDATE',
+  'TRANSPORT_STATE_UPDATE',
+]);
+
+let pending: ReturnType<typeof setTimeout> | null = null;
+let expiry: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Recomputes the badge and writes it if it changed. A gaps report ages out
+ * with no message to say so, so the badge is looked at again when it does.
+ * @returns Resolves when written
+ */
+export async function refreshToolbarBadge(): Promise<void> {
+  const [sources, dark] = await Promise.all([currentBadgeSources(), isToolbarDark()]);
+  await writeBadge(badgeFor(badgeItems(sources), dark));
+
+  if (expiry) clearTimeout(expiry);
+  expiry = null;
+  const ends = Object.values(sources.ingestGaps)
+    .map((report) => report.receivedAt + INGEST_GAPS_NOTICE_MS - sources.now)
+    .filter((left) => left > 0);
+  if (ends.length > 0) expiry = setTimeout(scheduleRefresh, Math.min(...ends));
+}
+
+/**
+ * Refreshes the badge soon, once for a burst of changes.
+ */
+function scheduleRefresh(): void {
+  if (pending) return;
+  pending = setTimeout(() => {
+    pending = null;
+    refreshToolbarBadge().catch((err) => log.warn('Failed to refresh the toolbar badge:', err));
+  }, REFRESH_DELAY_MS);
+}
+
+/** The stored values a change to which changes the badge. */
+const WATCHED_KEYS = new Set([
+  TOOLBAR_DARK_KEY,
+  SPEAKER_NOTICES_DISMISSED_KEY,
+  INGEST_GAPS_DISMISSED_KEY,
+  CAPTURE_HEALTH_DISMISSED_KEY,
+  NO_REPLY_DISMISSED_KEY,
+]);
+
+/**
+ * Starts keeping the badge in step. Call once from the service worker's start.
+ */
+export function startToolbarBadge(): void {
+  notificationService.subscribe((msg) => {
+    if (!IGNORED.has(msg.type)) scheduleRefresh();
+  });
+  onAwayEventsChanged(scheduleRefresh);
+  chrome.storage.onChanged.addListener((changes) => {
+    if (Object.keys(changes).some((key) => WATCHED_KEYS.has(key))) scheduleRefresh();
+  });
+  scheduleRefresh();
+}

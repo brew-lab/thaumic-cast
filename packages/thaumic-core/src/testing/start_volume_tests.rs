@@ -12,7 +12,7 @@ use super::harness::{within, TestSystem};
 fn limit(level: u8) -> StartVolumeRequest {
     StartVolumeRequest {
         limit: Some(level),
-        speakers: HashMap::new(),
+        rooms: HashMap::new(),
     }
 }
 
@@ -144,10 +144,10 @@ async fn a_room_that_cannot_be_read_starts_at_the_limit() {
     .await;
 }
 
-/// Proves: a level set by hand applies to every room of the target, above the
-/// limit too.
+/// Proves: a level set by hand applies to its own room only, above the limit
+/// too; a grouped partner without one follows the limit.
 #[tokio::test]
-async fn a_hand_set_level_applies_to_every_room_even_above_the_limit() {
+async fn a_hand_set_level_applies_to_its_room_even_above_the_limit() {
     within("hand-set level", async {
         let sys = TestSystem::builder()
             .speakers(["Kitchen", "Dining Room"])
@@ -159,14 +159,50 @@ async fn a_hand_set_level_applies_to_every_room_even_above_the_limit() {
         let stream = sys.new_stream();
         let request = StartVolumeRequest {
             limit: Some(30),
-            speakers: HashMap::from([(sys.ip("Kitchen"), 45)]),
+            rooms: HashMap::from([(sys.uuid("Kitchen"), 45)]),
         };
 
         sys.start_with_volume(&stream, &["Kitchen"], false, &request)
             .await;
 
         assert_eq!(sys.fake.speaker_named("Kitchen").volume(), 45);
-        assert_eq!(sys.fake.speaker_named("Dining Room").volume(), 45);
+        assert_eq!(sys.fake.speaker_named("Dining Room").volume(), 30);
+    })
+    .await;
+}
+
+/// Proves: a grouped partner's own hand-set level reaches it through its
+/// coordinator's target, and the coordinator follows the limit.
+#[tokio::test]
+async fn a_partner_s_hand_set_level_is_used_with_the_limit_off() {
+    within("partner hand-set", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Dining Room"])
+            .build()
+            .await;
+        group(&sys, "Kitchen", "Dining Room").await;
+        sys.fake.speaker_named("Kitchen").set_volume(72);
+        sys.fake.speaker_named("Dining Room").set_volume(60);
+        let stream = sys.new_stream();
+        let seq = sys.fake.next_seq();
+        let request = StartVolumeRequest {
+            limit: None,
+            rooms: HashMap::from([(sys.uuid("Dining Room"), 15)]),
+        };
+
+        sys.start_with_volume(&stream, &["Kitchen"], false, &request)
+            .await;
+
+        assert_eq!(sys.fake.speaker_named("Kitchen").volume(), 72);
+        assert_eq!(sys.fake.speaker_named("Dining Room").volume(), 15);
+        let calls = sys.fake.calls_since(seq);
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.is(&sys.ip("Kitchen"), "GetVolume")),
+            "with the limit off, a room with no hand-set level is not even read: {}",
+            sys.fake.format_log()
+        );
     })
     .await;
 }
@@ -274,6 +310,46 @@ async fn synced_speakers_are_set_before_they_are_joined() {
             .min()
             .expect("SetAVTransportURI");
         assert!(last_set < first_uri, "{}", sys.fake.format_log());
+    })
+    .await;
+}
+
+/// Proves: a room added to a running cast (a second `START_PLAYBACK` naming
+/// only it, as the extension's ADD_ROOMS sends) plays the same stream on its
+/// own and starts at its level; the room already playing is left alone.
+#[tokio::test]
+async fn a_room_added_to_a_running_cast_starts_at_its_level() {
+    within("add a room", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Study"])
+            .build()
+            .await;
+        sys.fake.speaker_named("Kitchen").set_volume(72);
+        sys.fake.speaker_named("Study").set_volume(80);
+        let stream = sys.new_stream();
+        sys.start_with_volume(&stream, &["Kitchen"], false, &limit(30))
+            .await;
+        sys.fake.speaker_named("Kitchen").set_volume(60);
+
+        let request = StartVolumeRequest {
+            limit: Some(30),
+            rooms: HashMap::from([(sys.uuid("Study"), 25)]),
+        };
+        let results = sys
+            .start_with_volume(&stream, &["Study"], false, &request)
+            .await;
+
+        assert!(results.iter().all(|r| r.success), "{results:?}");
+        assert_eq!(sys.fake.speaker_named("Study").volume(), 25);
+        assert_eq!(sys.fake.speaker_named("Kitchen").volume(), 60);
+        let playing = sys
+            .services
+            .stream_coordinator
+            .get_all_sessions()
+            .into_iter()
+            .filter(|session| session.stream_id == stream)
+            .count();
+        assert_eq!(playing, 2, "{}", sys.fake.format_log());
     })
     .await;
 }

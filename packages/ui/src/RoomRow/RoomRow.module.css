@@ -1,0 +1,237 @@
+@layer components {
+  /*
+   * M-roomrow. pick: the Checkbox atom is the row (its label holds the room's lines; it
+   * takes the layer on its corner and the ring, and never reshapes), with the start at the
+   * row's end and the StartLine under it. cast: the name and Badge over one volume line.
+   * list: a disc, the name and a Badge. Rows arrive in flow with the notices' entrance,
+   * staggered and capped at the sixth (T-motion).
+   */
+  .pick,
+  .cast {
+    --roomrow-name: var(--on-surface);
+    --roomrow-sub: var(--on-surface-variant);
+    --roomrow-gap: var(--space-3-5);
+    --roomrow-pad: var(--space-3);
+    --roomrow-min: var(--control-md);
+    --row-idx: var(--i, 1);
+
+    min-inline-size: 0;
+    transition:
+      opacity var(--dur-effects) var(--ease-effects),
+      translate var(--dur-effects) var(--ease-effects);
+    transition-delay: calc(min(var(--row-idx) - 1, 5) * var(--dur-stagger));
+  }
+
+  /* ---------------------------------------------------------------- pick */
+
+  .pick {
+    /* The StartLine lines up with the name: the row's padding, the box and the gap. */
+    --startlevel-indent: calc(var(--roomrow-pad) + var(--size-box) + var(--roomrow-gap));
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label level'
+      'line line';
+    align-items: center;
+    column-gap: var(--space-1);
+  }
+
+  /* With a sub line the row is a step taller (2.75rem in the popup). */
+  .with-sub {
+    --roomrow-min: calc(var(--control-md) + var(--space-3));
+  }
+
+  /* The Checkbox row, re-pointed to the room row's size: it never reshapes. */
+  .pick > label {
+    grid-area: label;
+    align-items: center;
+    gap: var(--roomrow-gap);
+    min-block-size: var(--roomrow-min);
+    padding-block: var(--space-1);
+    padding-inline: var(--roomrow-pad);
+  }
+
+  /* The box sits centred on the row's lines, not on a first line of its own size. */
+  .pick > label > :first-child {
+    margin-block: 0;
+  }
+
+  /* The Checkbox's words fill the row, so an unchosen room's start sits at its end. */
+  .pick > label > :last-child {
+    flex: 1 1 auto;
+  }
+
+  .label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .lines {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  /* One line with an ellipsis; the whole name stays in the label's text. */
+  .name {
+    overflow: hidden;
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* "Grouped with …", a Badge and "at 72 now", each wrapping as a whole. */
+  .sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    color: var(--roomrow-sub);
+    font-size: var(--text-2);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-2);
+  }
+
+  /* Two phrases side by side read apart ("Grouped with Kitchen · at 41 now"); unspoken. */
+  .sub > .phrase:not(:first-child)::before {
+    content: '·' / '';
+    margin-inline-end: var(--space-2);
+  }
+
+  /* The start of an unchosen room: a number in its --ch-volume box, said in the label. */
+  .trail {
+    flex: none;
+    min-inline-size: var(--ch-volume);
+    font-size: var(--text-3);
+    font-weight: var(--weight-body);
+    line-height: var(--leading-3);
+    text-align: end;
+  }
+
+  /* ---------------------------------------------------------------- cast */
+
+  .cast {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .cast-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-block-size: var(--icon-md);
+  }
+
+  .cast-name {
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--roomrow-name);
+    font-size: var(--text-3);
+    line-height: var(--leading-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .body {
+    min-inline-size: 0;
+  }
+
+  /* One volume line: mute | Slider and its value | Remove. */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-inline-size: 0;
+  }
+
+  /* A joining row's place for Remove: an IconButton's width, empty. */
+  .reserve {
+    flex: none;
+    inline-size: var(--control-sm);
+  }
+
+  .slider {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+
+  /* ---------------------------------------------------------------- list */
+
+  .list {
+    --roomrow-list-gap: var(--space-3-5);
+
+    display: flex;
+    align-items: center;
+    gap: var(--roomrow-list-gap);
+    min-block-size: var(--size-art-md);
+    color: var(--on-surface);
+    list-style: none;
+  }
+
+  :where([data-density='desktop']) .list {
+    --roomrow-list-gap: var(--space-4);
+
+    min-block-size: var(--size-art-lg);
+  }
+
+  .list-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  .list-name {
+    font-size: var(--text-3);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-3);
+  }
+
+  :where([data-density='desktop']) .list-name {
+    font-size: var(--text-4-fixed);
+    line-height: var(--leading-4);
+  }
+
+  .list-sub {
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
+
+  /* ------------------------------------------------------------ entrance */
+
+  @supports (order: sibling-index()) {
+    .pick,
+    .cast {
+      --row-idx: sibling-index();
+    }
+  }
+
+  @starting-style {
+    .pick,
+    .cast {
+      opacity: 0;
+      translate: 0 var(--space-2);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pick,
+    .cast {
+      transition: none;
+    }
+  }
+}

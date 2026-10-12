@@ -23,6 +23,9 @@ export * from './src/websocket.js';
 // Sonos state types (groups, transport, sessions)
 export * from './src/sonos.js';
 
+// Rooms folded from Sonos groups (bonded devices, grouped rooms)
+export * from './src/rooms.js';
+
 // Event types (sonos, stream, latency and its playout estimate, broadcast)
 export * from './src/events.js';
 

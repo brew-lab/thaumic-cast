@@ -268,7 +268,10 @@ describe('SonosStateSnapshotSchema', () => {
           name: 'Kitchen',
           coordinatorUuid: 'RINCON_1',
           coordinatorIp: SPEAKER,
-          members: [{ uuid: 'RINCON_1', ip: SPEAKER, zoneName: 'Kitchen', model: 'One' }],
+          members: [
+            { uuid: 'RINCON_1', ip: SPEAKER, zoneName: 'Kitchen', model: 'One' },
+            { uuid: 'RINCON_2', ip: OTHER_SPEAKER, zoneName: 'Kitchen', invisible: true },
+          ],
         },
       ],
       transportStates: playing(SPEAKER),

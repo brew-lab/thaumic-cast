@@ -31,6 +31,7 @@ import {
 } from '../../lib/message-schemas';
 import { stopCastForTab } from '../sonos-event-handlers';
 import { notifyPopup } from '../notification-service';
+import { castRoomsOf, recordCastEnded, speakerNameOf } from '../away-log';
 import {
   applyCaptureHealthEvent,
   captureHealthBroadcast,
@@ -126,6 +127,7 @@ export function registerOffscreenRoutes(): void {
 
         const session = getSession(tabId);
         const speakerIp = session?.speakerIps[0] ?? '0.0.0.0';
+        const castRooms = castRoomsOf(session?.speakerIps ?? [speakerIp]);
 
         await stopCastForTab(tabId);
 
@@ -136,6 +138,7 @@ export function registerOffscreenRoutes(): void {
           reason,
           params,
         });
+        await recordCastEnded(tabId, castRooms, speakerNameOf(speakerIp), reason, params);
       } else if (clearCaptureHealthForTab(tabId)) {
         // The cast stopped before it reached START_PLAYBACK, so there is no
         // session to stop; drop its capture-health state as a disconnect does.

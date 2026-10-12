@@ -1,0 +1,35 @@
+@layer components {
+  /*
+   * C-popupheader. The BrandBlock over the status line, and Settings at the end. It scrolls
+   * away with the page.
+   */
+  .header {
+    --popupheader-status: var(--on-surface-variant);
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    min-block-size: calc(var(--size-art-lg) + var(--space-3));
+    padding-block: var(--space-2-5);
+    padding-inline: var(--space-3-5);
+  }
+
+  .identity {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  /* The Clacks fill their square, so the words keep --space-2 from them. */
+  .status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--popupheader-status);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
+}

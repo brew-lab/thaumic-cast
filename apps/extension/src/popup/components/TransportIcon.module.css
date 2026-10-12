@@ -1,8 +1,0 @@
-@layer app {
-  .icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--on-surface-variant);
-  }
-}

@@ -267,7 +267,7 @@ describe('speakerNoticeLines', () => {
         expect(hasEntry(strings, line.key)).toBe(true);
       }
     }
-    expect(strings.speaker_notice_dismiss).toBeString();
+    expect(strings.dismiss).toBeString();
     expect(strings.ingest_gaps_action_open_settings).toBeString();
   });
 

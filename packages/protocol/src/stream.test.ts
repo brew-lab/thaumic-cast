@@ -34,6 +34,6 @@ describe('StartVolumeSchema', () => {
   it('should only accept whole levels from 0 to 100', () => {
     expect(StartVolumeSchema.safeParse({ limit: 100 }).success).toBe(true);
     expect(StartVolumeSchema.safeParse({ limit: 101 }).success).toBe(false);
-    expect(StartVolumeSchema.safeParse({ speakers: { '10.0.0.2': -1 } }).success).toBe(false);
+    expect(StartVolumeSchema.safeParse({ rooms: { RINCON_A: -1 } }).success).toBe(false);
   });
 });

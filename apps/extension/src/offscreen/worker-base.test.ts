@@ -415,7 +415,7 @@ describe('START_PLAYBACK', () => {
         type: 'START_PLAYBACK',
         speakerIps: ['192.168.1.10'],
         videoSyncEnabled: false,
-        startVolume: { limit: 30, speakers: { '192.168.1.10': 45 } },
+        startVolume: { limit: 30, rooms: { RINCON_KITCHEN: 45 } },
       },
       () => {},
     );
@@ -424,7 +424,7 @@ describe('START_PLAYBACK', () => {
     const message = WsMessageSchema.parse(JSON.parse(sent[0]!));
     expect(message.type === 'START_PLAYBACK' && message.payload.startVolume).toEqual({
       limit: 30,
-      speakers: { '192.168.1.10': 45 },
+      rooms: { RINCON_KITCHEN: 45 },
     });
   });
 });

@@ -36,7 +36,8 @@ import { setSonosState, getSonosState as getStoredSonosState, updateGroups } fro
 import { ensureOffscreen } from '../offscreen-manager';
 import { offscreenBroker } from '../offscreen-broker';
 import { notifyPopup } from '../notification-service';
-import { clearAllSessions, getSessionBySpeakerIp } from '../session-manager';
+import { clearAllSessions, getSessionBySpeakerIp, getSessionCount } from '../session-manager';
+import { markConnectionRecovered, recordConnectionLost } from '../away-log';
 import {
   applySpeakerHealthEvent,
   clearAllSpeakerHealth,
@@ -120,6 +121,7 @@ export function handleWsConnected(
   setCompanionAudio(companionAudio);
   notifyPopup({ type: 'COMPANION_AUDIO_CHANGED', audio: companionAudio });
   updateSonosState(state);
+  void markConnectionRecovered();
   log.info('WebSocket connected');
 
   // Extract network health from initial state if present
@@ -157,6 +159,8 @@ export function handleWsTemporarilyDisconnected(): void {
  * Clears all sessions since desktop is unreachable.
  */
 export function handleWsPermanentlyDisconnected(): void {
+  // Remembered for the away line: it says so once the connection is back.
+  void recordConnectionLost(getSessionCount());
   // Clear all sessions - offscreen's stopAllSessions() terminates workers
   // synchronously, so SESSION_DISCONNECTED messages are never sent
   clearAllSessions();

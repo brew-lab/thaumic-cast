@@ -43,6 +43,20 @@ export * from './SettingsRow';
 export * from './Toast';
 export * from './WizardStep';
 
-// Rebuilt in later phases (DESIGN.md §14)
-export * from './Speaker';
+// The popup (DESIGN.md §5–§8, Phase 3)
+export * from './CastBar';
+export * from './CastTile';
+export * from './GroupVolume';
+export * from './MediaHeader';
+export * from './NoticeSlot';
+export * from './PopupHeader';
+export * from './PopupShell';
+export * from './RoomPicker';
+export * from './RoomRow';
+export * from './StartLevel';
+export * from './StickyActionBar';
+export * from './TabCard';
+export * from './VideoSync';
+
+// Rebuilt in a later phase (DESIGN.md §14)
 export * from './Wizard';

@@ -47,7 +47,7 @@ const CONTROLS: Control[] = [
   },
   {
     name: 'switch',
-    find: (page) => section(page).getByRole('switch', { name: 'Sync video' }),
+    find: (page) => section(page).getByRole('switch', { name: 'Video sync', exact: true }),
     shaped: '[class*="thumb"]',
     keys: ['Enter', 'Space'],
   },

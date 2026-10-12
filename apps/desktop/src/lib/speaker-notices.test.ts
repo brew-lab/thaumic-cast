@@ -218,6 +218,8 @@ describe('speakerNoticeLines', () => {
         key !== 'dashboard.speaker_notice_where' &&
         key !== 'dashboard.speaker_notice_where_fixed' &&
         key !== 'dashboard.speaker_notice_drift_turn_on_desktop' &&
+        // The popup's X is named by its shared `dismiss` since Phase 3.
+        key !== 'dashboard.speaker_notice_dismiss' &&
         !key.endsWith('_open_settings'),
     );
     expect(shared.length).toBeGreaterThan(0);

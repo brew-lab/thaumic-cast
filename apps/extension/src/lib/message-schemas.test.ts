@@ -23,6 +23,7 @@ import {
   WsStateChangedMessageSchema,
 } from './message-schemas';
 
+const KITCHEN_ROOM = 'RINCON_000E58A0B1C2D01400';
 const SPEAKER = '192.168.1.10';
 
 describe('primitive schemas', () => {
@@ -52,32 +53,36 @@ describe('primitive schemas', () => {
 });
 
 describe('StartCastMessageSchema', () => {
-  it('should require at least one valid speaker', () => {
-    const message = (speakerIps: string[]) => ({ type: 'START_CAST', payload: { speakerIps } });
+  it('should carry the chosen rooms, and refuse an empty room id', () => {
+    const message = (roomIds: string[]) => ({ type: 'START_CAST', payload: { roomIds } });
 
-    expect(StartCastMessageSchema.safeParse(message([SPEAKER])).success).toBe(true);
-    expect(StartCastMessageSchema.safeParse(message([])).success).toBe(false);
-    expect(StartCastMessageSchema.safeParse(message(['kitchen'])).success).toBe(false);
+    expect(StartCastMessageSchema.safeParse(message([KITCHEN_ROOM])).success).toBe(true);
+    // An empty choice reaches the background, which says no room is chosen.
+    expect(StartCastMessageSchema.safeParse(message([])).success).toBe(true);
+    expect(StartCastMessageSchema.safeParse(message([''])).success).toBe(false);
+    expect(StartCastMessageSchema.safeParse({ type: 'START_CAST', payload: {} }).success).toBe(
+      false,
+    );
   });
 
   it('should let the background choose the encoder when none is given', () => {
     const parsed = StartCastMessageSchema.parse({
       type: 'START_CAST',
-      payload: { speakerIps: [SPEAKER] },
+      payload: { roomIds: [KITCHEN_ROOM] },
     });
 
     expect(parsed.payload.encoderConfig).toBeUndefined();
   });
 
-  it('should accept hand-set start levels from 0 to 100 keyed by speaker address', () => {
+  it('should accept hand-set start levels from 0 to 100 keyed by room', () => {
     const message = (startLevels: unknown) => ({
       type: 'START_CAST',
-      payload: { speakerIps: [SPEAKER], startLevels },
+      payload: { roomIds: [KITCHEN_ROOM], startLevels },
     });
 
-    expect(StartCastMessageSchema.safeParse(message({ [SPEAKER]: 45 })).success).toBe(true);
-    expect(StartCastMessageSchema.safeParse(message({ [SPEAKER]: 101 })).success).toBe(false);
-    expect(StartCastMessageSchema.safeParse(message({ kitchen: 20 })).success).toBe(false);
+    expect(StartCastMessageSchema.safeParse(message({ [KITCHEN_ROOM]: 45 })).success).toBe(true);
+    expect(StartCastMessageSchema.safeParse(message({ [KITCHEN_ROOM]: 101 })).success).toBe(false);
+    expect(StartCastMessageSchema.safeParse(message({ [KITCHEN_ROOM]: 2.5 })).success).toBe(false);
   });
 });
 
@@ -109,11 +114,11 @@ describe('StartPlaybackMessageSchema', () => {
       payload: {
         tabId: 4,
         speakerIps: [SPEAKER],
-        startVolume: { limit: 30, speakers: { [SPEAKER]: 45 } },
+        startVolume: { limit: 30, rooms: { RINCON_KITCHEN: 45 } },
       },
     });
 
-    expect(parsed.payload.startVolume).toEqual({ limit: 30, speakers: { [SPEAKER]: 45 } });
+    expect(parsed.payload.startVolume).toEqual({ limit: 30, rooms: { RINCON_KITCHEN: 45 } });
   });
 });
 

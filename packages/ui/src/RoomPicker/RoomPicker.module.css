@@ -1,0 +1,83 @@
+@layer components {
+  /*
+   * C-picker. A bare fieldset with its legend, the sets, a Divider, the rooms (folded from 8),
+   * and the save offer. Rows sit .125rem apart; nothing scrolls.
+   */
+  .picker {
+    --picker-gap: var(--space-1);
+    --picker-legend: var(--on-surface-variant);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .legend {
+    margin-block-end: var(--space-2);
+    padding-inline: var(--space-3);
+    color: var(--picker-legend);
+    font-size: var(--text-2);
+    font-weight: var(--weight-strong);
+    line-height: var(--leading-2);
+  }
+
+  .picker:disabled {
+    --picker-legend: color-mix(in oklch, var(--on-surface) var(--disabled-ink), transparent);
+  }
+
+  .sets,
+  .rooms {
+    display: flex;
+    flex-direction: column;
+    gap: var(--picker-gap);
+  }
+
+  /* A set's name reads in the body ink, as a room's does; pressed, it takes the on colours. */
+  .sets > button {
+    --btn-fg: var(--on-surface);
+  }
+
+  /*
+   * The fold spans the picker, as the rows do, so nothing in it bleeds past the fold's clip:
+   * its trigger keeps its padding without the bleed, which lines its chevron up with the
+   * rows' boxes, and its hover reaches the card's edge like theirs.
+   */
+  .picker > details > summary {
+    margin-inline: 0;
+  }
+
+  .search {
+    display: flex;
+    flex-direction: column;
+    padding-inline: var(--space-3);
+  }
+
+  .hidden {
+    margin: 0;
+    padding-inline: var(--space-3);
+    color: var(--on-surface-variant);
+    font-size: var(--text-2);
+    line-height: var(--leading-2);
+  }
+
+  .save {
+    padding-inline: var(--space-3);
+  }
+
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-inline: var(--space-3);
+  }
+
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--gap-target);
+  }
+}

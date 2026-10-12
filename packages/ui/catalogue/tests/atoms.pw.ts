@@ -42,15 +42,15 @@ test('an unknown level is read as words and the slider is inert', async ({ page 
 test('the switch row is one target: clicking its words toggles it', async ({ page }) => {
   // The name is the name line alone (with its Badge); the description is read once, as the
   // description.
-  const sw = light(page, 'switch').getByRole('switch', { name: 'Sync video', exact: true });
+  const sw = light(page, 'switch').getByRole('switch', { name: 'Video sync', exact: true });
   await expect(sw).toHaveAccessibleDescription(
-    'Holds the picture back until the speakers catch up.',
+    "Plays the sound early, so a film's lips and words arrive together.",
   );
   await expect(
-    light(page, 'switch').getByRole('switch', { name: 'Sync video In step', exact: true }),
+    light(page, 'switch').getByRole('switch', { name: 'Video sync In step', exact: true }),
   ).toHaveCount(1);
   await expect(sw).toHaveAttribute('aria-checked', 'true');
-  await light(page, 'switch').getByText('Sync video', { exact: true }).first().click();
+  await light(page, 'switch').getByText('Video sync', { exact: true }).first().click();
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   await sw.press('Space');
   await expect(sw).toHaveAttribute('aria-checked', 'true');
@@ -97,7 +97,7 @@ test('a pressed Button exposes aria-pressed', async ({ page }) => {
 
 test('the tooltip shows at once on keyboard focus and Esc hides it', async ({ page }) => {
   const scheme = light(page, 'tooltip');
-  const trigger = scheme.getByRole('button', { name: 'Measure video sync again' }).first();
+  const trigger = scheme.getByRole('button', { name: 'Ask again' }).first();
   await trigger.focus();
   await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Tab');

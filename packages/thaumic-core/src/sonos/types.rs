@@ -4,7 +4,7 @@
 //! via UPnP/SOAP. They are used throughout the application for state management
 //! and API responses.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ impl std::str::FromStr for TransportState {
 ///
 /// Represents an individual Sonos device that is part of a zone group.
 /// This includes both primary speakers and satellites (surround speakers, subwoofers).
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ZoneGroupMember {
     /// Unique identifier in RINCON_xxxxx format.
@@ -80,8 +80,9 @@ pub struct ZoneGroupMember {
     pub model: String,
     /// Whether Sonos marks this device `Invisible`: a home-theatre satellite
     /// or the second speaker of a stereo pair. It plays as part of the room's
-    /// primary and is never controlled on its own. Not sent to clients.
-    #[serde(skip)]
+    /// primary and is never controlled on its own. Sent as `invisible: true`
+    /// only when set, so clients can fold bonded devices into one room.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub invisible: bool,
 }
 
@@ -89,7 +90,7 @@ pub struct ZoneGroupMember {
 ///
 /// Represents a group of Sonos speakers that play audio together.
 /// Each group has a coordinator that controls playback for the group.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ZoneGroup {
     /// Zone group identifier.
@@ -324,5 +325,32 @@ impl PositionInfo {
         let seconds: u64 = parts[2].parse().unwrap_or(0);
 
         (hours * 3600 + minutes * 60 + seconds) * 1000
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(invisible: bool) -> ZoneGroupMember {
+        ZoneGroupMember {
+            uuid: "RINCON_1".to_string(),
+            ip: "192.168.1.10".to_string(),
+            zone_name: "Study".to_string(),
+            model: "one".to_string(),
+            invisible,
+        }
+    }
+
+    #[test]
+    fn a_bonded_member_is_sent_as_invisible() {
+        let json = serde_json::to_value(member(true)).unwrap();
+        assert_eq!(json["invisible"], true);
+    }
+
+    #[test]
+    fn a_room_primary_is_sent_without_the_flag() {
+        let json = serde_json::to_value(member(false)).unwrap();
+        assert!(json.get("invisible").is_none(), "{json}");
     }
 }
