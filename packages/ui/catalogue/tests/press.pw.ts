@@ -159,6 +159,22 @@ const shapeOf = (control: Control, el: Locator): Promise<Shape> =>
   );
 
 /**
+ * Reads the control's shape at rest: round, once any morph left by the control before it
+ * (the same row, on a slow runner) has ended.
+ * @param control - The control
+ * @param el - The pressed element
+ * @returns Its shape at rest
+ */
+async function restOf(control: Control, el: Locator): Promise<Shape> {
+  await expect
+    .poll(async () => (await shapeOf(control, el)).curve ?? 1, {
+      message: `${control.name} at rest`,
+    })
+    .toBe(1);
+  return shapeOf(control, el);
+}
+
+/**
  * Whether the engine draws corner shapes (Chromium does, WebKit does not).
  * @param page - The page
  * @returns True where corner-shape is supported
@@ -298,7 +314,7 @@ test('a quick click reaches the full bevel before it returns', async ({ page }) 
     const el = control.find(page);
     await el.scrollIntoViewIfNeeded();
     await settle(page);
-    const rest = await shapeOf(control, el);
+    const rest = await restOf(control, el);
     // The forced press of the same control is the bevel's end state; read it from the rule.
     const bevel = await forcedBevel(control, el);
     expect(bevel.curve, control.name).toBe(0);
@@ -323,7 +339,7 @@ test('a quick click that makes a control busy still plays the whole morph', asyn
     await el.scrollIntoViewIfNeeded();
     await settle(page);
     await expect(el).not.toHaveAttribute('aria-busy', 'true');
-    const rest = await shapeOf(control, el);
+    const rest = await restOf(control, el);
     const bevel = await forcedBevel(control, el);
     const samples = await sampleClick(page, control, el, rest);
     const log = `${control.name}: ${JSON.stringify(samples)}`;
