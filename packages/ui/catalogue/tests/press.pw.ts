@@ -309,6 +309,9 @@ test('focus-visible takes the bevel and the ring', async ({ page }) => {
 
 test('a quick click reaches the full bevel before it returns', async ({ page }) => {
   test.skip(!(await hasCornerShape(page)), 'Nothing reshapes without corner-shape.');
+  // Every live control, each a forced press, a click and its way back: on the CI runner's
+  // headless WebKit (some six frames a second) that walk outlasts test.slow()'s 90 s.
+  test.setTimeout(240_000);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   for (const control of CONTROLS) {
     const el = control.find(page);
