@@ -30,7 +30,7 @@ const STRINGS: SetListStrings = {
   cancel: 'Cancel',
   emptyTitle: 'No sets yet',
   emptyBody:
-    'Choose some rooms in the popup and save them as a set. They turn up here, to be renamed or thrown out.',
+    'Choose some rooms in the popup and save them as a set. They turn up here, to be renamed or removed.',
 };
 
 const SETS: SetListItem[] = [

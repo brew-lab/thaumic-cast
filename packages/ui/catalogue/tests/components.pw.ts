@@ -362,7 +362,7 @@ test('the search filters and never unticks, and counts the chosen rooms it hides
   const search = picker.getByRole('searchbox', { name: 'Find a room' });
   await expect(search).toHaveValue('room');
   await expect(
-    picker.getByText('2 chosen rooms are hidden by the search, and still chosen.'),
+    picker.getByText('2 chosen rooms are hidden by the search. They stay chosen.'),
   ).toBeVisible();
   await search.fill('kit');
   await expect(picker.getByRole('checkbox')).toHaveCount(1);
@@ -376,7 +376,7 @@ test('not connected, the fieldset is disabled and says why', async ({ page }) =>
   const section = light(page, 'room-picker');
   const off = section.locator('fieldset[disabled]');
   await expect(off).toHaveCount(1);
-  await expect(off.getByText('Speakers are listed here once the companion answers.')).toBeVisible();
+  await expect(off.getByText('Rooms are listed here once the companion answers.')).toBeVisible();
 });
 
 test('the save form names the set, and says when it has no name', async ({ page }) => {

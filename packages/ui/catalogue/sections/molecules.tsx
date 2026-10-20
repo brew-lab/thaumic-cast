@@ -360,8 +360,8 @@ const URL = 'http://192.168.1.20:49400/stream/4f2a/live.flac';
 export function CopyFieldSpecimen(): JSX.Element {
   const words = {
     done: 'Copied',
-    refusedNote: 'The clipboard said no. Here it is, selected, to copy by hand.',
-    unavailableNote: "This computer's address isn't known yet. Try again in a moment.",
+    refusedNote: 'Copying did not work. The text is selected, ready to copy by hand.',
+    unavailableNote: "This computer's address is not known yet. Try again in a moment.",
   };
   return (
     <div class="stack" data-density="desktop">
@@ -621,8 +621,8 @@ export function DescriptionListSpecimen(): JSX.Element {
                     value="192.168.1.20:49400"
                     action="Copy address"
                     done="Copied"
-                    refusedNote="The clipboard said no. Here it is, selected, to copy by hand."
-                    unavailableNote="This computer's address isn't known yet."
+                    refusedNote="Copying did not work. The text is selected, ready to copy by hand."
+                    unavailableNote="This computer's address is not known yet."
                   />
                 ),
               },
@@ -788,7 +788,7 @@ export function NoticeSpecimen(): JSX.Element {
         <Notice
           kind="banner"
           tone="warning"
-          lead="This companion is older than the extension"
+          lead="The companion is out of date"
           text="It is on v0.10.2, and it may still work. If anything misbehaves, update it."
           action={{ label: 'Update desktop app', onClick: noop }}
           onDismiss={noop}

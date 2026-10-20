@@ -246,7 +246,7 @@ function bannerCandidates(inputs: NoticeInputs): BannerPlan[] {
       action: connection.canRetry
         ? {
             kind: 'retry',
-            label: { key: lost ? 'retry_connection' : 'retry_connection_not_found' },
+            label: { key: lost ? 'retry_connection' : 'try_again' },
           }
         : undefined,
       dismissible: false,

@@ -95,13 +95,13 @@ export const PICKER: RoomPickerStrings = {
   clearSearch: 'Clear search',
   hiddenChosen: (count) =>
     count === 1
-      ? '1 chosen room is hidden by the search, and still chosen.'
-      : `${count} chosen rooms are hidden by the search, and still chosen.`,
+      ? '1 chosen room is hidden by the search. It stays chosen.'
+      : `${count} chosen rooms are hidden by the search. They stay chosen.`,
   saveSet: 'Save these rooms as a set',
   nameSet: 'Name this set',
   save: 'Save',
   cancel: 'Cancel',
-  waiting: 'Speakers are listed here once the companion answers.',
+  waiting: 'Rooms are listed here once the companion answers.',
   empty:
     'No speaker answered. Check they are switched on, and on the same network as the companion.',
   loading: 'Asking for speakers…',

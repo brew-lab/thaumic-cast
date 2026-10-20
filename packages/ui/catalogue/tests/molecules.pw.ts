@@ -26,7 +26,7 @@ test('"Copied" is brief: it returns to the rest label after COPY_CONFIRM_MS', as
 
 test('a refused copy reveals the field and says why', async ({ page }) => {
   const section = light(page, 'copy-field');
-  await expect(section.getByText('The clipboard said no.').first()).toBeVisible();
+  await expect(section.getByText('Copying did not work.').first()).toBeVisible();
   const revealed = section.locator('[tabindex="-1"]', { hasText: 'live.flac' }).last();
   await expect(revealed).toHaveText(/live\.flac$/);
 });
@@ -44,7 +44,9 @@ test('a long value is shown whole: it wraps and is never cut off', async ({ page
 
 test('nothing to copy disables the action and says why', async ({ page }) => {
   const section = light(page, 'copy-field');
-  await expect(section.getByText("This computer's address isn't known yet.").first()).toBeVisible();
+  await expect(
+    section.getByText("This computer's address is not known yet.").first(),
+  ).toBeVisible();
 });
 
 test('a failed request says so without marking the field invalid', async ({ page }) => {

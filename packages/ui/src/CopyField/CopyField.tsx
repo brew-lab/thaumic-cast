@@ -37,9 +37,9 @@ export interface CopyFieldProps {
   action: string;
   /** The done label, also said by the Announcer: "Copied". */
   done: string;
-  /** The note when the clipboard refuses: "The clipboard said no. Here it is, selected…". */
+  /** The note when the clipboard refuses: "Copying did not work. The text is selected…". */
   refusedNote: string;
-  /** The note while there is nothing to copy: "This computer's address isn't known yet…". */
+  /** The note while there is nothing to copy: "This computer's address is not known yet…". */
   unavailableNote: string;
   /**
    * always: the value is shown, as text, with the action beside it (the Server's Address).

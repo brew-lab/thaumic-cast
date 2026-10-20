@@ -333,7 +333,7 @@ export function Settings() {
           action={{
             idle: t('onboarding.speakers.manual_add'),
             busy: t('onboarding.speakers.manual_testing'),
-            failed: t('settings.try_again'),
+            failed: t('try_again'),
           }}
           list={manualIps}
           listLabel={t('settings.manual_speakers')}

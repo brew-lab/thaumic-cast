@@ -104,7 +104,7 @@ export function ServerSection({ settings, onUpdate }: ServerSectionProps): JSX.E
             action={{
               idle: t('server_test_connection'),
               busy: t('server_testing'),
-              failed: t('retry_connection_not_found'),
+              failed: t('try_again'),
             }}
             help={t('server_url_hint')}
           />

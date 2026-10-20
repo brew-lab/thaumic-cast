@@ -138,12 +138,14 @@ function CastUrl({ refuse = false }: { refuse?: boolean }): JSX.Element {
       getValue={async () => 'http://192.168.1.20:49400/stream/8c1f0e2a/listen.wav'}
       action="Copy URL"
       done="Copied"
-      refusedNote="The clipboard said no. Here it is, selected, to copy by hand."
-      unavailableNote="This computer's address isn't known yet. Try again in a moment."
+      refusedNote="Copying did not work. The text is selected, ready to copy by hand."
+      unavailableNote="This computer's address is not known yet. Try again in a moment."
       reveal="onRefusal"
       clipboard={refuse ? fakeClipboard(false) : undefined}
       help={
-        <p>Plays in VLC or a browser while the cast lasts. It won't keep time with the speakers.</p>
+        <p>
+          Plays in VLC or a browser while the cast lasts. It will not keep time with the speakers.
+        </p>
       }
     />
   );
@@ -280,8 +282,8 @@ function ServerView(): JSX.Element {
                   getValue={async () => 'http://192.168.1.20:49400'}
                   action="Copy address"
                   done="Copied"
-                  refusedNote="The clipboard said no. Here it is, selected, to copy by hand."
-                  unavailableNote="This computer's address isn't known yet."
+                  refusedNote="Copying did not work. The text is selected, ready to copy by hand."
+                  unavailableNote="This computer's address is not known yet."
                 />
               ),
             },

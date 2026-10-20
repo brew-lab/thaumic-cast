@@ -102,7 +102,7 @@ describe('placeNotices: the banner (rules 1 and 8)', () => {
     for (const [error, lead] of cases) {
       const placed = placeNotices(inputs({ connection: { ...lost, error } }));
       expect(placed.banner?.lead.key).toBe(lead);
-      expect(placed.banner?.action?.label.key).toBe('retry_connection_not_found');
+      expect(placed.banner?.action?.label.key).toBe('try_again');
     }
   });
 
@@ -359,7 +359,7 @@ describe('the words the rules choose', () => {
       'version_old_body_unknown',
       'connection_status_disconnected',
       'retry_connection',
-      'retry_connection_not_found',
+      'try_again',
     ];
     expect(keys.filter((key) => typeof strings[key] !== 'string')).toEqual([]);
   });

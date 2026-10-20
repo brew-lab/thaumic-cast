@@ -12,9 +12,7 @@
  * @returns The i18n key of the button's label
  */
 export function retryLabelKey(connectionError: string): string {
-  return connectionError === 'error_connection_lost'
-    ? 'retry_connection'
-    : 'retry_connection_not_found';
+  return connectionError === 'error_connection_lost' ? 'retry_connection' : 'try_again';
 }
 
 /** How the popup words the alert for a tab capture that is dropping frames. */

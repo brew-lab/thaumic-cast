@@ -678,7 +678,7 @@ function MainPopup(): JSX.Element {
             ? {
                 lead: t('room_still_playing', { name: row.name }),
                 retry: {
-                  label: t('retry_connection_not_found'),
+                  label: t('try_again'),
                   onAction: () => removeSpeaker(tabId, row.ip),
                 },
                 onDismiss: () =>
@@ -723,7 +723,7 @@ function MainPopup(): JSX.Element {
             : {
                 lead: t('room_join_failed', { name: f.name }),
                 retry: {
-                  label: t('retry_connection_not_found'),
+                  label: t('try_again'),
                   onAction: () => addRooms(tabId, [f.roomId], {}),
                 },
                 onDismiss: () =>

@@ -320,7 +320,7 @@ export function ButtonSpecimen(): JSX.Element {
           pressed={false}
           align="start"
           fullWidth
-          description="Garden is not answering; Study goes alone."
+          description="Garden is not answering, so only Study plays."
         >
           Garden and Study
         </Button>

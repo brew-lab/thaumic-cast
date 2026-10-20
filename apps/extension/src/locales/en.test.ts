@@ -139,8 +139,8 @@ describe('extension en.json', () => {
     expect(i18n.t('cast_leaves_group', { count: 2, names: 'Kitchen and Deck' })).toBe(
       'Kitchen and Deck leave their Sonos groups until you stop.',
     );
-    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 speaker answered.');
-    expect(i18n.t('onboarding.speakers.found', { count: 2 })).toBe('2 speakers answered.');
+    expect(i18n.t('onboarding.speakers.found', { count: 1 })).toBe('1 room answered.');
+    expect(i18n.t('onboarding.speakers.found', { count: 2 })).toBe('2 rooms answered.');
     expect(i18n.t('ingest_gaps_message_desktop', { count: 1, suggested: 500 })).toContain(
       'late once in the last minute',
     );
@@ -160,9 +160,9 @@ describe('extension en.json', () => {
         }),
         rest: rest.join(' and '),
       });
-    expect(partial(['Patio'], ['Kitchen'])).toBe('Patio is not answering; Kitchen goes alone.');
+    expect(partial(['Patio'], ['Kitchen'])).toBe('Patio is not answering, so only Kitchen plays.');
     expect(partial(['Patio', 'Deck'], ['Kitchen', 'Study'])).toBe(
-      'Patio and Deck are not answering; Kitchen and Study go alone.',
+      'Patio and Deck are not answering, so only Kitchen and Study play.',
     );
   });
 });

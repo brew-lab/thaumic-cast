@@ -23,8 +23,8 @@ const noop = (): void => {};
 
 const COPY = {
   done: 'Copied',
-  refusedNote: 'The clipboard said no. Here it is, selected, to copy by hand.',
-  unavailableNote: "This computer's address isn't known yet. Try again in a moment.",
+  refusedNote: 'Copying did not work. The text is selected, ready to copy by hand.',
+  unavailableNote: "This computer's address is not known yet. Try again in a moment.",
 };
 
 /**
