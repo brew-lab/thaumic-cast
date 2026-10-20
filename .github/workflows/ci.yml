@@ -25,6 +25,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       ts: ${{ steps.filter.outputs.ts }}
+      ui: ${{ steps.filter.outputs.ui }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,6 +60,15 @@ jobs:
               - 'packages/shared/**'
               - 'packages/ui/**'
               - 'scripts/**'
+              - 'package.json'
+              - 'bun.lock'
+              - 'tsconfig.json'
+              - '.github/workflows/ci.yml'
+            # What the design-system catalogue draws: packages/ui and what it imports.
+            ui:
+              - 'packages/ui/**'
+              - 'packages/protocol/**'
+              - 'packages/shared/**'
               - 'package.json'
               - 'bun.lock'
               - 'tsconfig.json'
@@ -129,14 +139,69 @@ jobs:
         run: bun run test
 
   # The design-system catalogue (packages/ui/DESIGN.md §10 row 6): axe in both themes, the
-  # behaviour tests and one screenshot per section, in Chromium and in WebKit. Screenshot
-  # baselines are made here only: a section with no baseline passes and writes its picture to
-  # the artifact's new-baselines/ folder, to commit under
-  # packages/ui/catalogue/tests/__screenshots__/<project>/.
+  # behaviour tests and one screenshot per section, in Chromium and in WebKit. Each browser's
+  # tests are split over shards that run at once; "Design System Catalogue" gathers them.
+  # Screenshot baselines are made here only: a section with no baseline passes and writes its
+  # picture to the catalogue-results artifact's new-baselines/ folder, to commit under
+  # packages/ui/catalogue/tests/__screenshots__/<project>/. It always runs on main.
+  catalogue-shard:
+    name: Catalogue (${{ matrix.project }} ${{ matrix.shard }}/${{ matrix.shards }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, webkit]
+        shard: [1, 2, 3, 4]
+        shards: [4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright ${{ matrix.project }}
+        working-directory: packages/ui
+        run: bunx playwright install --with-deps ${{ matrix.project }}
+
+      - name: Run axe, the behaviour tests and screenshots
+        working-directory: packages/ui
+        env:
+          DS_SCREENSHOTS: '1'
+          PLAYWRIGHT_BLOB_OUTPUT_NAME: report-${{ matrix.project }}-${{ matrix.shard }}.zip
+        run: >-
+          bun run test:catalogue --project=${{ matrix.project }}
+          --shard=${{ matrix.shard }}/${{ matrix.shards }}
+
+      - name: Upload results and new baselines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalogue-results-${{ matrix.project }}-${{ matrix.shard }}
+          path: packages/ui/catalogue/test-results/
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Upload the blob report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalogue-blob-${{ matrix.project }}-${{ matrix.shard }}
+          path: packages/ui/catalogue/blob-report/
+          if-no-files-found: ignore
+          retention-days: 1
+
   catalogue:
     name: Design System Catalogue
-    needs: changes
-    if: needs.changes.outputs.ts == 'true'
+    needs: [changes, catalogue-shard]
+    if: always() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,23 +214,46 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright Chromium and WebKit
-        working-directory: packages/ui
-        run: bunx playwright install --with-deps chromium webkit
+      - name: Gather the shards' results and new baselines
+        uses: actions/download-artifact@v4
+        with:
+          pattern: catalogue-results-*
+          path: catalogue-results
+          merge-multiple: true
 
-      - name: Run axe and screenshots
+      - name: Gather the shards' blob reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: catalogue-blob-*
+          path: packages/ui/all-blob-reports
+          merge-multiple: true
+
+      - name: Merge the reports into one HTML report
+        if: hashFiles('packages/ui/all-blob-reports/**') != ''
         working-directory: packages/ui
-        env:
-          DS_SCREENSHOTS: '1'
-        run: bun run test:catalogue
+        run: >-
+          bunx playwright merge-reports --config catalogue/playwright.config.ts --reporter html
+          ./all-blob-reports
 
       - name: Upload results and new baselines
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: catalogue-results
-          path: packages/ui/catalogue/test-results/
+          path: catalogue-results/
           if-no-files-found: ignore
+
+      - name: Upload the HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalogue-report
+          path: packages/ui/catalogue/playwright-report/
+          if-no-files-found: ignore
+
+      - name: Fail unless every shard passed
+        if: needs.catalogue-shard.result != 'success'
+        run: |
+          echo "A catalogue shard ended ${{ needs.catalogue-shard.result }}."
+          exit 1
 
   rust-check:
     name: Rust Check

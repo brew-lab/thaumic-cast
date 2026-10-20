@@ -8,6 +8,7 @@ bun.lockb
 # Playwright (the design-system catalogue)
 test-results
 playwright-report
+blob-report
 
 # Logs
 *.log

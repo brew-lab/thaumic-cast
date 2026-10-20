@@ -29,7 +29,8 @@ export default defineConfig({
   // six seconds to settle (data-ready waits a second after load); the default five-second
   // wait for it would time out under parallel load.
   expect: { timeout: 15_000 },
-  reporter: process.env.CI ? [['github'], ['list']] : 'list',
+  // In CI each shard also writes a blob report, which the workflow merges into one HTML report.
+  reporter: process.env.CI ? [['blob'], ['github'], ['list']] : 'list',
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     reducedMotion: 'reduce',
