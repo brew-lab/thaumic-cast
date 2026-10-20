@@ -231,6 +231,8 @@ jobs:
       - name: Merge the reports into one HTML report
         if: hashFiles('packages/ui/all-blob-reports/**') != ''
         working-directory: packages/ui
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: catalogue/playwright-report
         run: >-
           bunx playwright merge-reports --config catalogue/playwright.config.ts --reporter html
           ./all-blob-reports
