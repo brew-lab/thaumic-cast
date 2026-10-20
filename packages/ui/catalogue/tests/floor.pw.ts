@@ -25,48 +25,7 @@ async function openFloor(page: Page, whole: boolean): Promise<void> {
   await expect(page.locator('html[data-floor]')).toHaveCount(1);
 }
 
-test.describe('on the sections it names', () => {
-  test.beforeEach(async ({ page }) => {
-    await openFloor(page, false);
-  });
-
-  test('the themed tokens come from webkit-fallbacks.css, not light-dark()', async ({ page }) => {
-    const surface = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue('--surface').trim(),
-    );
-    expect(surface).not.toContain('light-dark');
-    // The dark surface, as the fallback file repeats it.
-    expect(surface).toMatch(/^oklch\(21% 0?\.028 303\.7\)$/);
-  });
-
-  test('a pressed Button keeps its rest corner where corner-shape is missing', async ({ page }) => {
-    const radius = await page
-      .locator('#button [data-scheme="light"] button[data-force="press"]')
-      .first()
-      .evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
-    // --radius-control (8px), not the bevel a press takes where corner-shape exists: call 29.
-    expect(radius).toBe('8px');
-  });
-
-  test('the Select falls back to the native list', async ({ page }) => {
-    const select = page.locator('#select [data-scheme="light"] select').first();
-    expect(await select.evaluate((el) => getComputedStyle(el).appearance)).not.toBe('base-select');
-    await expect(select.locator('button')).toHaveCount(0);
-  });
-});
-
-test('axe finds no violations on the floor', async ({ page }) => {
-  test.setTimeout(180_000);
-  await openFloor(page, true);
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
-    .analyze();
-  const summary = results.violations.map(
-    (v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`,
-  );
-  expect(summary).toEqual([]);
-});
-
+// The whole-page tests first, the screenshots before axe: the longest start at once.
 test('every section on the floor matches its screenshot', async ({ page }, testInfo) => {
   test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
   test.setTimeout(600_000);
@@ -99,4 +58,46 @@ test('every section on the floor matches its screenshot', async ({ page }, testI
     }
     await expect(section).toHaveScreenshot(name);
   }
+});
+
+test('axe finds no violations on the floor', async ({ page }) => {
+  test.setTimeout(180_000);
+  await openFloor(page, true);
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  const summary = results.violations.map(
+    (v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`,
+  );
+  expect(summary).toEqual([]);
+});
+
+test.describe('on the sections it names', () => {
+  test.beforeEach(async ({ page }) => {
+    await openFloor(page, false);
+  });
+
+  test('the themed tokens come from webkit-fallbacks.css, not light-dark()', async ({ page }) => {
+    const surface = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--surface').trim(),
+    );
+    expect(surface).not.toContain('light-dark');
+    // The dark surface, as the fallback file repeats it.
+    expect(surface).toMatch(/^oklch\(21% 0?\.028 303\.7\)$/);
+  });
+
+  test('a pressed Button keeps its rest corner where corner-shape is missing', async ({ page }) => {
+    const radius = await page
+      .locator('#button [data-scheme="light"] button[data-force="press"]')
+      .first()
+      .evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
+    // --radius-control (8px), not the bevel a press takes where corner-shape exists: call 29.
+    expect(radius).toBe('8px');
+  });
+
+  test('the Select falls back to the native list', async ({ page }) => {
+    const select = page.locator('#select [data-scheme="light"] select').first();
+    expect(await select.evaluate((el) => getComputedStyle(el).appearance)).not.toBe('base-select');
+    await expect(select.locator('button')).toHaveCount(0);
+  });
 });

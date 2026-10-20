@@ -17,34 +17,8 @@ import { existsSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const THEMES = ['light', 'dark'] as const;
-
-for (const theme of THEMES) {
-  test(`axe finds no violations with the page in ${theme}`, async ({ page }) => {
-    // The whole catalogue, every frame and both schemes, is one long page for axe.
-    test.setTimeout(180_000);
-    await page.goto(`/?theme=${theme}`);
-    await expect(page.locator('html[data-ready]')).toHaveCount(1);
-    // Content runs under a StickyActionBar by design (L-bar), so at the top of a long frame
-    // whatever sits at the bar's edge is partly under it, and axe (target-size) calls it
-    // obscured; which target that is changes with every string. Each bar's scroller is read
-    // at its end instead, where its end padding keeps everything clear of the bar.
-    await page.evaluate(() => {
-      for (const bar of document.querySelectorAll('[data-sticky-bar]')) {
-        const scroller = bar.closest<HTMLElement>('[data-scroller]');
-        if (scroller) scroller.scrollTop = scroller.scrollHeight;
-      }
-    });
-    const results = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
-      .analyze();
-    const summary = results.violations.map(
-      (v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`,
-    );
-    expect(summary).toEqual([]);
-  });
-}
-
+// The screenshot test is the longest; first, it starts at once instead of after an axe run on
+// the same worker.
 test('every section matches its screenshot', async ({ page }, testInfo) => {
   test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
   // Over fifty sections, some of them several screens tall.
@@ -80,3 +54,31 @@ test('every section matches its screenshot', async ({ page }, testInfo) => {
     await expect(section).toHaveScreenshot(name);
   }
 });
+
+const THEMES = ['light', 'dark'] as const;
+
+for (const theme of THEMES) {
+  test(`axe finds no violations with the page in ${theme}`, async ({ page }) => {
+    // The whole catalogue, every frame and both schemes, is one long page for axe.
+    test.setTimeout(180_000);
+    await page.goto(`/?theme=${theme}`);
+    await expect(page.locator('html[data-ready]')).toHaveCount(1);
+    // Content runs under a StickyActionBar by design (L-bar), so at the top of a long frame
+    // whatever sits at the bar's edge is partly under it, and axe (target-size) calls it
+    // obscured; which target that is changes with every string. Each bar's scroller is read
+    // at its end instead, where its end padding keeps everything clear of the bar.
+    await page.evaluate(() => {
+      for (const bar of document.querySelectorAll('[data-sticky-bar]')) {
+        const scroller = bar.closest<HTMLElement>('[data-scroller]');
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      }
+    });
+    const results = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    const summary = results.violations.map(
+      (v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`,
+    );
+    expect(summary).toEqual([]);
+  });
+}
