@@ -22,7 +22,7 @@
   "scripts": {
     "build": "echo 'No build step (consumed as TS source)'",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf catalogue/dist catalogue/test-results catalogue/playwright-report",
+    "clean": "rm -rf catalogue/dist catalogue/test-results catalogue/playwright-report catalogue/blob-report",
     "test": "bun test src scripts",
     "tokens": "bun scripts/generate-tokens.ts",
     "tokens:check": "bun scripts/generate-tokens.ts --check",
