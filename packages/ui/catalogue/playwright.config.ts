@@ -30,7 +30,9 @@ export default defineConfig({
   // wait for it would time out under parallel load.
   expect: { timeout: 15_000 },
   // In CI each shard also writes a blob report, which the workflow merges into one HTML report.
-  reporter: process.env.CI ? [['blob'], ['github'], ['list']] : 'list',
+  reporter: process.env.CI
+    ? [['blob', { outputDir: './blob-report' }], ['github'], ['list']]
+    : 'list',
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     reducedMotion: 'reduce',
