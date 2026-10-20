@@ -6,41 +6,58 @@
  * under `floor-<section>.png`, made and kept like the other baselines (catalogue.pw.ts).
  */
 import { existsSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { openSections } from './open';
 
-test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=dark&floor=1');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+/**
+ * Opens the floor in dark: the whole page, or only the sections this file names.
+ * @param page - The test's page
+ * @param whole - Whether to draw every section, as axe and the screenshots read them
+ */
+async function openFloor(page: Page, whole: boolean): Promise<void> {
+  if (whole) {
+    await page.goto('/?theme=dark&floor=1');
+    await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  } else {
+    await openSections(page, '/?theme=dark&floor=1');
+  }
   await expect(page.locator('html[data-floor]')).toHaveCount(1);
-});
+}
 
-test('the themed tokens come from webkit-fallbacks.css, not light-dark()', async ({ page }) => {
-  const surface = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue('--surface').trim(),
-  );
-  expect(surface).not.toContain('light-dark');
-  // The dark surface, as the fallback file repeats it.
-  expect(surface).toMatch(/^oklch\(21% 0?\.028 303\.7\)$/);
-});
+test.describe('on the sections it names', () => {
+  test.beforeEach(async ({ page }) => {
+    await openFloor(page, false);
+  });
 
-test('a pressed Button keeps its rest corner where corner-shape is missing', async ({ page }) => {
-  const radius = await page
-    .locator('#button [data-scheme="light"] button[data-force="press"]')
-    .first()
-    .evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
-  // --radius-control (8px), not the bevel a press takes where corner-shape exists: call 29.
-  expect(radius).toBe('8px');
-});
+  test('the themed tokens come from webkit-fallbacks.css, not light-dark()', async ({ page }) => {
+    const surface = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--surface').trim(),
+    );
+    expect(surface).not.toContain('light-dark');
+    // The dark surface, as the fallback file repeats it.
+    expect(surface).toMatch(/^oklch\(21% 0?\.028 303\.7\)$/);
+  });
 
-test('the Select falls back to the native list', async ({ page }) => {
-  const select = page.locator('#select [data-scheme="light"] select').first();
-  expect(await select.evaluate((el) => getComputedStyle(el).appearance)).not.toBe('base-select');
-  await expect(select.locator('button')).toHaveCount(0);
+  test('a pressed Button keeps its rest corner where corner-shape is missing', async ({ page }) => {
+    const radius = await page
+      .locator('#button [data-scheme="light"] button[data-force="press"]')
+      .first()
+      .evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
+    // --radius-control (8px), not the bevel a press takes where corner-shape exists: call 29.
+    expect(radius).toBe('8px');
+  });
+
+  test('the Select falls back to the native list', async ({ page }) => {
+    const select = page.locator('#select [data-scheme="light"] select').first();
+    expect(await select.evaluate((el) => getComputedStyle(el).appearance)).not.toBe('base-select');
+    await expect(select.locator('button')).toHaveCount(0);
+  });
 });
 
 test('axe finds no violations on the floor', async ({ page }) => {
   test.setTimeout(180_000);
+  await openFloor(page, true);
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
     .analyze();
@@ -53,6 +70,7 @@ test('axe finds no violations on the floor', async ({ page }) => {
 test('every section on the floor matches its screenshot', async ({ page }, testInfo) => {
   test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
   test.setTimeout(600_000);
+  await openFloor(page, true);
   await page.evaluate(() => document.fonts.ready);
   // The catalogue's own sections: a specimen's PopupShell draws a <main> of its own.
   const ids = await page

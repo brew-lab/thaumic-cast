@@ -4,6 +4,7 @@
  * the tiles. The shell's scrolling and scroll padding are in popup.pw.ts.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 const light = (page: Page, id: string): Locator => page.locator(`#${id} [data-scheme="light"]`);
 
@@ -19,8 +20,7 @@ async function box(el: Locator): Promise<{ x: number; y: number; width: number; 
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light');
 });
 
 /* -------------------------------------------------------------- StartLevel */

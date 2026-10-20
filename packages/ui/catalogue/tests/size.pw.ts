@@ -4,6 +4,7 @@
  * every md instance is listed so an unmarked default flip shows up in review.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 interface Hit {
   label: string;
@@ -66,9 +67,8 @@ const overlap = (a: Hit['hit'], b: Hit['hit']): boolean =>
   b.top < a.bottom - 0.5;
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
+  await openSections(page, '/?theme=light');
   // The page blurs and scrolls to the top a second after load; measure after that.
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
   await expect(page.locator('#size')).toBeVisible();
 });
 
@@ -101,6 +101,9 @@ test('sm is drawn 32 tall in a window, whatever the hit area', async ({ page }) 
 });
 
 test('every md instance is listed', async ({ page }, testInfo) => {
+  // The list covers every section, so this one reads the whole page.
+  await page.goto('/?theme=light');
+  await expect(page.locator('html[data-ready]')).toHaveCount(1);
   const md = await page.locator('main [data-size="md"]').evaluateAll((els) =>
     els.map((el) => {
       const section = el.closest('section.section')?.id ?? '?';

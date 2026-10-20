@@ -7,6 +7,12 @@ import { SECTIONS } from './sections';
 
 const SCHEMES: Scheme[] = ['light', 'dark'];
 
+// `?section=a,b` draws only those sections, with the same components and stylesheets. The
+// tests open a page this way, as a page of every section takes WebKit seconds to draw; axe
+// and the screenshots still read the whole page.
+const only = new URLSearchParams(location.search).get('section')?.split(',');
+const SHOWN = only ? SECTIONS.filter((s) => only.includes(s.id)) : SECTIONS;
+
 /** Props for {@link Catalogue}. */
 export interface CatalogueProps {
   /** The theme the page opened with. */
@@ -72,7 +78,7 @@ export function Catalogue({ initialTheme }: CatalogueProps): JSX.Element {
           </label>
           <nav aria-label="Sections">
             <ul class="toc">
-              {SECTIONS.map((s) => (
+              {SHOWN.map((s) => (
                 <li key={s.id}>
                   <a href={`#${s.id}`}>{s.title}</a>
                 </li>
@@ -81,7 +87,7 @@ export function Catalogue({ initialTheme }: CatalogueProps): JSX.Element {
           </nav>
         </header>
         <main>
-          {SECTIONS.map(({ id, title, tier, summary, wide, Specimen }) => (
+          {SHOWN.map(({ id, title, tier, summary, wide, Specimen }) => (
             <section key={id} id={id} class="section" aria-labelledby={`${id}-title`}>
               <h2 id={`${id}-title`} class="section-title">
                 {title} <span class="tier">{tier}</span>

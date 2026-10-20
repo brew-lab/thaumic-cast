@@ -6,6 +6,7 @@
  * swaps at once. Where corner-shape is missing (WebKit) nothing reshapes at all.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 const section = (page: Page): Locator =>
   page.locator('#press-states [data-scheme="light"] [data-live]');
@@ -271,8 +272,7 @@ test.beforeEach(async ({ page }) => {
   // Each test walks every live control in turn, with waits for the morph.
   test.slow();
   await page.addInitScript({ content: READ_SHAPE });
-  await page.goto('/?theme=light#press-states');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light#press-states');
 });
 
 test('hover is colour only: the shape stays round', async ({ page }) => {

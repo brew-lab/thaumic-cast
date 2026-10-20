@@ -8,6 +8,7 @@
  * Button's box and its neighbour's.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 /** One animation frame of a change, as the page logs it. */
 interface Frame {
@@ -145,8 +146,7 @@ const travel = (frames: Frame[], pick: (f: Frame) => number): number =>
   Math.max(...frames.map((f) => Math.abs(pick(f) - pick(frames[0]!))));
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light');
 });
 
 test('a Button fits what it shows: long words widen it, short words narrow it', async ({
