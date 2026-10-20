@@ -1026,11 +1026,7 @@ export function CastBarSpecimen(): JSX.Element {
   return (
     <div class="popup-specimens">
       <PopupColumn label="nothing chosen; ready, no line and one line; leaves, restarts and the hint; an older companion">
-        <Bar
-          label="Cast"
-          disabled
-          lines={['No room is chosen, and a cast has to go somewhere. Choose one.']}
-        />
+        <Bar label="Cast" disabled lines={['Choose a room to cast to.']} />
         <Bar label="Cast to 1 room" />
         <Bar label="Cast to 4 rooms" lines={['Whatever the speaker is playing will stop.']} />
         <Bar
@@ -1210,7 +1206,7 @@ function Picker({
       kind: 'last',
       trail: '2 rooms',
       pressed: same(chosen, last),
-      description: partial ? 'Patio is not answering; Kitchen goes alone.' : undefined,
+      description: partial ? 'Patio is not answering, so only Kitchen plays.' : undefined,
     },
     {
       id: 'evenings',
@@ -1581,7 +1577,7 @@ export function PopupShellSpecimen(): JSX.Element {
               <Notice
                 kind="banner"
                 tone="warning"
-                lead="This companion is older than the extension"
+                lead="The companion is out of date"
                 text="It is on v0.11.0, and it may still work. If anything misbehaves, update it."
                 action={{ label: 'Update desktop app', onClick: noop }}
                 onDismiss={noop}

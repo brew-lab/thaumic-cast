@@ -11,14 +11,14 @@ describe('retryLabelKey', () => {
   });
 
   it('should offer to try again for every other connection error', () => {
-    expect(retryLabelKey('error_desktop_not_found')).toBe('retry_connection_not_found');
-    expect(retryLabelKey('error_permission_needed')).toBe('retry_connection_not_found');
-    expect(retryLabelKey('Something the companion said')).toBe('retry_connection_not_found');
+    expect(retryLabelKey('error_desktop_not_found')).toBe('try_again');
+    expect(retryLabelKey('error_permission_needed')).toBe('try_again');
+    expect(retryLabelKey('Something the companion said')).toBe('try_again');
   });
 
   it('should have a string for both labels', () => {
     expect(strings.retry_connection).toBeString();
-    expect(strings.retry_connection_not_found).toBeString();
+    expect(strings.try_again).toBeString();
   });
 });
 

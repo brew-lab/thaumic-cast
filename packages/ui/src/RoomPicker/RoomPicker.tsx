@@ -29,7 +29,7 @@ export interface PickerSet {
   trail?: string;
   /** Reads pressed while the choice equals the set. */
   pressed: boolean;
-  /** A room of the set does not answer: "Garden is not answering; Study goes alone." */
+  /** A room of the set does not answer: "Garden is not answering, so only Study plays." */
   description?: string;
 }
 
@@ -67,7 +67,7 @@ export interface RoomPickerStrings {
   findRoom: string;
   /** `clear_search`: "Clear search". */
   clearSearch: string;
-  /** `hidden_chosen_*`: "2 chosen rooms are hidden by the search, and still chosen." */
+  /** `hidden_chosen_*`: "2 chosen rooms are hidden by the search. They stay chosen." */
   hiddenChosen: (count: number) => string;
   /** `save_set`: "Save these rooms as a set". */
   saveSet: string;
@@ -77,7 +77,7 @@ export interface RoomPickerStrings {
   save: string;
   /** `cancel`: "Cancel". */
   cancel: string;
-  /** `picker_waiting`: "Speakers are listed here once the companion answers." */
+  /** `picker_waiting`: "Rooms are listed here once the companion answers." */
   waiting: string;
   /** `no_speakers_found`. */
   empty: string;

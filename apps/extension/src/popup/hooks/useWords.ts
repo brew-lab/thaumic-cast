@@ -134,7 +134,7 @@ export function useWords(): PopupWords {
               : t('video_sync_trim_later', { delay: -trim }),
         reason: (reason) => t(videoSyncReasonKey(reason)),
         reload: t('video_sync_reload'),
-        tryAgain: t('video_sync_try_again'),
+        tryAgain: t('try_again'),
       },
     };
   }, [translate, i18n.language]);

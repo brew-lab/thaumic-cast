@@ -228,7 +228,7 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
             action={{
               idle: t('onboarding.speakers.manual_add'),
               busy: t('onboarding.speakers.manual_testing'),
-              failed: t('settings.try_again'),
+              failed: t('try_again'),
             }}
             help={t('onboarding.speakers.manual_hint')}
           />

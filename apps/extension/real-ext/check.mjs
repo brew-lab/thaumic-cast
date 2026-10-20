@@ -220,7 +220,7 @@ try {
   await shot(p, '02-onboarding-speakers');
   check(
     'onboarding lists each room and counts rooms',
-    /6 speakers answered/.test(speakers) && /\nOffice\n/.test(speakers) && !speakers.includes('+1'),
+    /6 rooms answered/.test(speakers) && /\nOffice\n/.test(speakers) && !speakers.includes('+1'),
     speakers,
   );
   frames.push(await onbGeo('speakers'));
