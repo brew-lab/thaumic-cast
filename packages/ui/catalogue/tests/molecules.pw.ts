@@ -4,12 +4,12 @@
  * details-based Disclosure, and the notices' roles.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 const light = (page: Page, id: string) => page.locator(`#${id} [data-scheme="light"]`);
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light');
 });
 
 test('"Copied" is brief: it returns to the rest label after COPY_CONFIRM_MS', async ({ page }) => {

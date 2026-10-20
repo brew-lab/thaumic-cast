@@ -8,6 +8,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { COPY_CONFIRM_MS } from '../../src/tokens';
+import { openSections } from './open';
 
 /** A box, relative to the field's parent, so a scroll never reads as a move. */
 type Box = [x: number, y: number, w: number, h: number];
@@ -164,8 +165,7 @@ test.use({ reducedMotion: 'no-preference' });
 test.describe('accepted', () => {
   test.beforeEach(async ({ page }) => {
     await fakeClipboard(page, true);
-    await page.goto('/?theme=light');
-    await expect(page.locator('html[data-ready]')).toHaveCount(1);
+    await openSections(page, '/?theme=light');
     await page.addStyleTag({
       content: `${SECTIONS.map((id) => `#${id}`).join(', ')} { --dur-change: ${D}ms; }`,
     });
@@ -231,8 +231,7 @@ test.describe('accepted', () => {
 test.describe('refused', () => {
   test.beforeEach(async ({ page }) => {
     await fakeClipboard(page, false);
-    await page.goto('/?theme=light');
-    await expect(page.locator('html[data-ready]')).toHaveCount(1);
+    await openSections(page, '/?theme=light');
   });
 
   test('a refusal keeps the Button; only a hidden value arrives, and the action wraps once', async ({

@@ -6,6 +6,7 @@
  * empty list draws no padding of its own inside it.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 /**
  * One frame of one of the section's specimens, in the light scheme.
@@ -25,8 +26,7 @@ const frame = (page: Page, title: RegExp, range: string, density: 0 | 1): Locato
     .nth(density);
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light');
 });
 
 for (const density of [0, 1] as const) {

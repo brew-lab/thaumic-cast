@@ -6,12 +6,12 @@
  * never drawn invisible.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 const light = (page: Page, id: string) => page.locator(`#${id} [data-scheme="light"]`);
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light');
 });
 
 test('every frame is drawn in the range it names', async ({ page }) => {

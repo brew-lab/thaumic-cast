@@ -5,13 +5,13 @@
  * the bar.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { openSections } from './open';
 
 const frame = (page: Page, name: string): Locator =>
   page.locator(`#popup-shell [data-scheme="light"] [data-frame="${name}"]`);
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/?theme=light');
-  await expect(page.locator('html[data-ready]')).toHaveCount(1);
+  await openSections(page, '/?theme=light');
   await page.locator('#popup-shell').scrollIntoViewIfNeeded();
 });
 
