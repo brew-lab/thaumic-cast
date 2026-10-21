@@ -1,0 +1,2 @@
+# The catalogue's screenshot baselines (Playwright) are large binary files; keep them in Git LFS.
+packages/ui/catalogue/tests/__screenshots__/**/*.png filter=lfs diff=lfs merge=lfs -text

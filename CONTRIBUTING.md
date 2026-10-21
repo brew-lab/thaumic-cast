@@ -7,6 +7,8 @@ Thank you for your interest in contributing! We use a Monorepo structure managed
 1.  **Prerequisites:**
     - [Bun](https://bun.sh/) (v1.0+)
     - [Rust](https://www.rust-lang.org/) (latest stable)
+    - [Git LFS](https://git-lfs.com/) (`git lfs install` once): the catalogue's screenshot
+      baselines in `packages/ui/catalogue/tests/__screenshots__` are stored in LFS
 
 2.  **Install Dependencies:**
 
