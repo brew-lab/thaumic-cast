@@ -568,7 +568,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 ### M-copy · CopyField: FINAL
 
 - **What:** the value as text, as a DescriptionList value is (`.mono`, tabular, wraps anywhere, never cut off), plus a quiet Button sm with the `copy` glyph, named by what it copies ("Copy URL", "Copy address"). No box: the pattern of Cloudflare's Zone ID and Account ID. sm on every surface (F-size).
-- **Behaviour:** `done` ("Copied", with the check) shows for `COPY_CONFIRM_MS` (2 s), then the action returns to its rest label; the Announcer says "Copied" once, politely. When the clipboard refuses, the value is selected and focused (`tabindex=-1`, an outline ring round the text), with an info note.
+- **Behaviour:** `done` ("Copied", with the check) shows for `COPY_CONFIRM_MS` (2 s), then the action returns to its rest label; the Announcer says "Copied" once, politely. The shown value never changes when copying, even when the clipboard takes a longer text (the Server's Address shows `host:port` and copies its `http://` URL; §11 call 94). When the clipboard refuses, the value is selected and focused (`tabindex=-1`, an outline ring round the text), with an info note.
 - **Card form** (`reveal="onRefusal"`, the RoomCard's Cast URL): the Button alone, hugging its label; the URL appears as text only on refusal.
 - **Layout:** the action sits beside the value while the whole value fits, and wraps under it otherwise, at its own size; only then does the value wrap. Under 20rem of its own `field` container (a container-query literal), the action is icon-only, still named "Copy URL" / "Copy address".
 
@@ -1164,6 +1164,9 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **Tray:** the drawing changes and nothing else: the same files, sizes (22 and 44 px), 2 px margin, macOS template image, Windows theme pairs and idle and active tones. Idle is the outline, active is lit.
     - **The README** shows the bare mark, `--brand-ink` in light and the dark `--primary` in dark.
 
+94. **Fixes from the owner's feedback of 2026-10-21.** Each is checked in the catalogue (Chromium and WebKit) and in the real-app or real-extension rig.
+    - **Copying never changes the shown value** (owner: "The text should remain `192.168.2.169:49400`"). A CopyField with a `value` always shows that value; what goes to the clipboard may be longer (the Server's Address shows `host:port` and copies `http://host:port`, unchanged). Only a field with no shown value (a card's Copy URL) shows the copied text, on refusal (M-copy). A refused copy on the Server selects the shown `host:port`. The real-app rig checks the address is the same before, during and after the copy.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1284,6 +1287,10 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Mark assets**
 
 - **The logo is mark 1b as designed** ("the logo should be as we designed it with the octogon"): app icon, tray, toolbar and README (§11 call 93).
+
+**Owner feedback (2026-10-21)**
+
+- **Copying never changes the shown value** (§11 call 94).
 
 **Standing**
 
