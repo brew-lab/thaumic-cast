@@ -405,6 +405,11 @@ export const CHROME = {
       dark: { bg: STATUS_SETS.danger.ink.dark, fg: onDanger.dark },
     },
   },
+  /**
+   * The static toolbar icon's ink: the purple ladder (hue 305, chroma .2) at OKLCH .64, between
+   * --purple-60 and --purple-76, the one stop that clears 3:1 on Chrome's light and dark toolbars.
+   */
+  toolbarIcon: { ink: '#a964eb' },
   tray: {
     idle: { light: 'tray/idle-light.png', dark: 'tray/idle-dark.png' },
     lit: { light: 'tray/lit-light.png', dark: 'tray/lit-dark.png' },

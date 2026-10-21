@@ -273,6 +273,7 @@ Colours drawn by Chrome or the OS, generated from the same table as `tokens.css`
   - Warning: `--warning-ink` with its text, generated from the set: `#935d00` / `#ffffff` light, `#ffc251` / `#2b1d00` dark.
   - Danger: `--danger-ink` / `--on-danger`, generated from the set: `#c2181d` / `#ffffff` light (6.1:1), `#e88382` / `#3d090a` dark (6.44:1).
 - **Tray icon:** idle and lit, each in light and dark.
+- **Toolbar icon:** mark 1b in `#a964eb`, one ink for both Chrome toolbars (§11 call 93).
 
 The TS shape is in annex 1, T-chrome.
 
@@ -1156,6 +1157,13 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **Listed rooms are ruled** (RoomRow `list`), as in the drawing. "6 rooms answered." stays a checklist line, not the drawing's green Notice: Notice has no success tone (call 37).
     - **RoomCard's name has no 6ch floor in CSS** (`min()` with `ch` is outside the allowed values): the line wraps on max-content, so the Badge drops before the name shrinks, and the rig checks the name box is at least 6ch.
 
+93. **The mark's assets.** The owner kept mark 1b as drawn ("the logo should be as we designed it with the octogon").
+    - **App icon:** the R6 tile, the `--purple-90` mark at .68 on `--brand-ink`, radius 20 %. Below a 20 px mark (the 16 and 24 px tiles) it keeps the outer arcs only. The macOS `icon.icns` puts the tile on Apple's grid (824 of 1024, radius 185.4), so it sizes with other apps; every other platform has the full tile.
+    - **Extension:** the manifest icons are the app tile (`icon-128` keeps the Web Store's 16 px clear margin); the toolbar button is the bare mark.
+    - **Toolbar ink:** a static icon cannot follow Chrome's theme, and no ladder stop clears 3:1 on both toolbars (`--purple-60` is 2.79:1 on `#35363a`, `--purple-76` 2.04:1 on `#f1f3f4`; `--primary` is 1.39:1 on dark). The ink is the purple ladder at OKLCH .64 (hue 305, chroma .2), `#a964eb`: 3.30:1 on `#f1f3f4`, 3.68:1 on white, 3.28:1 on `#35363a`, 4.38:1 on `#202124`. It is `CHROME.toolbarIcon` (T-chrome).
+    - **Tray:** the drawing changes and nothing else: the same files, sizes (22 and 44 px), 2 px margin, macOS template image, Windows theme pairs and idle and active tones. Idle is the outline, active is lit.
+    - **The README** shows the bare mark, `--brand-ink` in light and the dark `--primary` in dark.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1177,7 +1185,9 @@ Where the packets disagreed with canon or with each other, these are the calls m
 
 - **The voice pass.** Closed (owner, Phase 5: "strings LGTM"): 20 strings changed (17 in the extension, 3 in the desktop), both onboardings say "{{count}} rooms answered." (§11.12), and each app has one `try_again` key ("Try again"). The rest of the strings added since the copy rewrite stay as they are. "Video sync" is settled (call 24).
 - **Old R7 sheets still draw retired variants.** The full R7 sheets for Switch, Checkbox, Radio, SegmentedControl, Select, Slider, Clacks, Tooltip, Card, Dialog, Disclosure, EmptyState, NavItem, SectionHeader, StepIndicator, Meter, WizardStep and DescriptionList also draw variants retired in §9: Toggle, filter chips, Card raised, Notice summary, timed Toasts, 18 px icons, the mixed checkbox and the sheet. The design canvas (Design system v1 page) shows each item's v1 look. The catalogue page becomes the full reference, so no redraw is planned.
-- **The macOS app icon** still needs a check against Apple's grid.
+- **The macOS app icon.** Closed (call 93): the icns tile sits on Apple's grid.
+- **The toolbar icon follows the theme and lights while casting** (F-mark): `chrome.action.setIcon` with light and dark inks and the lit drawing, from the background, which already knows a dark toolbar (ToolbarBadge). Until then the static icon is `CHROME.toolbarIcon` (call 93).
+- **The tray loads its 44 px files** on Retina and Windows above 100 %; today every OS scales the 22 px file.
 
 **Outside the design system:**
 
@@ -1270,6 +1280,10 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 
 - **The voice pass is approved** as proposed ("strings LGTM"): 20 strings change, and the three "Try again" keys merge into one per app.
 - **Unused tokens stay** ("yes keep unused"): `check-ds.ts` lists them and does not fail.
+
+**Mark assets**
+
+- **The logo is mark 1b as designed** ("the logo should be as we designed it with the octogon"): app icon, tray, toolbar and README (§11 call 93).
 
 **Standing**
 
