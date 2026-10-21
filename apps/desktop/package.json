@@ -18,10 +18,10 @@
   },
   "dependencies": {
     "@preact/signals": "^2.5.1",
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-autostart": "^2.0.0",
-    "@tauri-apps/plugin-log": "^2.0.0",
-    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-autostart": "^2.7.0",
+    "@tauri-apps/plugin-log": "^2.10.0",
+    "@tauri-apps/plugin-shell": "^2.5.0",
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",
     "@thaumic-cast/ui": "workspace:*",
@@ -35,7 +35,7 @@
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "@preact/preset-vite": "^2.0.0",
-    "@tauri-apps/cli": "^2.10.0",
+    "@tauri-apps/cli": "^2.12.0",
     "typescript": "^7.0.2",
     "vite": "^8.0.8"
   }
