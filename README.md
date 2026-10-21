@@ -3,7 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="apps/desktop/app-icon.svg" width="160" alt="Thaumic Cast logo" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mark-dark.svg" />
+    <img src="docs/assets/mark-light.svg" width="160" alt="Thaumic Cast logo" />
+  </picture>
 </p>
 
 <h1 align="center">Thaumic Cast</h1>
