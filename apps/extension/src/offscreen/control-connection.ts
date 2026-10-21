@@ -24,6 +24,7 @@ import type { WsStatusResponse } from '../lib/messages';
 import { stopAllSessions } from './stream-session';
 import { noop } from '../lib/noop';
 import { exponentialBackoff } from '../lib/backoff';
+import { isExpectedClose } from './ws-close';
 
 const log = createLogger('Offscreen');
 
@@ -153,8 +154,11 @@ export function connectControlWebSocket(url: string): void {
     }
   };
 
-  ws.onclose = () => {
-    log.warn('Control WebSocket closed');
+  ws.onclose = (event) => {
+    // Reconnecting below is the recovery; only giving up is worth a warning.
+    const message = `Control WebSocket closed: ${event.code}`;
+    if (isExpectedClose(event.code)) log.info(message);
+    else log.warn(message);
     // Stop heartbeat
     stopControlHeartbeat();
     // Notify background immediately so UI updates
@@ -162,8 +166,9 @@ export function connectControlWebSocket(url: string): void {
     attemptControlReconnect();
   };
 
-  ws.onerror = (error) => {
-    log.error('Control WebSocket error:', error);
+  ws.onerror = () => {
+    // An error event carries nothing; the close that always follows says what happened.
+    log.debug('Control WebSocket error');
   };
 }
 
@@ -176,7 +181,9 @@ function attemptControlReconnect(): void {
   controlConnection.reconnectAttempts++;
 
   if (controlConnection.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-    log.error('Control WS max reconnect attempts exceeded');
+    // The companion is gone (quit, or the computer it runs on is off). Not a fault in the
+    // extension, but the casts have to stop, so it is worth a warning.
+    log.warn('Control WS max reconnect attempts exceeded');
     // Stop all active sessions (tab + browser capture) - desktop is unreachable
     stopAllSessions();
     chrome.runtime.sendMessage({ type: 'WS_PERMANENTLY_DISCONNECTED' }).catch(noop);

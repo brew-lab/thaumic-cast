@@ -95,7 +95,8 @@ export function registerOffscreenRoutes(): void {
     const { tabId } = validated;
 
     if (hasSession(tabId)) {
-      log.warn(`Session for tab ${tabId} disconnected unexpectedly`);
+      // Usually the companion going away; the worker logged the close at its level.
+      log.info(`Session for tab ${tabId} disconnected unexpectedly`);
       removeSession(tabId);
     } else if (clearCaptureHealthForTab(tabId)) {
       // Session never reached START_PLAYBACK — removeSession skipped it, so

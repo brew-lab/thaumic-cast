@@ -150,7 +150,9 @@ export function handleWsConnected(
 export function handleWsTemporarilyDisconnected(): void {
   setConnected(false);
   forgetSpeakerReadings();
-  log.warn('WebSocket disconnected, reconnecting...');
+  // The companion quitting, restarting or sleeping; the offscreen document reconnects. Only
+  // giving up (handleWsPermanentlyDisconnected) is worth a warning.
+  log.info('WebSocket disconnected, reconnecting...');
   notifyPopup({ type: 'WS_CONNECTION_LOST', reason: 'reconnecting' });
 }
 
