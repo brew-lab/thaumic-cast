@@ -147,20 +147,18 @@ export function GroupVolume({
   const playing = rooms.filter((r) => !r.joining).length;
   const several = rooms.length > 1 && master;
 
-  // Open, the master keeps the rows' empty Remove slot, so the card has one volume column;
-  // the compact tile's line has nothing after it.
-  const masterLine = (slot: boolean): JSX.Element | undefined =>
-    master && (
-      <VolumeLine
-        name={master.name}
-        volume={master.volume ?? meanVolume(summaryRooms)}
-        muted={master.muted ?? allMuted(summaryRooms)}
-        onVolume={master.onVolume}
-        onMute={master.onMute}
-        slot={slot}
-        strings={strings}
-      />
-    );
+  // The master runs the card's full width, open or compact: it has no Remove, so it keeps no
+  // empty slot, and it need not line up with the rows under it (§11 call 93).
+  const masterLine = master && (
+    <VolumeLine
+      name={master.name}
+      volume={master.volume ?? meanVolume(summaryRooms)}
+      muted={master.muted ?? allMuted(summaryRooms)}
+      onVolume={master.onVolume}
+      onMute={master.onMute}
+      strings={strings}
+    />
+  );
 
   const row = (r: GroupVolumeRoom, i: number): JSX.Element => (
     <RoomRow
@@ -178,7 +176,7 @@ export function GroupVolume({
     return (
       <div class={styles.group}>
         {several
-          ? masterLine(false)
+          ? masterLine
           : only && (
               <VolumeLine
                 name={only.room.name}
@@ -229,7 +227,7 @@ export function GroupVolume({
 
   return (
     <div class={styles.group}>
-      {masterLine(true)}
+      {masterLine}
       <Divider />
       <Disclosure
         size="md"

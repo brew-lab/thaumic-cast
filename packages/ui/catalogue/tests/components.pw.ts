@@ -208,6 +208,20 @@ test('the master shows the mean and the fold summary lists the levels', async ({
   await expect(section.getByText('Kitchen may cut out · Patio 46')).toBeVisible();
 });
 
+test("the open master runs the full width: it starts with the rows' sliders and ends past them", async ({
+  page,
+}) => {
+  // The master keeps no empty Remove slot (§11 call 93, which reverses call 91's master).
+  const open = light(page, 'group-volume').locator('details[open]').first();
+  const group = open.locator('xpath=ancestor::div[contains(@class, "_group_")][1]');
+  const master = await box(
+    group.getByRole('slider', { name: 'Kitchen + Living Room + TV Room volume' }).first(),
+  );
+  const row = await box(open.getByRole('group', { name: 'Kitchen' }).getByRole('slider').first());
+  expect(Math.abs(master.x - row.x)).toBeLessThanOrEqual(0.5);
+  expect(master.x + master.width - (row.x + row.width)).toBeGreaterThanOrEqual(24);
+});
+
 test('a lone room has no Remove, and each of several rooms has one', async ({ page }) => {
   const section = light(page, 'group-volume');
   const one = section.getByRole('group', { name: 'Kitchen' }).first();
