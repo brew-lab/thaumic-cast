@@ -158,6 +158,9 @@ jobs:
         shards: [4]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The screenshot baselines are stored in Git LFS.
+          lfs: true
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
