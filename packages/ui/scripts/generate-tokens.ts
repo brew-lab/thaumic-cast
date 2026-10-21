@@ -424,6 +424,8 @@ export const CONTAINER_BREAKPOINTS_REM = ${JSON.stringify(CONTAINER_BREAKPOINTS_
 export const CHROME = {
   /** chrome.action badge: the text is "!" only, never a count. */
   toolbarBadge: ${JSON.stringify(CHROME.toolbarBadge)},
+  /** Toolbar icon: mark 1b, one ink for both Chrome toolbars (the PNGs are drawn in it). */
+  toolbarIcon: ${JSON.stringify(CHROME.toolbarIcon)},
   /** Tray icon: mark 1b idle, filled (lit) while any cast plays; one file per OS theme. */
   tray: ${JSON.stringify(CHROME.tray)},
 } as const;
