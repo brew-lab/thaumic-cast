@@ -641,7 +641,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 One row per room. It absorbs SpeakerRow, SpeakerVolumeRow, SpeakerMultiSelect's rows, CheckRow and the speaker list items.
 
 - **`pick`:** the `<label>` is the checkbox. The sub line holds "Grouped with …", a Badge and "at 72 now". StartLevel sits outside the label. The row is unavailable when the room does not answer.
-- **`cast`:** name plus Badge; mute, Slider, value (`--ch-volume`) and Remove. "Joining…" makes the row inert. A failure adds a row line with Try again. The last room has no Remove (Stop ends the cast). The volume line's columns are fixed tracks, the same on every row: mute and the Remove slot are an IconButton wide (`--control-sm`) and the Slider takes the rest, so every row of a cast (joined, joining, failed, muted, the last room without Remove) has its Slider start and end at one place; the slot is kept empty when there is no Remove, and the GroupVolume master keeps it too (§11 calls 90, 91).
+- **`cast`:** name plus Badge; mute, Slider, value (`--ch-volume`) and Remove. "Joining…" makes the row inert. A failure adds a row line with Try again. The last room has no Remove (Stop ends the cast). The volume line's columns are fixed tracks, the same on every row: mute and the Remove slot are an IconButton wide (`--control-sm`) and the Slider takes the rest, so every row of a cast (joined, joining, failed, muted, the last room without Remove) has its Slider start and end at one place; the slot is kept empty when there is no Remove (§11 calls 90, 91). The GroupVolume master keeps no slot: it runs the full width (§11 call 94).
 - **`list`:** read-only, with a disc Artwork, the name, a sub line and a Badge. The rows go in a `RoomList`, a labelled `<ul>` with the list reset and the rows' gap, so no app writes the list.
 
 ### M-startlevel · StartLevel: FINAL
@@ -661,7 +661,7 @@ One row per room. It absorbs SpeakerRow, SpeakerVolumeRow, SpeakerMultiSelect's 
 ### M-groupvol · GroupVolume: FINAL
 
 - **One room:** its volume line plus "Add a room".
-- **Two or more rooms:** a master (the Sonos group volume, showing the mean) plus the "{{count}} rooms" fold, whose summary lists the levels. Then the rows, then "Add a room" last, which opens the add list. The master keeps the rows' empty Remove slot, so the card has one volume column: its Slider starts and ends where the rows' do (§11 call 91). The compact tile's line has no slot.
+- **Two or more rooms:** a master (the Sonos group volume, showing the mean) plus the "{{count}} rooms" fold, whose summary lists the levels. Then the rows, then "Add a room" last, which opens the add list. The master has no Remove slot, open or compact: its Slider starts where the rows' do and runs the card's full width; it need not end where theirs do (owner; §11 call 94, which reverses call 91's master point).
 - **Nothing to add:** "Add a room" shows only while some room is neither in the cast nor joining it; with none it is gone, and an open add mode shuts (§11 call 88).
 - **Memory:** open or shut is remembered for the popup session.
 
@@ -1121,7 +1121,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **The CastBar's line eases open; it no longer snaps.** Call 90 gave the line a block-size transition from 0, but the line is a flex item that clips, so its automatic minimum (`min-block-size: auto`) held it at its words' height: on the first frame it was 16 px tall and only its fade and the gap moved, so at full height the bar's top jumped 16 px over the rooms, and in a shorter popup Cast dropped in one frame. It sets `min-block-size: 0` and now runs 0 to 16 px over about 270 ms. In a shorter popup the first room chosen also brings the picker's "Save these rooms as a set", which arrived at once and dropped Cast by 22 px in one frame; it now opens in place the same way (C-picker), so Cast eases down with the popup (at most about 9 px a frame, sampled in Chromium). The rig samples every frame: the line's height must start below half its full height and pass through at least three steps, and in a short popup Cast's largest one-frame move must be at most 40 % of its whole move (it was half or more before).
     - **The welcome step's disc starts with its title.** The header centred the 48 px disc on its block, and the welcome title wraps in the Card, so the title started 18 px above the disc. The disc now starts with the title on every step (M-wizardstep); the rig checks their tops agree within 1 px on every step and state.
     - **Skip's words sit on the step's text edge, and its ring clears the popup's edge.** A full flush pull put Skip's box 5 px from the popup's edge, so its focus ring touched the window (L3 accepted a ring touching a card's edge, not the window's). Skip now pulls back only by its padding less the Card's inline padding: its words start on the step's text edge, the edge of everything above it, and its box sits 6 px inside the bar's edge with its ring clear of it (L-wizard). This replaces call 90's "Skip's words start where Cast's box does".
-    - **The master shares the rows' volume column.** The master above the "{{count}} rooms" fold had no Remove slot, so its Slider ended 40 px past the rows'. Open, it keeps the empty slot (M-groupvol); the compact tile's line still has none. The rig checks the master's Slider starts and ends where the rows' do.
+    - **The master shares the rows' volume column.** The master above the "{{count}} rooms" fold had no Remove slot, so its Slider ended 40 px past the rows'. Open, it keeps the empty slot (M-groupvol); the compact tile's line still has none. The rig checks the master's Slider starts and ends where the rows' do. _Reversed by call 94: the master runs the full width._
     - **Back is tonal, as Settings is.** Back and the PopupHeader's Settings sit in the same header slot; Back was quiet. It is now a tonal IconButton (L-wizard).
     - **Left open:** the step title's size inside the Card is an owner call (§12, 4). The speakers step still lists rooms as status lines rather than the drawing's room rows. Rooms added together all show Joining… until the slowest answers, because ADD_ROOMS answers once for the batch; per-room progress needs the background to report each room as it joins.
 
@@ -1167,6 +1167,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
 94. **Fixes from the owner's feedback of 2026-10-21.** Each is checked in the catalogue (Chromium and WebKit) and in the real-app or real-extension rig.
     - **Copying never changes the shown value** (owner: "The text should remain `192.168.2.169:49400`"). A CopyField with a `value` always shows that value; what goes to the clipboard may be longer (the Server's Address shows `host:port` and copies `http://host:port`, unchanged). Only a field with no shown value (a card's Copy URL) shows the copied text, on refusal (M-copy). A refused copy on the Server selects the shown `host:port`. The real-app rig checks the address is the same before, during and after the copy.
     - **The Cast URL's help names no product** (owner: "we seem to be promoting VLC here"). `device.listen_url_hint`: "Opens in a media player or a browser while the cast lasts. It does not keep time with the speakers." `device.listen_url_echo`: "With browser-wide capture, this browser would cast it again, so open it in a media player."
+    - **The GroupVolume master runs the full width** (owner: "it does not have to align with the volume controls below it"). Open, the master keeps no empty Remove slot: its Slider starts where the rows' do and ends past theirs. This reverses call 91's master point; the rows keep their fixed columns (calls 90, 91). The catalogue and the real-extension rig check it.
 
 ## 12. Still open
 
@@ -1293,6 +1294,7 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 
 - **Copying never changes the shown value** (§11 call 94).
 - **The Cast URL's help names no product** (§11 call 94).
+- **The open GroupVolume master runs the full width**, reversing call 91's master point (§11 call 94).
 
 **Standing**
 

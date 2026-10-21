@@ -677,17 +677,22 @@ try {
     lined(joinedRows),
     joinedRows,
   );
-  // The master above the fold shares the rows' columns: one volume column in the card.
+  // The master above the fold runs the card's full width (§11 call 93): it starts where the
+  // rooms' sliders do and ends past them, as it has no Remove slot to keep.
   const masterCol = await p.eval(`const row = document.querySelector('[role=group][aria-label]');
     const card = row?.closest('section, article, [class*="_card_"]');
     const m = card && [...card.querySelectorAll('input[type=range]')]
       .find((i) => !i.closest('[role=group][aria-label]'));
     const r = m?.getBoundingClientRect();
     return r ? { l: r.left, r: r.right } : null`);
+  const firstRow = Array.isArray(joinedRows) ? joinedRows[0] : null;
   check(
-    "the master's slider starts and ends where the rooms' sliders do",
-    masterCol !== null && Array.isArray(joinedRows) && lined([masterCol, ...joinedRows]),
-    { masterCol, row: Array.isArray(joinedRows) ? joinedRows[0] : joinedRows },
+    "the master's slider starts where the rooms' do and runs past their end, the full width",
+    masterCol !== null &&
+      firstRow !== null &&
+      Math.abs(masterCol.l - firstRow.l) <= 0.5 &&
+      masterCol.r - firstRow.r >= 24,
+    { masterCol, row: firstRow },
   );
   await p.click('button[aria-label^="Stop"]');
   await lib.sleep(1500);

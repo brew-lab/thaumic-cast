@@ -38,8 +38,8 @@ export interface VolumeLineProps {
   /** Something after the value: the Remove button. */
   trailing?: ComponentChildren;
   /**
-   * Keep the Remove slot, empty, when there is no trailing control: the master above a cast's
-   * rooms, so its Slider shares the rows' columns.
+   * Keep the Remove slot, empty, when there is no trailing control: a cast's row, so every
+   * row's Slider lines up.
    */
   slot?: boolean;
   /** The words. */
