@@ -1166,6 +1166,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
 
 94. **Fixes from the owner's feedback of 2026-10-21.** Each is checked in the catalogue (Chromium and WebKit) and in the real-app or real-extension rig.
     - **Copying never changes the shown value** (owner: "The text should remain `192.168.2.169:49400`"). A CopyField with a `value` always shows that value; what goes to the clipboard may be longer (the Server's Address shows `host:port` and copies `http://host:port`, unchanged). Only a field with no shown value (a card's Copy URL) shows the copied text, on refusal (M-copy). A refused copy on the Server selects the shown `host:port`. The real-app rig checks the address is the same before, during and after the copy.
+    - **The Cast URL's help names no product** (owner: "we seem to be promoting VLC here"). `device.listen_url_hint`: "Opens in a media player or a browser while the cast lasts. It does not keep time with the speakers." `device.listen_url_echo`: "With browser-wide capture, this browser would cast it again, so open it in a media player."
 
 ## 12. Still open
 
@@ -1291,6 +1292,7 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Owner feedback (2026-10-21)**
 
 - **Copying never changes the shown value** (§11 call 94).
+- **The Cast URL's help names no product** (§11 call 94).
 
 **Standing**
 

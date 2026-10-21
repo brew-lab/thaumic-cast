@@ -439,7 +439,7 @@ export function CopyFieldSpecimen(): JSX.Element {
           value={URL}
           action="Copy URL"
           reveal="onRefusal"
-          help="For a player such as VLC on this computer."
+          help="For a media player on this computer."
           {...words}
         />
         <Pressed>
