@@ -6,7 +6,7 @@ import { Icon } from '../Icon';
 import { IconButton } from '../IconButton';
 import { cx } from '../utils/cx';
 import { browserClipboard, copyPendingText, type ClipboardEnv } from './clipboard';
-import { copyResultFor, type CopyResult } from './result';
+import { copyResultFor, shownCopyText, type CopyResult } from './result';
 import { COPY_CONFIRM_MS } from '../tokens';
 import styles from './CopyField.module.css';
 
@@ -25,7 +25,10 @@ function selectAll(el: HTMLElement | null): void {
 
 /** Props for {@link CopyField}. */
 export interface CopyFieldProps {
-  /** The text shown. Empty or missing, with no `getValue`: unavailable. */
+  /**
+   * The text shown, which copying never changes. Empty or missing, with no `getValue`:
+   * unavailable; missing, with `getValue`: the copied text is what is shown.
+   */
   value?: string;
   /**
    * Works out the text at the moment of the click, such as a URL from a refreshed address.
@@ -154,7 +157,7 @@ export function CopyField({
     );
   };
 
-  const shown = copiedText ?? value ?? '';
+  const shown = shownCopyText(value, copiedText);
   const showValue = (reveal === 'always' || result === 'refused') && !!shown;
   const unavailable = nothingToCopy || result === 'unavailable';
   const note = result === 'refused' ? refusedNote : unavailable ? unavailableNote : null;

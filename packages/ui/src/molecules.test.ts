@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { shownError } from './AddressField/state';
-import { copyResultFor } from './CopyField/result';
+import { copyResultFor, shownCopyText } from './CopyField/result';
 import { fieldMessage } from './Field/message';
 import { noticeAnnouncement } from './Notice/tone';
 
@@ -29,6 +29,20 @@ describe('CopyField results', () => {
   it('should be unavailable when there was no text, whatever the clipboard said', () => {
     expect(copyResultFor('copied', null)).toBe('unavailable');
     expect(copyResultFor('refused', null)).toBe('unavailable');
+  });
+});
+
+describe('CopyField shown text', () => {
+  it('should keep showing the given value when the copied text differs', () => {
+    expect(shownCopyText('192.168.2.169:49400', null)).toBe('192.168.2.169:49400');
+    expect(shownCopyText('192.168.2.169:49400', 'http://192.168.2.169:49400')).toBe(
+      '192.168.2.169:49400',
+    );
+  });
+
+  it('should show the copied text when there is no value to show', () => {
+    expect(shownCopyText(undefined, 'http://x/listen.wav')).toBe('http://x/listen.wav');
+    expect(shownCopyText(undefined, null)).toBe('');
   });
 });
 

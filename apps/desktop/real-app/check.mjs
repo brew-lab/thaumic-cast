@@ -660,6 +660,42 @@ try {
       check(`Server (${size}): Stop is disabled while nothing casts`, await stop.isDisabled());
       if (size === 'default') {
         await checkAxe(a, 'Server');
+        // Copy address: the shown address never changes (owner: it stays host:port), while
+        // the clipboard takes the URL a browser or a player can open (§11 call 93).
+        const shownAddress = () =>
+          a.page.evaluate(() => {
+            const v = document.querySelector('main dl span.mono[tabindex="-1"]');
+            return v ? v.textContent : null;
+          });
+        const before = await shownAddress();
+        const during = [];
+        await a.page
+          .getByRole('button', { name: /^Copy address/ })
+          .first()
+          .click();
+        for (let i = 0; i < 8; i++) {
+          during.push(await shownAddress());
+          await a.page.waitForTimeout(60);
+        }
+        const copiedAddress =
+          engine === 'chromium'
+            ? await a.page.evaluate(() => navigator.clipboard.readText().catch((e) => String(e)))
+            : null;
+        await a.page.waitForTimeout(2400);
+        const after = await shownAddress();
+        check(
+          'Copy address leaves the shown address as it was, before, during and after the copy',
+          /^[\d.]+:\d+$/.test(before ?? '') &&
+            during.every((v) => v === before) &&
+            after === before,
+          { before, during, after },
+        );
+        if (engine === 'chromium')
+          check(
+            'Copy address copies the http:// URL of the shown address',
+            copiedAddress === `http://${before}`,
+            { copiedAddress, before },
+          );
         await button(a, 'Disconnect extensions').click();
         await a.page.waitForTimeout(300);
         const d = await dialogFacts(a);
