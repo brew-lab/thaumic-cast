@@ -25,8 +25,8 @@
   "device.listen_url_copied": "Copied",
   "device.listen_url_copy_failed": "Copying did not work. The text is selected, ready to copy by hand.",
   "device.listen_url_unavailable": "This computer's address is not known yet. Try again in a moment.",
-  "device.listen_url_hint": "Plays in VLC or a browser while the cast lasts. It will not keep time with the speakers.",
-  "device.listen_url_echo": "With browser-wide capture, this browser would cast it straight back. Use VLC.",
+  "device.listen_url_hint": "Opens in a media player or a browser while the cast lasts. It does not keep time with the speakers.",
+  "device.listen_url_echo": "With browser-wide capture, this browser would cast it again, so open it in a media player.",
 
   "transport.paused": "Paused",
   "transport.stopped": "Not playing",

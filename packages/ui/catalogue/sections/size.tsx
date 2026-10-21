@@ -230,7 +230,7 @@ function SpeakersMock(): JSX.Element {
             reveal="onRefusal"
             value="http://192.168.1.20:49400/stream/4f2a/listen.flac"
             action="Copy URL"
-            help="Plays in VLC or a browser while the cast lasts."
+            help="Opens in a media player or a browser while the cast lasts."
             {...COPY}
           />
         </Card>

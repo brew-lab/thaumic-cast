@@ -144,7 +144,8 @@ function CastUrl({ refuse = false }: { refuse?: boolean }): JSX.Element {
       clipboard={refuse ? fakeClipboard(false) : undefined}
       help={
         <p>
-          Plays in VLC or a browser while the cast lasts. It will not keep time with the speakers.
+          Opens in a media player or a browser while the cast lasts. It does not keep time with the
+          speakers.
         </p>
       }
     />
