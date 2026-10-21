@@ -63,7 +63,8 @@ test('every section on the floor matches its screenshot', async ({ page }, testI
       testInfo.annotations.push({ type: 'new baseline', description: name });
       continue;
     }
-    await expect(section).toHaveScreenshot(name);
+    // Soft, so one run reports every section that changed, not just the first.
+    await expect.soft(section).toHaveScreenshot(name);
   }
 });
 
