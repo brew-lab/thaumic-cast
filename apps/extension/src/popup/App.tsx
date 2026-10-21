@@ -642,14 +642,12 @@ function MainPopup(): JSX.Element {
         kind: 'browser' as const,
         title: t('whole_browser'),
         subtitle: t('capture_mode_browser_enable'),
-        playing: false,
       }
     : {
         kind: 'tab' as const,
         art: currentTab?.metadata?.artwork || currentTab?.tabFavicon,
         title: currentTab ? getDisplayTitle(currentTab) : '',
         subtitle: currentTab ? (getDisplaySubtitle(currentTab) ?? '') : '',
-        playing: currentTab?.playbackState === 'playing',
       };
 
   // ── Casting now ───────────────────────────────────────────────────────

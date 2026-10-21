@@ -409,6 +409,17 @@ test('the TabCard is a section named by its h2 title', async ({ page }) => {
   await expect(card.getByRole('group', { name: 'Cast to' })).toBeVisible();
 });
 
+test('the TabCard shows no live dot: nothing goes out to speakers until it casts', async ({
+  page,
+}) => {
+  // StatusDot live is for sound going out (§11 call 93); a running cast's tile shows it.
+  const live = '[class*="_live_"]';
+  await expect(light(page, 'tab-card').locator(live)).toHaveCount(0);
+  await expect(light(page, 'media-header').locator(live).first()).toBeAttached();
+  const tile = light(page, 'cast-tile').getByRole('region', { name: 'Video title' });
+  await expect(tile.locator(live).first()).toBeAttached();
+});
+
 test('a single cast is open with no chevron; Stop is named by the title', async ({ page }) => {
   const tile = light(page, 'cast-tile').getByRole('region', { name: 'Video title' });
   await expect(tile.getByRole('button', { name: /^Video title/ })).toHaveCount(0);

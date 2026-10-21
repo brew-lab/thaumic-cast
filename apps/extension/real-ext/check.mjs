@@ -267,6 +267,11 @@ try {
       cin: { l: media.l, r: media.r },
       bar: { ...box(bar), pt: bs.paddingTop, pb: bs.paddingBottom, bg: bs.backgroundColor },
       cast: box(cast) }`);
+  // The live dot is for sound going out to speakers (§11 call 93): this tab plays, but it is
+  // not casting, so its TabCard shows none.
+  const tabLive = await p.eval(`const card = document.querySelector('main').firstElementChild;
+    return card.querySelectorAll('[class*="_live_"]').length`);
+  check('the TabCard shows no live dot while this tab is not casting', tabLive === 0, tabLive);
   const near = (a, b) => Math.abs(a - b) <= 0.5;
   const off = (test) =>
     frames
