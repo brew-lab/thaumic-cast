@@ -442,7 +442,7 @@ export function MediaHeaderSpecimen(): JSX.Element {
   const long = 'A very long video title that goes on past the end of the popup row';
   return (
     <div class="popup-specimens">
-      <PopupColumn label="TabCard: tab, browser, paused, no artwork">
+      <PopupColumn label="TabCard (no live dot): tab, browser, long title, no artwork">
         <MediaHeader
           kind="tab"
           size="lg"
@@ -450,7 +450,7 @@ export function MediaHeaderSpecimen(): JSX.Element {
           art={poster(SEEDS.video)}
           title="Video title"
           subtitle="youtube.com"
-          playing
+          playing={false}
           strings={MEDIA}
         />
         <MediaHeader
@@ -458,7 +458,7 @@ export function MediaHeaderSpecimen(): JSX.Element {
           size="lg"
           title="Whole browser"
           subtitle="Browser-wide capture"
-          playing
+          playing={false}
           strings={MEDIA}
         />
         <MediaHeader
@@ -1316,7 +1316,6 @@ function Tab({ kind = 'tab' }: { kind?: 'tab' | 'browser' }): JSX.Element {
               kind,
               title: 'Whole browser',
               subtitle: 'Browser-wide capture',
-              playing: true,
               strings: MEDIA,
             }
           : {
@@ -1324,7 +1323,6 @@ function Tab({ kind = 'tab' }: { kind?: 'tab' | 'browser' }): JSX.Element {
               art: poster(SEEDS.video),
               title: 'Video title',
               subtitle: 'youtube.com',
-              playing: true,
               strings: MEDIA,
             }
       }

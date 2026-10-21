@@ -1168,6 +1168,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **Copying never changes the shown value** (owner: "The text should remain `192.168.2.169:49400`"). A CopyField with a `value` always shows that value; what goes to the clipboard may be longer (the Server's Address shows `host:port` and copies `http://host:port`, unchanged). Only a field with no shown value (a card's Copy URL) shows the copied text, on refusal (M-copy). A refused copy on the Server selects the shown `host:port`. The real-app rig checks the address is the same before, during and after the copy.
     - **The Cast URL's help names no product** (owner: "we seem to be promoting VLC here"). `device.listen_url_hint`: "Opens in a media player or a browser while the cast lasts. It does not keep time with the speakers." `device.listen_url_echo`: "With browser-wide capture, this browser would cast it again, so open it in a media player."
     - **The GroupVolume master runs the full width** (owner: "it does not have to align with the volume controls below it"). Open, the master keeps no empty Remove slot: its Slider starts where the rows' do and ends past theirs. This reverses call 91's master point; the rows keep their fixed columns (calls 90, 91). The catalogue and the real-extension rig check it.
+    - **The TabCard shows no live dot** (owner: "is the dot supposed to be visible when not casting?"). StatusDot live means sound goes out to speakers: a running cast that is not paused. The TabCard is this tab while it is not casting, so it never shows the dot, whatever the tab plays; `TabCard`'s `media` has no `playing`. The catalogue and the real-extension rig check it.
 
 ## 12. Still open
 
@@ -1295,6 +1296,7 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 - **Copying never changes the shown value** (§11 call 94).
 - **The Cast URL's help names no product** (§11 call 94).
 - **The open GroupVolume master runs the full width**, reversing call 91's master point (§11 call 94).
+- **The TabCard shows no live dot** (§11 call 94).
 
 **Standing**
 
