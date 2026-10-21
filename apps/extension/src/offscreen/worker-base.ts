@@ -19,6 +19,7 @@ import {
   FRAME_QUEUE_HYSTERESIS_RATIO,
 } from '@thaumic-cast/protocol';
 import { createLogger, Logger } from '@thaumic-cast/shared';
+import { isExpectedClose } from './ws-close';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -669,7 +670,10 @@ function handleWsMessage(s: WorkerState, event: MessageEvent): void {
  * @param event - CloseEvent from WebSocket
  */
 function handleWsClose(s: WorkerState, event: CloseEvent): void {
-  s.log.warn(`WebSocket closed: ${event.code} ${event.reason}`);
+  // The companion quitting, restarting or sleeping ends the stream; that is not a fault here.
+  const message = `WebSocket closed: ${event.code} ${event.reason}`;
+  if (isExpectedClose(event.code)) s.log.info(message);
+  else s.log.warn(message);
   stopHeartbeat(s);
   postToMain({
     type: 'DISCONNECTED',
@@ -682,7 +686,8 @@ function handleWsClose(s: WorkerState, event: CloseEvent): void {
  * @param s - Worker state
  */
 function handleWsError(s: WorkerState): void {
-  s.log.error('WebSocket error');
+  // An error event carries nothing; the close that always follows says what happened.
+  s.log.debug('WebSocket error');
 }
 
 /**

@@ -421,6 +421,8 @@ export async function launch({ profile = 'check', scale = 1, fresh = true } = {}
       `--load-extension=${EXT}`,
       `--allowlisted-extension-id=${unpackedId(EXT)}`,
       '--auto-accept-this-tab-capture',
+      // Lets CDP's Extensions.loadUnpacked reload the extension in place, as an update does.
+      '--enable-unsafe-extension-debugging',
       '--window-size=1200,900',
       'about:blank',
     ],

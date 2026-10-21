@@ -42,7 +42,13 @@ items and none under a heading or round a Notice, every row's control on the car
 first in Finer points, Bespoke with Advanced open (its rows on one control column), nothing moving
 when a setting saves, the Toast's bar (0 tall without a Toast, sticky with one, never over focus)
 and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
-to open over. Each step is
+to open over. After the runs, the lifecycle pass (`lifecycle.mjs`, once, with its own companion):
+a page controlled by a service worker with an enforced Connection-Allowlist, as YouTube Music
+sends, must still get the content scripts with nothing blocked or logged; a cast's companion
+quitting and coming back must log no warnings or errors (only Chromium's own line for each refused
+reconnect); and reloading the extension in place (CDP `Extensions.loadUnpacked`, as an update
+does) with a tab open must throw nothing when the tab's orphaned content scripts next hear from
+the page. Each step is
 checked and screenshotted into `real-ext/shots/` (`REALEXT_SHOTS` moves them). It prints PASS or
 FAIL per check and exits 1 on any failure.
 

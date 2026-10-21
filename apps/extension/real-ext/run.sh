@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The real-extension check: builds the extension and the companion, starts the companion on the
 # fake household, and runs check.mjs in real Chromium under a virtual display, once per scale
-# and scheme. See README.md.
+# and scheme, then lifecycle.mjs once. See README.md.
 #
 #   apps/extension/real-ext/run.sh                 # 100 % light, then 125 % dark
 #   RUNS="1:light" apps/extension/real-ext/run.sh  # one run
@@ -38,4 +38,7 @@ for run in $RUNS; do
   wait "$companion" 2>/dev/null || true
   rm -f "$log"
 done
+# Once: the lifecycle pass starts and stops its own companion.
+echo "== lifecycle =="
+BIN="$BIN" xvfb-run -a -s "-screen 0 1400x1000x24" node "$HERE/lifecycle.mjs" || status=1
 exit $status

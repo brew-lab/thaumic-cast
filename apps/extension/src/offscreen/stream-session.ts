@@ -678,7 +678,8 @@ export class StreamSession {
           break;
 
         case 'DISCONNECTED':
-          log.warn(`Worker disconnected: ${msg.reason}`);
+          // The worker logged the close at its level; the session only ends.
+          log.info(`Worker disconnected: ${msg.reason}`);
           this.onDisconnected?.();
           this.stop();
           break;
