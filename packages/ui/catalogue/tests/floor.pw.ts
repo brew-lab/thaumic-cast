@@ -52,7 +52,14 @@ test('every section on the floor matches its screenshot', async ({ page }, testI
     if (!existsSync(testInfo.snapshotPath(name))) {
       // At CSS scale, as toHaveScreenshot compares; at WebKit's 2x the tallest sections pass
       // the 32767 px a screenshot can be.
-      await section.screenshot({ path: testInfo.outputPath('new-baselines', name), scale: 'css' });
+      // As toHaveScreenshot takes it: animations stopped and the caret hidden, so a section
+      // with a running animation (a busy Button's Clacks) matches its own baseline.
+      await section.screenshot({
+        path: testInfo.outputPath('new-baselines', name),
+        scale: 'css',
+        animations: 'disabled',
+        caret: 'hide',
+      });
       testInfo.annotations.push({ type: 'new baseline', description: name });
       continue;
     }
