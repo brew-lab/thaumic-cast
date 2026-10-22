@@ -2,7 +2,8 @@
  * Opening the catalogue for a behaviour test. A page of every section takes headless WebKit
  * seconds to draw and keeps some 80 animations running, so a test opens a page of only the
  * sections its file names (`?section=`, Catalogue.tsx): the same components and stylesheets,
- * fewer of them. axe and the screenshots still read the whole page (catalogue.pw.ts).
+ * fewer of them. axe reads the whole page (catalogue.pw.ts); the screenshots open one page per
+ * section (shots.ts).
  */
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
@@ -42,6 +43,16 @@ function sectionsNamedIn(file: string): string[] {
 export async function openSections(page: Page, address: string): Promise<void> {
   const ids = sectionsNamedIn(test.info().file);
   expect(ids.length, 'the test file names no section').toBeGreaterThan(0);
+  await openOnly(page, address, ids);
+}
+
+/**
+ * Opens the catalogue with only the given sections, and waits until the page is ready.
+ * @param page - The test's page
+ * @param address - The address as it would open the whole page, e.g. `/?theme=light#size`
+ * @param ids - The sections to draw
+ */
+export async function openOnly(page: Page, address: string, ids: string[]): Promise<void> {
   const [path, hash = ''] = address.split('#');
   const join = path.includes('?') ? '&' : '?';
   await page.goto(`${path}${join}section=${ids.join(',')}${hash ? `#${hash}` : ''}`);
