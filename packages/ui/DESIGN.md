@@ -641,7 +641,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 One row per room. It absorbs SpeakerRow, SpeakerVolumeRow, SpeakerMultiSelect's rows, CheckRow and the speaker list items.
 
 - **`pick`:** the `<label>` is the checkbox. The sub line holds "Grouped with …", a Badge and "at 72 now". StartLevel sits outside the label. The row is unavailable when the room does not answer.
-- **`cast`:** name plus Badge; mute, Slider, value (`--ch-volume`) and Remove. "Joining…" makes the row inert. A failure adds a row line with Try again. The last room has no Remove (Stop ends the cast). The volume line's columns are fixed tracks, the same on every row: mute and the Remove slot are an IconButton wide (`--control-sm`) and the Slider takes the rest, so every row of a cast (joined, joining, failed, muted, the last room without Remove) has its Slider start and end at one place; the slot is kept empty when there is no Remove (§11 calls 90, 91). The GroupVolume master keeps no slot: it runs the full width (§11 call 94).
+- **`cast`:** name plus Badge; mute, Slider, value (`--ch-volume`) and Remove. "Joining…" makes the row inert. A failure adds a row line with Try again. The last room has no Remove (Stop ends the cast). The volume line's columns are fixed tracks, the same on every row: mute and the Remove slot are an IconButton wide (`--control-sm`) and the Slider takes the rest, so every row of a cast (joined, joining, failed, muted, the last room without Remove) has its Slider start and end at one place; beside other rows the slot is kept empty when there is no Remove (§11 calls 90, 91). A cast's only room keeps no slot (`aligned` false): it has no row to line up with and never has Remove, so its line runs the full width, joining or failed too. The GroupVolume master keeps no slot either: it runs the full width (§11 call 94).
 - **`list`:** read-only, with a disc Artwork, the name, a sub line and a Badge. The rows go in a `RoomList`, a labelled `<ul>` with the list reset and the rows' gap, so no app writes the list.
 
 ### M-startlevel · StartLevel: FINAL
@@ -660,7 +660,7 @@ One row per room. It absorbs SpeakerRow, SpeakerVolumeRow, SpeakerMultiSelect's 
 
 ### M-groupvol · GroupVolume: FINAL
 
-- **One room:** its volume line plus "Add a room".
+- **One room:** its volume line plus "Add a room". The line keeps no empty Remove slot and runs the card's full width (owner; §11 call 94).
 - **Two or more rooms:** a master (the Sonos group volume, showing the mean) plus the "{{count}} rooms" fold, whose summary lists the levels. Then the rows, then "Add a room" last, which opens the add list. The master has no Remove slot, open or compact: its Slider starts where the rows' do and runs the card's full width; it need not end where theirs do (owner; §11 call 94, which reverses call 91's master point).
 - **Nothing to add:** "Add a room" shows only while some room is neither in the cast nor joining it; with none it is gone, and an open add mode shuts (§11 call 88).
 - **Memory:** open or shut is remembered for the popup session.
@@ -1169,6 +1169,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **The Cast URL's help names no product** (owner: "we seem to be promoting VLC here"). `device.listen_url_hint`: "Opens in a media player or a browser while the cast lasts. It does not keep time with the speakers." `device.listen_url_echo`: "With browser-wide capture, this browser would cast it again, so open it in a media player."
     - **The GroupVolume master runs the full width** (owner: "it does not have to align with the volume controls below it"). Open, the master keeps no empty Remove slot: its Slider starts where the rows' do and ends past theirs. This reverses call 91's master point; the rows keep their fixed columns (calls 90, 91). The catalogue and the real-extension rig check it.
     - **The TabCard shows no live dot** (owner: "is the dot supposed to be visible when not casting?"). StatusDot live means sound goes out to speakers: a running cast that is not paused. The TabCard is this tab while it is not casting, so it never shows the dot, whatever the tab plays; `TabCard`'s `media` has no `playing`. The catalogue and the real-extension rig check it.
+    - **A lone room's line runs the full width** (owner: "it only extends when multiple speakers are added"). A one-room open cast drew its row with the empty Remove slot, kept so rows line up, though there was nothing to line up with and the only room never has Remove (Stop ends the cast). RoomRow `cast` keeps the slot only beside other rows (`aligned`, which GroupVolume sets from two rooms); a lone row, joined, joining or failed, keeps none. The catalogue and the real-extension rig check it.
 
 ## 12. Still open
 
@@ -1297,6 +1298,7 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 - **The Cast URL's help names no product** (§11 call 94).
 - **The open GroupVolume master runs the full width**, reversing call 91's master point (§11 call 94).
 - **The TabCard shows no live dot** (§11 call 94).
+- **A one-room cast's volume line runs the full width**: the rows keep the Remove slot only beside other rows (§11 call 94).
 
 **Standing**
 

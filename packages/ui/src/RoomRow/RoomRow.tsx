@@ -112,6 +112,12 @@ export interface RoomRowCastProps {
   onMute: (muted: boolean) => void;
   /** Shows Remove: false for the last room, which Stop ends. */
   removable: boolean;
+  /**
+   * Keep the Remove slot, empty, when there is no Remove, so the row lines up with the rows
+   * beside it (the default). False for a cast's only room: it has nothing to line up with and
+   * never has Remove, so its line runs the full width.
+   */
+  aligned?: boolean;
   /** Removes the room from the cast. */
   onRemove?: () => void;
   /**
@@ -250,6 +256,7 @@ function CastRow(props: RoomRowCastProps): JSX.Element {
     onMute,
     removable,
     onRemove,
+    aligned = true,
     joining,
     badge,
     failure,
@@ -289,8 +296,8 @@ function CastRow(props: RoomRowCastProps): JSX.Element {
             onMute={onMute}
             disabled={isJoining}
             strings={strings}
-            // The Remove slot is always there, so every row's Slider lines up.
-            slot
+            // The Remove slot is kept beside other rows, so every row's Slider lines up.
+            slot={aligned}
             trailing={
               removable && onRemove && !isJoining ? (
                 <IconButton glyph="stop" label={strings.remove(room.name)} onPress={onRemove} />

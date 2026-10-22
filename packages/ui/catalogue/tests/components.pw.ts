@@ -211,7 +211,7 @@ test('the master shows the mean and the fold summary lists the levels', async ({
 test("the open master runs the full width: it starts with the rows' sliders and ends past them", async ({
   page,
 }) => {
-  // The master keeps no empty Remove slot (§11 call 93, which reverses call 91's master).
+  // The master keeps no empty Remove slot (§11 call 94, which reverses call 91's master).
   const open = light(page, 'group-volume').locator('details[open]').first();
   const group = open.locator('xpath=ancestor::div[contains(@class, "_group_")][1]');
   const master = await box(
@@ -220,6 +220,26 @@ test("the open master runs the full width: it starts with the rows' sliders and 
   const row = await box(open.getByRole('group', { name: 'Kitchen' }).getByRole('slider').first());
   expect(Math.abs(master.x - row.x)).toBeLessThanOrEqual(0.5);
   expect(master.x + master.width - (row.x + row.width)).toBeGreaterThanOrEqual(24);
+});
+
+test("a lone room's line runs the full width: it keeps no empty Remove slot", async ({ page }) => {
+  // Only rows beside other rows keep the slot (§11 call 94): the lone row's Slider ends where
+  // the master's does (the card's full width), past the end of a row that keeps the slot.
+  const section = light(page, 'group-volume');
+  const groupOf = (el: Locator): Locator =>
+    el.locator('xpath=ancestor::div[contains(@class, "_group_")][1]');
+  const loneSlider = section.getByRole('group', { name: 'Kitchen' }).first().getByRole('slider');
+  const open = section.locator('details[open]').first();
+  const masterSlider = groupOf(open)
+    .getByRole('slider', { name: 'Kitchen + Living Room + TV Room volume' })
+    .first();
+  const rowSlider = open.getByRole('group', { name: 'Kitchen' }).getByRole('slider').first();
+  const loneGroup = await box(groupOf(loneSlider));
+  const openGroup = await box(groupOf(open));
+  const end = (b: { x: number; width: number }, g: { x: number }): number => b.x + b.width - g.x;
+  const lone = end(await box(loneSlider), loneGroup);
+  expect(Math.abs(lone - end(await box(masterSlider), openGroup))).toBeLessThanOrEqual(0.5);
+  expect(lone - end(await box(rowSlider), openGroup)).toBeGreaterThanOrEqual(24);
 });
 
 test('a lone room has no Remove, and each of several rooms has one', async ({ page }) => {
@@ -412,7 +432,7 @@ test('the TabCard is a section named by its h2 title', async ({ page }) => {
 test('the TabCard shows no live dot: nothing goes out to speakers until it casts', async ({
   page,
 }) => {
-  // StatusDot live is for sound going out (§11 call 93); a running cast's tile shows it.
+  // StatusDot live is for sound going out (§11 call 94); a running cast's tile shows it.
   const live = '[class*="_live_"]';
   await expect(light(page, 'tab-card').locator(live)).toHaveCount(0);
   await expect(light(page, 'media-header').locator(live).first()).toBeAttached();

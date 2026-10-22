@@ -152,10 +152,11 @@
   /*
    * One volume line: mute | Slider and its value | the Remove slot. The columns are fixed
    * tracks, the same on every row: mute and the slot are an IconButton wide (--control-sm)
-   * and the Slider takes the rest, its value in its --ch-volume box. A cast row always has
-   * the slot, holding Remove or nothing (joining, failed, or the last room, which Stop
-   * ends), so every row's Slider starts and ends at the same place whatever its state or
-   * Badge. A line with nothing after it (the master, the compact tile) has no slot.
+   * and the Slider takes the rest, its value in its --ch-volume box. Beside other rows a
+   * cast row has the slot, holding Remove or nothing (joining, failed, or the last room,
+   * which Stop ends), so every row's Slider starts and ends at the same place whatever its
+   * state or Badge. A line with nothing after it (the master, the compact tile, a cast's only
+   * room) has no slot.
    */
   .controls {
     display: grid;

@@ -267,7 +267,7 @@ try {
       cin: { l: media.l, r: media.r },
       bar: { ...box(bar), pt: bs.paddingTop, pb: bs.paddingBottom, bg: bs.backgroundColor },
       cast: box(cast) }`);
-  // The live dot is for sound going out to speakers (§11 call 93): this tab plays, but it is
+  // The live dot is for sound going out to speakers (§11 call 94): this tab plays, but it is
   // not casting, so its TabCard shows none.
   const tabLive = await p.eval(`const card = document.querySelector('main').firstElementChild;
     return card.querySelectorAll('[class*="_live_"]').length`);
@@ -649,6 +649,13 @@ try {
   await p.clickRoom('Living Room');
   await p.click('button', 'Cast to');
   await until(async () => (await p.text()).includes('Casting now'));
+  // A cast's only room keeps no empty Remove slot (§11 call 94): checked against the master
+  // below, which runs the card's full width.
+  const lone = await until(async () => {
+    const rows = await rowColumns(p);
+    return rows.length === 1 && rows[0];
+  });
+  await shot(p, '09a-one-room');
   await p.click('button', 'Add a room');
   await lib.sleep(500);
   await p.clickRoom('Kitchen');
@@ -682,7 +689,7 @@ try {
     lined(joinedRows),
     joinedRows,
   );
-  // The master above the fold runs the card's full width (§11 call 93): it starts where the
+  // The master above the fold runs the card's full width (§11 call 94): it starts where the
   // rooms' sliders do and ends past them, as it has no Remove slot to keep.
   const masterCol = await p.eval(`const row = document.querySelector('[role=group][aria-label]');
     const card = row?.closest('section, article, [class*="_card_"]');
@@ -698,6 +705,15 @@ try {
       Math.abs(masterCol.l - firstRow.l) <= 0.5 &&
       masterCol.r - firstRow.r >= 24,
     { masterCol, row: firstRow },
+  );
+  check(
+    "a cast's only room has its slider run the full width, as the master's does",
+    Boolean(lone) &&
+      masterCol !== null &&
+      firstRow !== null &&
+      Math.abs(lone.l - firstRow.l) <= 0.5 &&
+      Math.abs(lone.r - masterCol.r) <= 0.5,
+    { lone, masterCol, row: firstRow },
   );
   await p.click('button[aria-label^="Stop"]');
   await lib.sleep(1500);
