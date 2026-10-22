@@ -5,7 +5,8 @@
 // section, Theme's control on its line from a 25rem card, Quality two by two from Economical,
 // Start no louder than first in Finer points, Bespoke with Advanced open (rules inside,
 // controls on the card's end edge), nothing moving when a setting saves, the Toast's bar
-// sticky with the focused control never under it, and #about landing on About. Run from check.mjs; the run's scale and scheme come from it.
+// sticky with the focused control never under it, a Notice in a section keeping its own
+// padding, and #about landing on About. Run from check.mjs; the run's scale and scheme come from it.
 import * as lib from './lib.mjs';
 
 /** The sections, in the drawing's order (Language is hidden while there is one language). */
@@ -286,6 +287,80 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
     bespoke.inner,
   );
   if (mode) await o.click('label', mode);
+  await lib.sleep(600);
+
+  // ── A Notice in a section keeps its own padding ────────────────────────
+  // "Enter the address" with nothing saved shows a warning Notice between the choice and the
+  // field. Every Notice in a section keeps its own padding (the section's rule reset once
+  // took its top padding; a dismissible one's end is narrower by design), its glyph sits
+  // inside that padding on the first line, it is the section's gap from its neighbours with
+  // no rule, and it spans the fields' inline edges.
+  await o.click('label', 'Enter the address');
+  await lib.sleep(800);
+  const notices = await o.eval(`
+    const px = (v) => parseFloat(v) || 0;
+    return [...document.querySelectorAll('[data-settings-grid="section"] > [data-notice]')].map((n) => {
+      const grid = n.parentElement, cs = getComputedStyle(n), r = n.getBoundingClientRect();
+      const g = n.firstElementChild.getBoundingClientRect(), gr = grid.getBoundingClientRect();
+      const words = n.querySelector('p').getBoundingClientRect();
+      const prev = n.previousElementSibling?.getBoundingClientRect();
+      const next = n.nextElementSibling?.getBoundingClientRect();
+      const r1 = (v) => Math.round(v * 10) / 10;
+      return {
+        text: n.innerText.slice(0, 40),
+        pad: [cs.paddingBlockStart, cs.paddingInlineEnd, cs.paddingBlockEnd, cs.paddingInlineStart].map(px),
+        glyph: { start: r1(g.left - r.left), top: r1(g.top - r.top), line: r1(words.top - r.top) },
+        gap: px(getComputedStyle(grid).rowGap),
+        above: prev ? r1(r.top - prev.bottom) : null,
+        below: next ? r1(next.top - r.bottom) : null,
+        edges: [r1(r.left - gr.left), r1(gr.right - r.right)],
+      };
+    });`);
+  await o.eval(
+    `document.querySelector('[data-settings-grid] > [data-notice]')?.scrollIntoView({ block: 'center', behavior: 'instant' })`,
+  );
+  await shot(o, '11-options-address-missing');
+  const badNotices = notices.filter(
+    (n) =>
+      n.pad[0] <= 0 ||
+      n.pad[0] !== n.pad[2] ||
+      n.pad[1] <= 0 ||
+      n.pad[3] <= 0 ||
+      n.glyph.start !== n.pad[3] ||
+      n.glyph.top !== n.pad[0] ||
+      n.glyph.line !== n.pad[0] ||
+      (n.above !== null && n.above !== n.gap) ||
+      (n.below !== null && n.below !== n.gap) ||
+      n.edges.some((e) => e !== 0),
+  );
+  check(
+    'options: a Notice in a section keeps its padding, its glyph inside it, the gap round it',
+    notices.some((n) => n.text.startsWith('No server address')) && badNotices.length === 0,
+    notices,
+  );
+  // The readout under "For the next tab cast" keeps M-dl's gaps: --space-5 between term and
+  // value, --space-2 between pairs (both non-zero, resolved in the list's own container).
+  const readout = await o.eval(`
+    const dl = document.querySelector('[data-settings-grid="section"] > dl');
+    if (!dl) return null;
+    const probe = document.createElement('div');
+    probe.style.cssText = 'display:grid;gap:var(--space-2) var(--space-5)';
+    dl.firstElementChild.append(probe);
+    const want = getComputedStyle(probe);
+    const res = { row: getComputedStyle(dl).rowGap, col: getComputedStyle(dl).columnGap,
+      wantRow: want.rowGap, wantCol: want.columnGap };
+    probe.remove();
+    return res;`);
+  check(
+    "options: the readout keeps M-dl's gaps (--space-5 across, --space-2 down)",
+    Boolean(readout) &&
+      parseFloat(readout.row) > 0 &&
+      parseFloat(readout.col) > 0 &&
+      readout.row === readout.wantRow &&
+      readout.col === readout.wantCol,
+    readout,
+  );
+  await o.click('label', 'Find it automatically');
   await lib.sleep(600);
 
   // ── Nothing moves when a setting saves ─────────────────────────────────
