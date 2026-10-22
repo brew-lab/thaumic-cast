@@ -5,7 +5,8 @@
    * the control's column. From 45rem: 'label control help' '. . note'. A wide control (over
    * --wide-control) stacks under the help in a compact card; from 25rem it shares the name's
    * line, at the end, when both fit (a wrapping line on the row's own width, so it never
-   * widens the section's control track), and the help runs under both. An action control (a
+   * widens the section's control track), and the help stays in the label track, so every
+   * row's help has one measure whatever its control's width. An action control (a
    * Button) is centred against the label and the help. The row never tints.
    *
    * F-grid: settings rows subgrid their section. Inside a settings grid (a SettingsSection's
@@ -206,11 +207,15 @@
         'detail detail';
     }
 
-    /* A wide control shares the name's line when both fit, and wraps under the name if not. */
+    /*
+     * A wide control shares the name's line when both fit, and wraps under the name if not.
+     * Its help stays in the label track, as every row's does, so a wide control never moves
+     * where the help ends (§11 call 98).
+     */
     .row[data-width='wide']:not(.bare) {
       grid-template-areas:
         'lead lead'
-        'help help'
+        'help .'
         'note note'
         'error error'
         'detail detail';
@@ -228,6 +233,11 @@
 
     .row[data-width='wide']:not(.bare) > .lead > .label {
       min-inline-size: auto;
+    }
+
+    /* Wrapped under the name, the control still ends on the end edge, where every row's does. */
+    .row[data-width='wide']:not(.bare) > .lead > .control {
+      margin-inline-start: auto;
     }
 
     .row[data-width='wide'] .control {
