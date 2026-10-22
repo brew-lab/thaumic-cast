@@ -53,7 +53,8 @@ export type DescriptionListProps =
  * `<dl>`. A readout is ruled rows at every width: the term at the start, the value on the
  * end edge, moving under the term only when the two do not fit on one line. A stat's term
  * and value share a row from 25rem of the `card` container, and under it each pair stacks,
- * term over value. checklist is a list of sentences, each led by a
+ * term over value. A readout is marked `data-readout`, so a SettingsSection can keep its
+ * values on the control track's end (C-section). checklist is a list of sentences, each led by a
  * StatusDot whose shape repeats what the words say (never colour alone).
  * @param props - Component props
  * @param props.kind - readout, stat or checklist
@@ -76,7 +77,11 @@ export function DescriptionList(props: DescriptionListProps): JSX.Element {
     );
   }
   return (
-    <dl class={cx(styles.list, styles[props.kind])} aria-label={props['aria-label']}>
+    <dl
+      class={cx(styles.list, styles[props.kind])}
+      aria-label={props['aria-label']}
+      data-readout={props.kind === 'readout' ? '' : undefined}
+    >
       {props.rows.map((row) => (
         <div key={row.key} class={styles.pair}>
           <dt class={styles.term}>{row.term}</dt>
