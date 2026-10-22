@@ -15,8 +15,11 @@ import type { StartLevelStrings } from '../StartLevel/start';
 import { allMuted, meanVolume, volumeSummary, type SummaryStrings } from './summary';
 import styles from './GroupVolume.module.css';
 
-/** One room of the cast, as a RoomRow `cast` takes it; GroupVolume decides Remove. */
-export type GroupVolumeRoom = Omit<RoomRowCastProps, 'mode' | 'strings' | 'removable' | 'index'>;
+/** One room of the cast, as a RoomRow `cast` takes it; GroupVolume decides Remove and its slot. */
+export type GroupVolumeRoom = Omit<
+  RoomRowCastProps,
+  'mode' | 'strings' | 'removable' | 'aligned' | 'index'
+>;
 
 /** One room of the add list, as a RoomRow `pick` takes it. */
 export type GroupVolumeAddRoom = Omit<RoomRowPickProps, 'mode' | 'strings' | 'index'>;
@@ -148,7 +151,7 @@ export function GroupVolume({
   const several = rooms.length > 1 && master;
 
   // The master runs the card's full width, open or compact: it has no Remove, so it keeps no
-  // empty slot, and it need not line up with the rows under it (§11 call 93).
+  // empty slot, and it need not line up with the rows under it (§11 call 94).
   const masterLine = master && (
     <VolumeLine
       name={master.name}
@@ -166,6 +169,8 @@ export function GroupVolume({
       mode="cast"
       {...r}
       removable={playing > 1 && !r.joining}
+      // A lone room keeps no empty Remove slot: there is no row to line up with (§11 call 94).
+      aligned={rooms.length > 1}
       strings={strings}
       index={i + 1}
     />
