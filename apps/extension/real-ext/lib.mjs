@@ -67,23 +67,28 @@ function wav(sec = 10, f = 330) {
 }
 const a = document.getElementById('a'); a.src = wav();
 document.getElementById('play').onclick = () => a.play(); a.play().catch(() => {});
-navigator.mediaSession.metadata = new MediaMetadata({ title: 'Test tone', artist: 'Real-extension rig',
-  artwork: [{ src: location.origin + '/art.png', sizes: '96x96', type: 'image/png' }] });
+const red = location.search === '?red';
+navigator.mediaSession.metadata = new MediaMetadata({ title: red ? 'Titanium' : 'Test tone',
+  artist: 'Real-extension rig',
+  artwork: [{ src: location.origin + (red ? '/art-red.png' : '/art.png'), sizes: '96x96',
+    type: 'image/png' }] });
 </script></body></html>`;
 
 /**
  * The tone's artwork, so an open tile draws its artwork-seeded band: a 96 px PNG, teal with a
- * gold disc (the popup decodes artwork with createImageBitmap, which takes no SVG).
+ * gold disc by default (the popup decodes artwork with createImageBitmap, which takes no SVG).
+ * @param {number[]} [ground] - The ground's RGB
+ * @param {number[]} [disc] - The disc's RGB
  * @returns {Buffer} The PNG
  */
-function artPng() {
+function artPng(ground = [0x2f, 0x7d, 0x6d], disc = [0xe8, 0xc5, 0x47]) {
   const size = 96;
   const rows = [];
   for (let y = 0; y < size; y++) {
     const row = [0];
     for (let x = 0; x < size; x++) {
       const inDisc = (x - 48) ** 2 + (y - 48) ** 2 < 28 ** 2;
-      row.push(...(inDisc ? [0xe8, 0xc5, 0x47] : [0x2f, 0x7d, 0x6d]));
+      row.push(...(inDisc ? disc : ground));
     }
     rows.push(Buffer.from(row));
   }
@@ -117,6 +122,8 @@ function artPng() {
   ]);
 }
 const ART = artPng();
+/** A red artwork (`/?red`), whose seed sets the red guard on the open tile's band. */
+const ART_RED = artPng([0xc8, 0x28, 0x1e], [0x96, 0x19, 0x14]);
 
 /**
  * Serves a page that plays a tone, so a tab has audio to capture, and its artwork.
@@ -124,10 +131,10 @@ const ART = artPng();
  */
 export function serveTone() {
   const server = http.createServer((req, res) => {
-    if (req.url === '/art.png') {
+    if (req.url === '/art.png' || req.url === '/art-red.png') {
       res.setHeader('content-type', 'image/png');
       res.setHeader('access-control-allow-origin', '*');
-      res.end(ART);
+      res.end(req.url === '/art.png' ? ART : ART_RED);
       return;
     }
     res.setHeader('content-type', 'text/html');
@@ -448,11 +455,12 @@ export async function launch({ profile = 'check', scale = 1, fresh = true } = {}
   /**
    * Opens the tone page in a tab and plays it.
    * @param {object} [page] - A Playwright page to reuse; a new tab otherwise
+   * @param {string} [query] - `?red` for "Titanium" with a red artwork
    * @returns {Promise<object>} The page
    */
-  env.audioTab = async (page) => {
+  env.audioTab = async (page, query = '') => {
     const p = page ?? (ctx.pages().find((x) => x.url() === 'about:blank') || (await ctx.newPage()));
-    await p.goto(`http://127.0.0.1:${AUDIO_PORT}/`);
+    await p.goto(`http://127.0.0.1:${AUDIO_PORT}/${query}`);
     await p.bringToFront();
     await p.click('#play').catch(() => {});
     return p;

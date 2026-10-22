@@ -10,8 +10,8 @@ export interface MediaBand {
   /** The OKLCH chroma, before each part's cap. */
   chroma: number;
   /**
-   * The red guard: a red seed (hue 20 to 40, chroma above .1) keeps its band, and Stop moves
-   * off it, so a red Stop never sits on a red card.
+   * The red guard: a red seed (hue 20 to 40, chroma above .1) keeps its band, and Stop keeps
+   * its place on it but takes the band's tonal fill, so a red Stop never sits on a red card.
    */
   red: boolean;
 }

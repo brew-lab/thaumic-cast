@@ -250,10 +250,14 @@
     }
   }
 
-  /* The red guard: Stop sits under the band at the inline end, on the surface. */
-  .off-band {
-    display: flex;
-    justify-content: flex-end;
+  /*
+   * The red guard: a red band is the danger container's colour, so Stop's tonal danger fill
+   * (and its failed fill) would vanish into it. Stop keeps its place in the head row and
+   * takes the band's tonal step instead, as the play button does, its ink still the danger
+   * ink (§11 call 94).
+   */
+  .red-guard .trailing [data-tone='danger'] {
+    --tone-container: var(--media-tonal);
   }
 
   @media (forced-colors: active) {

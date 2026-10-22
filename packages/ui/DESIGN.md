@@ -108,7 +108,7 @@ The info set is the Notice and NoticeLine `info` tone (the neutral container in 
 Two colour features are not plain tokens:
 
 - **The live gradient.** Light runs from `oklch(42% .2 300)` to `oklch(54% .22 350)`; dark from `oklch(72% .15 300)` to `oklch(78% .15 350)`. Five sRGB fallback stops come first, and the OKLCH ramp (relative colour) sits inside `@supports (color: oklch(from red l c h))`, so the desktop's WebKit floor keeps the sRGB stops instead of an invalid background under transparent text. The drift `--live-shift` runs from −16° to 0° over 8 s and holds under reduced motion. It is used once per screen ("Casting now").
-- **The artwork-seeded card.** JS samples the artwork and writes `--art-seed`, clamped, with near-grey seeds swapped for purple-grey. It sets `data-red-guard` for a red seed (hue 20–40, chroma above .1). CSS maps the seed with relative colour:
+- **The artwork-seeded card.** JS samples the artwork and writes `--art-seed`, clamped, with near-grey seeds swapped for purple-grey. It sets the red guard for a red seed (hue 20–40, chroma above .1): Stop keeps its place on the band and takes the band's tonal step for its fill (§11 call 94). CSS maps the seed with relative colour:
   - `--np-card`: 92 % / 30 % lightness, chroma capped at .06 / .09
   - `--np-title`: 23 % / 92 %, chroma capped at .06 / .04
   - `--np-rim`: 49 % / 66 %, chroma capped at .14 / .10
@@ -655,7 +655,7 @@ One row per room. It absorbs SpeakerRow, SpeakerVolumeRow, SpeakerMultiSelect's 
 - **API:** `kind: 'tab'|'browser', art?, title, subtitle, playing, size, disclosure?, transport?, onGoToTab?, trailing?`.
 - **Kinds:** `browser` reads "Whole browser" / "Browser-wide capture" with a monitor disc, and has no transport.
 - **Go to tab** shows only when the popup is open over another tab; on the cast's own tab it would go nowhere (§11 call 88).
-- **Open tile:** it sits on the artwork band, which bleeds to the card's top and sides (`bleed`: the card's inner corner, and the tile's `--space-1` inset added to the band's padding, so nothing on it moves; §11 call 88); the red guard moves Stop off the band.
+- **Open tile:** it sits on the artwork band, which bleeds to the card's top and sides (`bleed`: the card's inner corner, and the tile's `--space-1` inset added to the band's padding, so nothing on it moves; §11 call 88). Stop stays in the head row on every band. On a red band (the red guard) its danger fill would be the band's own colour, so it takes the band's tonal step (`--media-tonal`, the play button's fill) with its danger ink (§11 call 94).
 - **Desktop:** read-only.
 
 ### M-groupvol · GroupVolume: FINAL
@@ -1170,6 +1170,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **The GroupVolume master runs the full width** (owner: "it does not have to align with the volume controls below it"). Open, the master keeps no empty Remove slot: its Slider starts where the rows' do and ends past theirs. This reverses call 91's master point; the rows keep their fixed columns (calls 90, 91). The catalogue and the real-extension rig check it.
     - **The TabCard shows no live dot** (owner: "is the dot supposed to be visible when not casting?"). StatusDot live means sound goes out to speakers: a running cast that is not paused. The TabCard is this tab while it is not casting, so it never shows the dot, whatever the tab plays; `TabCard`'s `media` has no `playing`. The catalogue and the real-extension rig check it.
     - **A lone room's line runs the full width** (owner: "it only extends when multiple speakers are added"). A one-room open cast drew its row with the empty Remove slot, kept so rows line up, though there was nothing to line up with and the only room never has Remove (Stop ends the cast). RoomRow `cast` keeps the slot only beside other rows (`aligned`, which GroupVolume sets from two rooms); a lone row, joined, joining or failed, keeps none. The catalogue and the real-extension rig check it.
+    - **Stop never leaves the head row** (seen in the owner's screenshot: a one-room cast's Stop sat on its own line under the band, while a two-room cast's sat beside the title). It was the red guard, not the room count: the artwork was red, and the guard moved Stop off a red band, so Stop moved when the tile opened, against C-casttile's one spot. The guard now keeps Stop in place and re-points its fill (`--tone-container`, which also covers its failed fill) to the band's tonal step, which stands apart from the band in both themes, as the play button does; its ink stays the danger ink. Rejected: Stop on the band unchanged (the danger container is the red band's lightness and hue, so the button's shape vanishes); a surface-coloured Stop (a second fill on the band). The catalogue (one room on a red band) and the real-extension rig (a red artwork) check that Stop's box sits in the head row at the same spot as a compact and a several-room tile's.
 
 ## 12. Still open
 
@@ -1299,6 +1300,7 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 - **The open GroupVolume master runs the full width**, reversing call 91's master point (§11 call 94).
 - **The TabCard shows no live dot** (§11 call 94).
 - **A one-room cast's volume line runs the full width**: the rows keep the Remove slot only beside other rows (§11 call 94).
+- **Stop stays in the head row on a red band**: the red guard re-points its fill to the band's tonal step instead of moving it off (§11 call 94).
 
 **Standing**
 

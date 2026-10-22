@@ -435,7 +435,8 @@ function TileHead(
 /**
  * MediaHeader: the TabCard head (tab and browser), a compact tile head in every grammar
  * state, long and paused titles, and the open tile on the artwork-seeded band for the R6
- * seeds, the red guard and a grey seed; then the read-only desktop head.
+ * seeds, the red guard (Stop on the band's tonal step) and a grey seed; then the read-only
+ * desktop head.
  * @returns The specimen
  */
 export function MediaHeaderSpecimen(): JSX.Element {
@@ -545,7 +546,7 @@ export function MediaHeaderSpecimen(): JSX.Element {
           />
         ))}
       </PopupColumn>
-      <PopupColumn label="the red guard moves Stop off the band; a grey seed is purple-grey; no session">
+      <PopupColumn label="the red guard: Stop stays, on the band's tonal step; a grey seed is purple-grey; no session">
         <TileHead
           kind="tab"
           size="md"
@@ -1478,7 +1479,7 @@ function Tile({
 
 /**
  * CastTile: a single cast open with no chevron; several rooms open with video sync and a
- * tile note; compact tiles with and without a slot line; the red guard; a cast with no
+ * tile note; compact tiles with and without a slot line; one room on a red band; a cast with no
  * artwork, open and compact.
  * @returns The specimen
  */
@@ -1514,7 +1515,9 @@ export function CastTileSpecimen(): JSX.Element {
         </div>
       </div>
       <div class="popup-specimen popup-ground">
-        <p class="label">the red guard: Stop off the band</p>
+        <p class="label">
+          one room, a red band: Stop stays in the head row, on the band's tonal step
+        </p>
         <Tile title="Film title" seed={SEEDS.red} rooms={['TV Room']} open />
       </div>
       <div class="popup-specimen popup-ground" data-specimen="no-art">

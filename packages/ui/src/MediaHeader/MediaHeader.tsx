@@ -79,8 +79,8 @@ export interface MediaHeaderProps extends DataAttributes {
   /** A slot at the head's end: the tile puts Stop here. */
   trailing?: ComponentChildren;
   /**
-   * The open tile's artwork-seeded band (see `artBand`). With the red guard set, `trailing`
-   * moves off the band, under it at the inline end.
+   * The open tile's artwork-seeded band (see `artBand`). `trailing` stays in the head row on
+   * every band; with the red guard set, its danger fill takes the band's tonal step.
    */
   band?: MediaBand;
   /**
@@ -97,8 +97,9 @@ export interface MediaHeaderProps extends DataAttributes {
  * and both forms of a CastTile. The artwork, the title (one line, an ellipsis; the name keeps
  * it whole), and the live dot before the subtitle while sound goes out. On a tile the head is
  * a disclosure button; on the open tile it sits on the artwork-seeded band, with the
- * transport and "Go to tab". The red guard moves Stop off a red band. Read-only on the
- * desktop: no disclosure, transport or Stop.
+ * transport and "Go to tab". Stop stays at one spot in every form; on a red band (the red
+ * guard) its fill takes the band's tonal step, so a red Stop never sits on a red card.
+ * Read-only on the desktop: no disclosure, transport or Stop.
  * @param props - Component props
  * @param props.kind - tab or browser
  * @param props.art - The artwork
@@ -137,7 +138,6 @@ export function MediaHeader({
 }: MediaHeaderProps): JSX.Element {
   const press = usePress();
   const browser = kind === 'browser';
-  const offBand = Boolean(band?.red && trailing);
   const Title = level && !disclosure ? (`h${level}` as 'h2') : 'span';
 
   const artwork = browser ? (
@@ -181,7 +181,13 @@ export function MediaHeader({
   return (
     <div class={styles.root}>
       <div
-        class={cx(styles.media, styles[size], band && styles.band, band && bleed && styles.bleed)}
+        class={cx(
+          styles.media,
+          styles[size],
+          band && styles.band,
+          band && bleed && styles.bleed,
+          band?.red && styles.redGuard,
+        )}
         style={band ? { '--art-h': band.hue, '--art-c': band.chroma } : undefined}
       >
         <div class={styles.head}>
@@ -207,7 +213,7 @@ export function MediaHeader({
               {text}
             </span>
           )}
-          {trailing && !offBand && <span class={styles.trailing}>{trailing}</span>}
+          {trailing && <span class={styles.trailing}>{trailing}</span>}
         </div>
         {(controls || (!browser && onGoToTab)) && (
           <div class={styles.actions}>
@@ -226,7 +232,6 @@ export function MediaHeader({
           </div>
         )}
       </div>
-      {offBand && <div class={styles.offBand}>{trailing}</div>}
     </div>
   );
 }
