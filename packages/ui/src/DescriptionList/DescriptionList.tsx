@@ -29,8 +29,9 @@ export interface ChecklistRow {
 export type DescriptionListProps =
   | {
       /**
-       * readout: quiet terms and strong values ("For the next tab cast"). stat: strong
-       * terms and larger values, tabular counts (the Server page).
+       * readout: ruled rows, the term at the start and the value, regular and muted, on
+       * the end edge ("For the next tab cast"). stat: strong terms and larger values,
+       * tabular counts (the Server page).
        */
       kind: 'readout' | 'stat';
       /** The pairs. */
@@ -49,8 +50,10 @@ export type DescriptionListProps =
 
 /**
  * Terms and values, or a short checklist (DESIGN.md M-dl). readout and stat are a real
- * `<dl>`; from 25rem of the `card` container the term and value share a row, and under it
- * each pair stacks, term over value. checklist is a list of sentences, each led by a
+ * `<dl>`. A readout is ruled rows at every width: the term at the start, the value on the
+ * end edge, moving under the term only when the two do not fit on one line. A stat's term
+ * and value share a row from 25rem of the `card` container, and under it each pair stacks,
+ * term over value. checklist is a list of sentences, each led by a
  * StatusDot whose shape repeats what the words say (never colour alone).
  * @param props - Component props
  * @param props.kind - readout, stat or checklist
