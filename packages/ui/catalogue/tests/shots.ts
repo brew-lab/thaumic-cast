@@ -59,6 +59,14 @@ export async function matchesItsScreenshot(
       )
       .toBe(true);
   }
+  // Nothing shows focus in a picture. A specimen that focuses on load (an open Dialog's
+  // Cancel) draws its focus ring or not as WebKit's focus-visible guess falls, and with two
+  // windows only one of them holds focus; so each document lets go of it.
+  for (const frame of page.frames()) {
+    await frame.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
+  }
   const testInfo = test.info();
   if (!existsSync(testInfo.snapshotPath(name))) {
     // At CSS scale, as toHaveScreenshot compares; at WebKit's 2x the tallest sections pass
