@@ -26,8 +26,8 @@ import {
   TOOLBAR_DARK_KEY,
   badgeFor,
   badgeItems,
+  isToolbarDark,
   readDismissals,
-  readToolbarTheme,
   writeBadge,
   type BadgeSources,
 } from './toolbar-badge';
@@ -87,10 +87,10 @@ let ready: Promise<unknown> = Promise.resolve();
  */
 export async function refreshToolbarBadge(): Promise<void> {
   await ready;
-  const [sources, theme] = await Promise.all([currentBadgeSources(), readToolbarTheme()]);
+  const [sources, dark] = await Promise.all([currentBadgeSources(), isToolbarDark()]);
   await Promise.all([
-    writeBadge(badgeFor(badgeItems(sources), theme === 'dark')),
-    writeToolbarIcon(toolbarIconFor(isToolbarIconLit(sources.casts), theme)),
+    writeBadge(badgeFor(badgeItems(sources), dark)),
+    writeToolbarIcon(toolbarIconFor(isToolbarIconLit(sources.casts), dark)),
   ]);
 
   if (expiry) clearTimeout(expiry);

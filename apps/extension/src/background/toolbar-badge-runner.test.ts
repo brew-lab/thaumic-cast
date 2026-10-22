@@ -80,30 +80,30 @@ describe('the toolbar icon', () => {
   it('should light while a cast runs and go out when it stops', async () => {
     await setToolbarDark(false);
     await refreshToolbarBadge();
-    expect(icon()).toEqual({ path: toolbarIconFor(false, 'light') });
+    expect(icon()).toEqual({ path: toolbarIconFor(false, false) });
 
     cast();
     await refreshToolbarBadge();
-    expect(icon()).toEqual({ path: toolbarIconFor(true, 'light') });
+    expect(icon()).toEqual({ path: toolbarIconFor(true, false) });
 
     clearAllSessions();
     await refreshToolbarBadge();
-    expect(icon()).toEqual({ path: toolbarIconFor(false, 'light') });
+    expect(icon()).toEqual({ path: toolbarIconFor(false, false) });
   });
 
   it('should follow the theme the popup or offscreen document reports', async () => {
     cast();
     await refreshToolbarBadge();
-    expect(icon()).toEqual({ path: toolbarIconFor(true, null) });
+    expect(icon()).toEqual({ path: toolbarIconFor(true, false) });
 
     await setToolbarDark(true);
     expect(chromeStorageData.session.toolbarDark).toBe(true);
     await refreshToolbarBadge();
-    expect(icon()).toEqual({ path: toolbarIconFor(true, 'dark') });
+    expect(icon()).toEqual({ path: toolbarIconFor(true, true) });
 
     await setToolbarDark(false);
     await refreshToolbarBadge();
-    expect(icon()).toEqual({ path: toolbarIconFor(true, 'light') });
+    expect(icon()).toEqual({ path: toolbarIconFor(true, false) });
   });
 
   it('should not write the same icon twice', async () => {
@@ -124,11 +124,11 @@ describe('the toolbar icon', () => {
       cast();
       restore();
       await Bun.sleep(150);
-      expect(icon()).toEqual({ path: toolbarIconFor(true, null) });
+      expect(icon()).toEqual({ path: toolbarIconFor(true, false) });
 
       await setToolbarDark(true);
       await Bun.sleep(150);
-      expect(icon()).toEqual({ path: toolbarIconFor(true, 'dark') });
+      expect(icon()).toEqual({ path: toolbarIconFor(true, true) });
     } finally {
       stop();
     }

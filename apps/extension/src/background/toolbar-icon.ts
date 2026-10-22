@@ -8,20 +8,16 @@
  *
  * Chrome has no toolbar theme API. The theme is the browser's colour scheme,
  * which the popup and the offscreen document report (`toolbar-theme.ts`), the
- * same one the toolbar badge uses. A Chrome theme from the Web Store can draw
- * a dark toolbar while the scheme is light (or the reverse); the icon then
- * takes the other theme's ink. Until a theme is reported the icon is the
- * fallback ink, which clears 3:1 on both toolbars and is also the manifest's
- * static icon, shown before the service worker first runs.
+ * same one the toolbar badge uses. The light ink is also the manifest's static
+ * icon and the one drawn until a theme is reported: it clears 3:1 on Chrome's
+ * light and dark toolbars, so it never vanishes on a dark Web Store theme
+ * while Chrome is in Light mode (DESIGN.md §11 call 97).
  */
 
 import { createLogger } from '@thaumic-cast/shared';
 import { CHROME } from '@thaumic-cast/ui/tokens';
 
 const log = createLogger('ToolbarIcon');
-
-/** The browser's theme, or null before one is reported. */
-export type ToolbarTheme = 'light' | 'dark' | null;
 
 /** The icon's files by size, as `chrome.action.setIcon` takes them. */
 export type ToolbarIconPaths = Record<'16' | '24' | '32', string>;
@@ -39,11 +35,11 @@ export function isToolbarIconLit(casts: readonly unknown[]): boolean {
 /**
  * The icon's files for a state and theme.
  * @param lit - A cast is running
- * @param theme - The browser's theme, or null when not known
+ * @param dark - The toolbar is dark; light when not known
  * @returns The 16, 24 and 32 px files
  */
-export function toolbarIconFor(lit: boolean, theme: ToolbarTheme): ToolbarIconPaths {
-  return CHROME.toolbarIcon[lit ? 'lit' : 'idle'][theme ?? 'fallback'];
+export function toolbarIconFor(lit: boolean, dark: boolean): ToolbarIconPaths {
+  return CHROME.toolbarIcon[lit ? 'lit' : 'idle'][dark ? 'dark' : 'light'];
 }
 
 /** What was last written, so nothing is written twice. */

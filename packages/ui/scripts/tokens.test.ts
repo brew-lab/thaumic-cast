@@ -115,9 +115,8 @@ describe('design tokens', () => {
     expect(LADDERS).not.toHaveProperty('red');
   });
 
-  it("should draw the toolbar icon in the popup mark's inks, each clearing 3:1 on its toolbar", () => {
+  it('should draw the toolbar icon in inks that never vanish on a toolbar', () => {
     const { ink } = CHROME.toolbarIcon;
-    expect(ink.light).toBe(SEMANTIC_COLORS.tokens['brand-ink'] as string);
     expect(ink.dark).toBe((SEMANTIC_COLORS.tokens.primary as { dark: string }).dark);
     const lum = (hex: string): number => {
       const [r, g, b] = [1, 3, 5].map((i) => {
@@ -131,12 +130,17 @@ describe('design tokens', () => {
       return (hi + 0.05) / (lo + 0.05);
     };
     // Chrome's light toolbars (#f1f3f4 default, white) and dark toolbars (#35363a, #202124).
-    const light = ['#f1f3f4', '#ffffff'];
-    const dark = ['#35363a', '#202124'];
-    for (const ground of light) expect(ratio(ink.light, ground)).toBeGreaterThanOrEqual(3);
-    for (const ground of dark) expect(ratio(ink.dark, ground)).toBeGreaterThanOrEqual(3);
-    for (const ground of [...light, ...dark]) {
-      expect(ratio(ink.fallback, ground)).toBeGreaterThanOrEqual(3);
+    for (const ground of ['#f1f3f4', '#ffffff']) {
+      expect(ratio(ink.light, ground)).toBeGreaterThanOrEqual(3);
+    }
+    for (const ground of ['#35363a', '#202124']) {
+      expect(ratio(ink.dark, ground)).toBeGreaterThanOrEqual(3);
+    }
+    // The light ink is also drawn on dark Web Store themes while Chrome is in Light mode (about
+    // #202020 to #3b3b3b), and on the dark toolbars before the theme is known. It dips to about
+    // 2.85:1 on light Customize Chrome tints, accepted so that it never vanishes there.
+    for (const ground of ['#35363a', '#202124', '#202020', '#263238', '#3b3b3b', '#22313f']) {
+      expect(ratio(ink.light, ground)).toBeGreaterThanOrEqual(3);
     }
   });
 
