@@ -385,17 +385,6 @@ export function AudioSection({
       });
     }
 
-    // The preset decides this for every codec, PCM included: the relay obeys it too. The
-    // readout names it briefly, so its key column stays short.
-    rows.push({
-      key: 'latency-mode',
-      label: t('audio_latency_mode_short'),
-      value:
-        resolvedConfig.latencyMode === 'quality'
-          ? t('audio_latency_quality')
-          : t('audio_latency_realtime'),
-    });
-
     rows.push({
       key: 'bit-depth',
       label: t('audio_bit_depth'),
@@ -403,7 +392,19 @@ export function AudioSection({
         resolvedConfig.bitsPerSample === 24 ? t('audio_bit_depth_24') : t('audio_bit_depth_16'),
     });
 
-    return [...rows, ...pcmRows];
+    // The preset decides this for every codec, PCM included: the relay obeys it too. The
+    // readout names it briefly, so its key column stays short.
+    const latency = {
+      key: 'latency-mode',
+      label: t('audio_latency_mode_short'),
+      value:
+        resolvedConfig.latencyMode === 'quality'
+          ? t('audio_latency_quality')
+          : t('audio_latency_realtime'),
+    };
+
+    // Format first, then timing: the delay rows, then how the delay may grow.
+    return [...rows, ...pcmRows, latency];
   }, [resolvedConfig, isPcm, pcmRows, t]);
 
   // The fall-behind choice, placed once: the resolver says where. Its Select is wider than
