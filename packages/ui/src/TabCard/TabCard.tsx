@@ -10,7 +10,7 @@ export interface TabCardProps {
   /**
    * What this tab (or, with browser-wide capture, the whole browser) plays. The TabCard
    * draws it large, with its title as the card's heading, and no transport, disclosure or
-   * live dot: nothing goes out to speakers until it casts (§11 call 93).
+   * live dot: nothing goes out to speakers until it casts (§11 call 94).
    */
   media: Omit<
     MediaHeaderProps,

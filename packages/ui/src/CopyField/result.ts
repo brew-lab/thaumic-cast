@@ -16,7 +16,7 @@ export function copyResultFor(outcome: 'copied' | 'refused', text: string | null
 /**
  * The text a CopyField shows. A given value is what people read, and copying never changes
  * it, even when what goes to the clipboard is longer (the Server's Address shows
- * `host:port` and copies the `http://` URL; §11 call 93). With no value (a card's Copy URL),
+ * `host:port` and copies the `http://` URL; §11 call 94). With no value (a card's Copy URL),
  * the text that was copied is shown, so a refused copy can be finished by hand.
  * @param value - The text given to show, if any
  * @param copied - The text the last copy wrote, or tried to, if any
