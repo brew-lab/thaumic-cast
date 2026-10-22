@@ -757,9 +757,26 @@ try {
           const ends = [...s.querySelectorAll('button[role="switch"], select')]
             .filter((c) => !c.closest('details'))
             .map((c) => Math.round(c.getBoundingClientRect().right * 10) / 10);
+          // Each row's help against the grid's tracks: from 25rem in the label track, from 45rem
+          // in the help track, whatever the width of the row's control (Theme's is wide).
+          const gcs = grid ? getComputedStyle(grid) : null;
+          const tracks = gcs ? gcs.gridTemplateColumns.split(' ').map(px) : [];
+          const left = grid ? grid.getBoundingClientRect().left + px(gcs.paddingInlineStart) : 0;
+          const gap = gcs ? px(gcs.columnGap) : 0;
+          const helps = [...(grid?.querySelectorAll(':scope > [data-setrow] p[id$="-help"]') ?? [])]
+            .map((h) => h.getBoundingClientRect())
+            .map((h) => {
+              const off =
+                tracks.length === 2
+                  ? h.right > left + tracks[0] + 1
+                  : tracks.length === 3 && h.left < left + tracks[0] + tracks[1] + 2 * gap - 1;
+              return { left: Math.round(h.left), right: Math.round(h.right), off };
+            });
           return {
             title: s.querySelector('h2')?.innerText.trim(),
             ends,
+            tracks: tracks.map(Math.round),
+            helps,
             rules: items.map((c, i) => ({
               i,
               what: c.hasAttribute('data-notice') ? 'notice' : c.tagName.toLowerCase(),
@@ -775,6 +792,12 @@ try {
         `Settings (${size}): every section's controls end on one edge`,
         uneven.length === 0,
         uneven,
+      );
+      const offTrack = sections.filter((s) => s.helps.some((h) => h.off));
+      check(
+        `Settings (${size}): every row's help keeps to its track, a wide control's too`,
+        offTrack.length === 0 && sections.some((s) => s.helps.length > 0),
+        offTrack.length ? offTrack : sections.map((s) => [s.title, s.tracks, s.helps]),
       );
       const badRules = sections.flatMap((s) =>
         s.rules
