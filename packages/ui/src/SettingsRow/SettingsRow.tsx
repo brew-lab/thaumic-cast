@@ -30,7 +30,8 @@ export interface SettingsRowProps {
    * How much room the control needs. narrow: a Switch, a Select of 15rem or less; wide:
    * anything wider (the SegmentedControl, a long Select), which stacks under the help in a
    * compact card and from 25rem shares the name's line when both fit (under the name when
-   * not), the help under both; action: a Button, centred against the label and the help.
+   * not), the help in the label track as in every row; action: a Button, centred against the
+   * label and the help.
    */
   controlWidth?: 'narrow' | 'wide' | 'action';
   /** A dependent control under the row, shown by the caller while the row's Switch is on. */
@@ -52,9 +53,10 @@ export interface SettingsRowProps {
  * `card` container's child, so its layout follows the card: under 25rem the help runs under
  * the name and the control, from 25rem the help keeps out of the control's column, and from
  * 45rem it sits in a third column. A wide control stacks under the help in a compact card;
- * from 25rem it sits on the name's line, at the end, when both fit, with the help under. The row
- * never tints: hover, focus and press belong to the control. A named row is a group named
- * by its label, marked `aria-disabled` while it needs another setting.
+ * from 25rem it sits on the name's line, at the end, when both fit, with the help under it, out
+ * of the control's column as in every row. The row never tints: hover, focus and press belong
+ * to the control. A named row is a group named by its label, marked `aria-disabled` while it
+ * needs another setting.
  * @param props - Component props
  * @param props.label - The setting's name
  * @param props.help - What it does

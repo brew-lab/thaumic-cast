@@ -552,7 +552,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 ### M-setrow · SettingsRow: FINAL
 
 - **API:** `label help? note? control controlWidth? detail? disabled? locked? error?`. `controlWidth` is `narrow` (a Switch, a Select of `--wide-control` or less), `wide` (over `--wide-control`: the SegmentedControl, a long Select) or `action` (a Button, centred against the name and the help); the row writes it as `data-width`.
-- **Layouts:** compact `'label control' 'help help' 'note note'`; medium keeps help out of the control column; wide `'label control help'`, with the name and the help starting on the control's line. A wide control stacks under the help at compact; from medium it shares the name's line, at the end, when both fit (a wrapping line across the row, so it never widens the shared control track), else it wraps under the name, and the help runs under both. The label track is `minmax(min-content, 1fr)`: a name never shrinks under its longest word (§11 call 41).
+- **Layouts:** compact `'label control' 'help help' 'note note'`; medium keeps help out of the control column; wide `'label control help'`, with the name and the help starting on the control's line. A wide control stacks under the help at compact; from medium it shares the name's line, at the end, when both fit (a wrapping line across the row, so it never widens the shared control track), else it wraps under the name, still on the end edge. Its help stays in the label track, as every row's does, so the help has one measure in every row of a grid whatever the width of the control (§11 call 98). The label track is `minmax(min-content, 1fr)`: a name never shrinks under its longest word (§11 call 41).
 - **Subgrid (F-grid):** from a 25rem card, rows share their card's tracks (`grid-template-columns: subgrid`): a label track, one `auto` control track for every row, and from 45rem a help track, so controls end in one column and the help starts at one edge. A SettingsSection's items are the settings grid (`data-settings-grid="section"`, rows marked `data-setrow` on SettingsRow and Switch); a Card body is no grid (its interim one was retired in Phase 4, once the desktop views moved to SettingsSection). A Switch row hands the tracks on to the Switch, so its track lands in the control column and its note stays in the label track (no inset computed from the Switch's width). Under 25rem each row keeps its own tracks, because one shared column as wide as the widest control would squeeze every label; on its own (outside a card) a row draws the same tracks itself.
 - **`detail` slot:** shows only while the row's Switch is on. Its one use is "Start no louder than" with its Slider at 30, its value shown after the track (`readout`).
 - **States:** locked by an environment variable (the control natively disabled, the row `aria-disabled`, the note text in the row with the info glyph; §11 call 39) and error. The help is `--text-2` in every row, a Switch's description included.
@@ -1197,6 +1197,11 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **Contrast:** `#a964eb` 3.30:1 on `#f1f3f4`, 3.68:1 on white, 3.28:1 on `#35363a`, 4.38:1 on `#202124`; `#c699f8` 5.35:1 on `#35363a`, 7.14:1 on `#202124`. `tokens.test.ts` checks them, and the light ink on dark Web Store toolbars.
     - **Checked:** unit tests for the state and theme to icon mapping and the theme listener; the real-extension rig watches the worker's `setIcon` calls (Chrome has no getter and the toolbar is not in a screenshot) and checks idle and lit in both inks as the offscreen document's scheme is emulated, and that Chrome accepted each file.
 
+98. **A row's help has one measure, whatever its control** (owner, 2026-10-22: "on the extension settings page the 'When the connection falls behind' helper text does not seem to follow the same grid as others"). Checked in the catalogue (Chromium and WebKit), the real-extension rig's options pass at the 1200 and 600 px windows and the desktop real-app rig.
+    - **What was wrong.** From a 25rem card a narrow row puts its help in the label track (`'help .'`), ending before the control track; a wide row (`controlWidth="wide"`) gave its help both tracks (`'help help'`), so it ran to the card's end. In Audio › Advanced (Bespoke, PCM) the catalogue's medium frame measured Smoothing's and Frame size's help ending at 802 px, the label track's end, and the falling-behind row's at 990 px, the card's. In the desktop density the wide Select also wrapped under the name to the start edge (446 px) while every other control ended on the end edge (980 px).
+    - **The rule.** From 25rem every row's help sits in the label track, a wide row's too; from 45rem in the help track; under 25rem under the name across the row. A wide control still shares the name's line at the end when both fit, reaching left past the control track's start on that line only (so it never widens the track and squeezes every label); when it wraps under the name it stays on the end edge. It never runs over the help.
+    - **Set aside.** Putting the wide control in the shared control track would line up its start too, but the track would grow to the widest control (263 px, over 16rem, for "Let delay grow (up to a limit)"), squeezing every name and help in the section; F-grid already declines that for narrow cards. Stacking every wide control under its help adds a line to each wide row for no gain once the help's measure is fixed.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1333,6 +1338,10 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Readout (2026-10-22)**
 
 - **The readout is ruled rows, the value on the end edge at every width** ("the layout on the settings page where we list the settings looks bad ... i think we need to improve this"; "yes build A"), with the value moving under the term only when it does not fit (§11 call 96).
+
+**Help measure (2026-10-22)**
+
+- **Every row's help keeps to the label track, a wide control's row too** ("the 'When the connection falls behind' helper text does not seem to follow the same grid as others"); a wide control that wraps under its name stays on the end edge (§11 call 98).
 
 **Standing**
 
