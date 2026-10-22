@@ -586,11 +586,12 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 
 - **API:** `kind: 'readout'|'stat'|'checklist', rows`.
 - **Kinds:**
-  - readout: "For the next tab cast".
+  - readout: "For the next tab cast" and About (options and desktop Settings). Ruled rows at every width (§11 call 96): each pair is a row with `--space-3` above and below and a `--line-hair` `--divider` rule between pairs, the rule midway; the first and last rows add nothing outside it, so the list keeps the section's rhythm. The term is `--weight-body` in `--on-surface` at the start; the value is `--weight-body` in `--on-surface-variant` on the end edge, where a row's control ends, so a readout among SettingsRows ends where their controls end. The value moves onto a line of its own, still on the end edge, only when term and value do not fit side by side; there is no stacking breakpoint. Nothing in it is bold, so the subheading over it reads as its heading.
   - stat: Server, with tabular counts that start where the words in their column start (§11 call 35) and the Address as a CopyField.
 - **Values:** a value cell may hold one trailing sm action (CopyField's Copy).
   - checklist: StatusDot plus one sentence, for the desktop Ready step and the popup onboarding's status lines. The StatusDot's own `--icon-sm` square sits on the content's edge, as the PopupHeader's status line has it (§11 call 90).
 - **Build:** a real `<dl>` for readout and stat; a `<ul>` for the checklist.
+- **Readout order** ("For the next tab cast"): the format first (Codec, Bitrate, Channels, then Sample rate and Bit depth), then for PCM the timing (Smoothing, Speaker head start, Added delay), and Falling behind last, since it says how that delay may grow.
 
 ### M-disclosure · Disclosure: FINAL
 
@@ -1181,6 +1182,12 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **macOS keeps a tile, on Apple's template** (the owner's choice, on macOS only). Apple's app icon is a rounded square on a 1024 canvas (the 824 px body of Apple's template), and macOS 26 sets any icon of another shape on a grey squircle, so a bare mark would show there on a grey tile. `icon.icns` is the `--brand-ink` squircle, 824 of 1024 with a light shadow, and the mark in `--purple-90` at 70 % of its width; it measures as VS Code's does (81 by 82 %). The bundle now lists `icon.icns`: without it Tauri built the macOS icon from the PNGs, so call 93's grid icns was never used.
     - **The README** keeps its `<picture>`: the bare mark, `--brand-ink` in light and the dark `--primary` in dark.
 
+96. **The readout is ruled rows** (owner, 2026-10-22: "the layout on the settings page where we list the settings looks bad ... i think we need to improve this"; of three options drawn in the real options page, "yes build A"). Each is checked in the catalogue (Chromium and WebKit), the real-extension rig's options pass and the desktop real-app rig.
+    - **What read badly.** Nine bold values made a wall that competed with the bold subheading; the value column started wherever the widest term ended ("Speaker head start"), so short terms sat before a gap and the values ended raggedly; rows were 4 px apart and unruled in a section whose items are ruled and roomy; in Bespoke the read-only rows did not line up with the Select rows above them.
+    - **Ruled rows, the value on the end edge, at every width** (M-dl). The term in full ink at the start, the value regular and muted on the end edge, `--space-3` above and below each row and a hairline between rows. Read-only values are muted, controls are not, so the readout does not pass for controls; nothing is bold. A value that cannot share the line moves under the term, still on the end edge, rather than the whole list stacking under 25rem. The stat and checklist kinds are unchanged.
+    - **Why this one.** Well-made readouts pick one anchor and keep values on a fixed edge: Apple's `LabeledContent` (label leading, value trailing in the secondary colour, hairlines; https://developer.apple.com/documentation/swiftui/labeledcontent), GOV.UK's summary list (rules on every row, "think carefully before you remove row borders"; https://design-system.service.gov.uk/components/summary-list/), Polaris's DescriptionList (a divider per pair; https://github.com/Shopify/polaris/blob/main/polaris-react/src/components/DescriptionList/DescriptionList.module.css) and libadwaita's property rows in boxed lists (https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/boxed-lists.html). None pairs a muted term with a bold value in a tight grid. The end edge is also where this page's controls end, so a readout reads as the section's own rows. A fixed third-width term track (calmer, but a grid of its own that meets nothing else) and label-over-value cells (read across, ragged wraps, columns that clash with Quality's two) were drawn and set aside.
+    - **The readout lists the format, then the timing** (M-dl): Falling behind moves from between Channels and Bit depth to last, after Added delay.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1194,7 +1201,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
 
 **Open from the Phase 4 review** (low; each has a default applied):
 
-- **About** reads as a two-column readout ("Companion | Server · Version 0.12.0"); the drawings set a bold product name over small version lines. Default: as built.
+- **About** reads as a readout of ruled rows ("Companion | Server · Version 0.12.0", §11 call 96); the drawings set a bold product name over small version lines. Default: as built.
 - **Settings and Server cap at 40rem against the start** while Speakers runs the full width, so the end edge moves between views in a wide window. Default: as built; the alternative is centring the capped column, as OptionsShell does.
 - **Hover on a Radio option and the Advanced summary** bleeds about 8px past the text column (the controls' own padding). Default: accepted.
 - **Help wraps differently in Chromium and WebKit** (`text-wrap: pretty` and the stable scrollbar gutter). By design.
@@ -1311,6 +1318,10 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 - **The TabCard shows no live dot** (§11 call 94).
 - **A one-room cast's volume line runs the full width**: the rows keep the Remove slot only beside other rows (§11 call 94).
 - **Stop stays in the head row on a red band**: the red guard re-points its fill to the band's tonal step instead of moving it off (§11 call 94).
+
+**Readout (2026-10-22)**
+
+- **The readout is ruled rows, the value on the end edge at every width** ("the layout on the settings page where we list the settings looks bad ... i think we need to improve this"; "yes build A"), with the value moving under the term only when it does not fit (§11 call 96).
 
 **Standing**
 

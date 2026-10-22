@@ -410,7 +410,7 @@ export const SECTIONS: CatalogueSection[] = [
     id: 'description-list',
     title: 'DescriptionList',
     tier: 'Tier 2 · M-dl',
-    summary: 'Readout, stat and checklist; pairs share a row from a 25rem card.',
+    summary: 'Readout: ruled rows, values on the end edge. Stat: pairs share a row from 25rem.',
     Specimen: DescriptionListSpecimen,
   },
   {

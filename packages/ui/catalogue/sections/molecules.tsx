@@ -603,7 +603,16 @@ export function DescriptionListSpecimen(): JSX.Element {
               { key: 'codec', term: 'Codec', value: 'PCM' },
               { key: 'bitrate', term: 'Bitrate', value: 'Lossless' },
               { key: 'channels', term: 'Channels', value: 'Stereo' },
-              { key: 'delay', term: 'Added delay', value: 'About 450 ms' },
+              { key: 'bit-depth', term: 'Bit depth', value: '16-bit' },
+              { key: 'sample-rate', term: 'Sample rate', value: 'Matches the audio device' },
+              { key: 'smoothing', term: 'Smoothing', value: '200 ms' },
+              {
+                key: 'head-start',
+                term: 'Speaker head start',
+                value: '2000 ms, set in the desktop app',
+              },
+              { key: 'delay', term: 'Added delay', value: 'About 2200 ms' },
+              { key: 'latency', term: 'Falling behind', value: 'Let delay grow (up to a limit)' },
             ]}
           />
         </Card>
@@ -633,12 +642,17 @@ export function DescriptionListSpecimen(): JSX.Element {
         </Card>
       </div>
       <div class="width-compact">
-        <Card title="Stacked under 25rem" level={3}>
+        <Card title="Under 25rem" level={3}>
           <DescriptionList
             kind="readout"
             rows={[
               { key: 'codec', term: 'Codec', value: 'AAC-LC' },
-              { key: 'bitrate', term: 'Bitrate', value: '192 kbps' },
+              {
+                key: 'head-start',
+                term: 'Speaker head start',
+                value: "2000 ms, set in the server's config",
+              },
+              { key: 'delay', term: 'Added delay', value: 'About 2200 ms' },
             ]}
           />
         </Card>
