@@ -57,7 +57,8 @@ scale and a scheme) starts a fresh companion and walks the app at the default wi
   casting room (`/regroup`) says Casting, not In use;
 - Server: Restart, Disconnect and Stop one width, Stop disabled while idle, the Disconnect and
   Stop Dialogs, focus on a control after Stop;
-- Settings: every section's controls on one edge, the rules between items, Show diagnostics
+- Settings: every section's controls on one edge, the rules between items, About's readout
+  (its value regular, on the card's end edge, beside its term), Show diagnostics
   disabled without speaker monitoring, and the reserve Meter on a casting card after an injected
   reading (`POST /health`; the fake speakers have no playout clock, so the monitor never measures
   one here);
