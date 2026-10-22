@@ -169,6 +169,72 @@ test('rows inside Advanced are divided by the same rule, with none under the sum
 });
 
 for (const density of [0, 1] as const) {
+  test(`every row's help ends on one line, a wide control's too (${density ? 'desktop' : 'popup'})`, async ({
+    page,
+  }) => {
+    // Advanced holds two narrow Selects and the wide one for falling behind, each with help.
+    // The help's measure is the same in every row: the label track from 25rem (ending before
+    // the control track), the help track from 45rem, the row's width under 25rem. A narrow
+    // control stays in the control track; from 25rem the wide one ends on the same edge, and
+    // it never runs over the help.
+    for (const range of ['compact', 'medium', 'wide']) {
+      const result = await frame(page, /^Audio, Bespoke/, range, density).evaluate((el) => {
+        const r1 = (v: number): number => Math.round(v * 10) / 10;
+        const panel = el.querySelector('details > summary + *')!;
+        const cs = getComputedStyle(panel);
+        const tracks = cs.gridTemplateColumns.split(' ').map(parseFloat);
+        const start = panel.getBoundingClientRect().left + parseFloat(cs.paddingInlineStart);
+        const gap = parseFloat(cs.columnGap) || 0;
+        const rows = [...panel.querySelectorAll(':scope > [data-setrow]')].map((row) => {
+          const help = row.querySelector('[id$="-help"]')!.getBoundingClientRect();
+          // The drawn box (the Select's ::before), not the taller hit area over it.
+          const control = row.querySelector('select')!.parentElement!.getBoundingClientRect();
+          const overlap =
+            control.left < help.right &&
+            control.right > help.left &&
+            control.top < help.bottom &&
+            control.bottom > help.top;
+          return {
+            width: row.getAttribute('data-width'),
+            helpStart: r1(help.left),
+            helpEnd: r1(help.right),
+            controlStart: r1(control.left),
+            controlEnd: r1(control.right),
+            overlap,
+          };
+        });
+        return {
+          tracks: tracks.length,
+          labelEnd: r1(start + tracks[0]),
+          controlTrack: r1(start + tracks[0] + gap),
+          rows,
+        };
+      });
+      const at = `${range}: ${JSON.stringify(result)}`;
+      expect(result.rows.length, at).toBe(3);
+      expect(result.rows.filter((r) => r.width === 'wide').length, at).toBe(1);
+      const ends = result.rows.map((r) => r.helpEnd);
+      expect(Math.max(...ends) - Math.min(...ends), at).toBeLessThanOrEqual(1);
+      const starts = result.rows.map((r) => r.helpStart);
+      expect(Math.max(...starts) - Math.min(...starts), at).toBeLessThanOrEqual(1);
+      expect(result.rows.find((r) => r.width === 'wide')!.overlap, at).toBe(false);
+      if (range !== 'compact') {
+        const controlEnds = result.rows.map((r) => r.controlEnd);
+        expect(Math.max(...controlEnds) - Math.min(...controlEnds), at).toBeLessThanOrEqual(1);
+      }
+      if (range === 'medium') {
+        for (const row of result.rows) {
+          expect(row.helpEnd, at).toBeLessThanOrEqual(result.labelEnd + 1);
+          if (row.width === 'narrow') {
+            expect(row.controlStart, at).toBeGreaterThanOrEqual(result.controlTrack - 1);
+          }
+        }
+      }
+    }
+  });
+}
+
+for (const density of [0, 1] as const) {
   test(`action Buttons in a section share one width (${density ? 'desktop' : 'popup'})`, async ({
     page,
   }) => {

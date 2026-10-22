@@ -159,7 +159,8 @@ function SelectRow({
 
 /**
  * The options page's Audio section in Bespoke: a ChoiceGroup, an info Notice, a subheading
- * over four Select rows, a warning Notice, a wide row, then Advanced open with its own rows.
+ * over four Select rows, a warning Notice, then Advanced open with its own rows: two narrow
+ * Selects and the wide one for falling behind, each with help, as Bespoke has them for PCM.
  * @returns The section
  */
 function AudioSection(): JSX.Element {
@@ -195,24 +196,6 @@ function AudioSection(): JSX.Element {
         text="This browser will not encode that combination, so a tab cast set to it will not start."
         announce={false}
       />
-      <SettingsRow
-        label="When the connection falls behind"
-        controlWidth="wide"
-        help="Letting delay grow keeps the audio whole; skipping ahead keeps the delay short."
-        control={(a11y) => (
-          <Select
-            label="When the connection falls behind"
-            hideLabel
-            value="quality"
-            options={[
-              { value: 'quality', label: 'Let delay grow (up to a limit)' },
-              { value: 'realtime', label: 'Skip ahead' },
-            ]}
-            onChange={noop}
-            aria-describedby={a11y['aria-describedby']}
-          />
-        )}
-      />
       <Disclosure label="Advanced" defaultOpen>
         <SelectRow
           label="Smoothing"
@@ -225,6 +208,24 @@ function AudioSection(): JSX.Element {
           value="10 ms (default)"
           options={['10 ms (default)', '20 ms']}
           help="How much audio the browser puts in each message to the companion."
+        />
+        <SettingsRow
+          label="When the connection falls behind"
+          controlWidth="wide"
+          help="Letting delay grow keeps the audio whole; skipping ahead keeps the delay short."
+          control={(a11y) => (
+            <Select
+              label="When the connection falls behind"
+              hideLabel
+              value="quality"
+              options={[
+                { value: 'quality', label: 'Let delay grow (up to a limit)' },
+                { value: 'realtime', label: 'Skip ahead' },
+              ]}
+              onChange={noop}
+              aria-describedby={a11y['aria-describedby']}
+            />
+          )}
         />
       </Disclosure>
     </SettingsSection>
