@@ -4,8 +4,8 @@
 
 feat(desktop): use the new mark for the app and tray icons
 
-The app icon is now the new mark, the broadcast arcs round an octagon, in lilac on the brand's deep purple. At
-the smallest sizes in the Windows icon the mark keeps only its outer arcs so it stays readable. The macOS icon
-sits on Apple's icon grid, so it is the same size as other apps in the Dock. The tray icon draws the octagon as an
-outline while idle and fills it while something casts; its sizes, colours and light and dark variants are as
-before.
+The app icon is now the new mark, the broadcast arcs round an octagon, in purple on a clear background, as
+large as the icons of the apps beside it. All four arcs show at every size, and the smallest sizes are drawn to
+the pixel so they stay sharp. On macOS the mark sits on a deep purple rounded square shaped like other Mac
+apps' icons, so macOS does not put it on a grey tile. The tray icon draws the octagon as an outline while idle
+and fills it while something casts; its sizes, colours and light and dark variants are as before.
