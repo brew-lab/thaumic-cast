@@ -1,13 +1,16 @@
 /**
  * Toolbar Badge Runner
  *
- * Keeps the toolbar badge in step with the background's state: it gathers
- * the sources `toolbar-badge.ts` reads and writes the result whenever
- * something the badge depends on may have changed.
+ * Keeps the toolbar badge and icon in step with the background's state: it
+ * gathers the sources `toolbar-badge.ts` reads, writes the badge, and lights
+ * the icon (`toolbar-icon.ts`) while a cast runs, whenever something either
+ * depends on may have changed.
  *
  * Triggers: every popup notification (they are sent exactly when casts,
  * health, gaps, capture health or the connection change), every change to
- * the away log, a dismissal the popup stores, and the browser theme.
+ * the away log, a dismissal the popup stores, and the browser theme. Nothing
+ * is written before the background has restored its state, so a restarted
+ * service worker never shows an idle icon over a running cast.
  */
 
 import { createLogger } from '@thaumic-cast/shared';
@@ -23,11 +26,12 @@ import {
   TOOLBAR_DARK_KEY,
   badgeFor,
   badgeItems,
-  isToolbarDark,
   readDismissals,
+  readToolbarTheme,
   writeBadge,
   type BadgeSources,
 } from './toolbar-badge';
+import { isToolbarIconLit, toolbarIconFor, writeToolbarIcon } from './toolbar-icon';
 import {
   CAPTURE_HEALTH_DISMISSED_KEY,
   INGEST_GAPS_DISMISSED_KEY,
@@ -72,14 +76,22 @@ const IGNORED: ReadonlySet<BackgroundToPopupMessage['type']> = new Set([
 let pending: ReturnType<typeof setTimeout> | null = null;
 let expiry: ReturnType<typeof setTimeout> | null = null;
 
+/** Resolves once the background has restored its state. */
+let ready: Promise<unknown> = Promise.resolve();
+
 /**
- * Recomputes the badge and writes it if it changed. A gaps report ages out
- * with no message to say so, so the badge is looked at again when it does.
+ * Recomputes the badge and the icon and writes what changed. A gaps report
+ * ages out with no message to say so, so the badge is looked at again when
+ * it does.
  * @returns Resolves when written
  */
 export async function refreshToolbarBadge(): Promise<void> {
-  const [sources, dark] = await Promise.all([currentBadgeSources(), isToolbarDark()]);
-  await writeBadge(badgeFor(badgeItems(sources), dark));
+  await ready;
+  const [sources, theme] = await Promise.all([currentBadgeSources(), readToolbarTheme()]);
+  await Promise.all([
+    writeBadge(badgeFor(badgeItems(sources), theme === 'dark')),
+    writeToolbarIcon(toolbarIconFor(isToolbarIconLit(sources.casts), theme)),
+  ]);
 
   if (expiry) clearTimeout(expiry);
   expiry = null;
@@ -110,15 +122,25 @@ const WATCHED_KEYS = new Set([
 ]);
 
 /**
- * Starts keeping the badge in step. Call once from the service worker's start.
+ * Starts keeping the badge and the icon in step. Call once from the service
+ * worker's start.
+ * @param restored - Resolves once the background has restored its state
+ * @returns Stops it (for tests)
  */
-export function startToolbarBadge(): void {
-  notificationService.subscribe((msg) => {
+export function startToolbarBadge(restored: Promise<unknown> = Promise.resolve()): () => void {
+  ready = restored.catch(() => undefined);
+  const unsubscribe = notificationService.subscribe((msg) => {
     if (!IGNORED.has(msg.type)) scheduleRefresh();
   });
-  onAwayEventsChanged(scheduleRefresh);
-  chrome.storage.onChanged.addListener((changes) => {
+  const unwatchAway = onAwayEventsChanged(scheduleRefresh);
+  const onStorage = (changes: Record<string, chrome.storage.StorageChange>): void => {
     if (Object.keys(changes).some((key) => WATCHED_KEYS.has(key))) scheduleRefresh();
-  });
+  };
+  chrome.storage.onChanged.addListener(onStorage);
   scheduleRefresh();
+  return () => {
+    unsubscribe();
+    unwatchAway();
+    chrome.storage.onChanged.removeListener(onStorage);
+  };
 }

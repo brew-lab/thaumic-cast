@@ -48,6 +48,7 @@ import {
 import { unseenAwayEvents, type AwayEvent } from '../lib/away-events';
 import { DEFAULT_LOCALE, getInitialLanguage, resources } from '../lib/locales';
 import { loadExtensionSettings } from '../lib/settings';
+import type { ToolbarTheme } from './toolbar-icon';
 
 const log = createLogger('ToolbarBadge');
 
@@ -296,16 +297,25 @@ export async function writeBadge(badge: BadgeState | null): Promise<void> {
 }
 
 /**
+ * The browser's theme, as last reported; null when none has been.
+ * @returns The theme, or null
+ */
+export async function readToolbarTheme(): Promise<ToolbarTheme> {
+  try {
+    const stored = await chrome.storage.session.get(TOOLBAR_DARK_KEY);
+    const dark = stored[TOOLBAR_DARK_KEY];
+    return typeof dark === 'boolean' ? (dark ? 'dark' : 'light') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether the toolbar is dark, as last reported; light when unknown.
  * @returns True for a dark toolbar
  */
 export async function isToolbarDark(): Promise<boolean> {
-  try {
-    const stored = await chrome.storage.session.get(TOOLBAR_DARK_KEY);
-    return stored[TOOLBAR_DARK_KEY] === true;
-  } catch {
-    return false;
-  }
+  return (await readToolbarTheme()) === 'dark';
 }
 
 /**

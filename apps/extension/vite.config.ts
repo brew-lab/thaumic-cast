@@ -2,7 +2,7 @@ import { build, defineConfig, type Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json';
-import { readdirSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { resolve } from 'path';
 
 /**
@@ -109,8 +109,30 @@ function pageScripts(): Plugin {
   };
 }
 
+/**
+ * Ships every toolbar icon state (`icons/action-*.png`) at its own path. The manifest names only
+ * the static icon, so CRXJS copies only that; the background picks the others by path with
+ * `chrome.action.setIcon` (DESIGN.md F-mark).
+ * @returns The plugin
+ */
+function toolbarIcons(): Plugin {
+  const dir = resolve(__dirname, 'icons');
+  return {
+    name: 'thaumic-toolbar-icons',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const file of readdirSync(dir)) {
+        const fileName = `icons/${file}`;
+        if (!/^action-.*\.png$/.test(file) || fileName in bundle) continue;
+        this.emitFile({ type: 'asset', fileName, source: readFileSync(resolve(dir, file)) });
+      }
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => ({
-  plugins: [preact(), crx({ manifest: crxManifest }), pageScripts()],
+  plugins: [preact(), crx({ manifest: crxManifest }), pageScripts(), toolbarIcons()],
   define: {
     /**
      * Build-time flag for audio diagnostics (clipping detection, verbose tracing).

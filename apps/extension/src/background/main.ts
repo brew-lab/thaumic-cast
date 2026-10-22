@@ -65,7 +65,6 @@ const log = createLogger('Background');
 // ─────────────────────────────────────────────────────────────────────────────
 
 watchPopupPorts();
-startToolbarBadge();
 registerCastRoutes();
 registerMetadataRoutes();
 registerConnectionRoutes();
@@ -87,6 +86,10 @@ const initPromise = (async () => {
   await recoverOffscreenState();
   log.info('Background initialized');
 })();
+
+// The toolbar badge and icon wait for the restored casts, so the icon is lit
+// at once after a service worker restart.
+startToolbarBadge(initPromise);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Message Router
