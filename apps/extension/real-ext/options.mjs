@@ -5,9 +5,10 @@
 // section, Theme's control on its line from a 25rem card, Quality two by two from Economical,
 // Start no louder than first in Finer points, the readouts (Audio's and About's) ruled with
 // every value on the end edge, Bespoke with Advanced open (rules inside, controls and the
-// readout's values on the card's end edge), nothing moving when a setting saves, the Toast's bar
-// sticky with the focused control never under it, a Notice in a section keeping its own
-// padding, and #about landing on About. Run from check.mjs; the run's scale and scheme come from it.
+// readout's values on the card's end edge, every row's help on one edge, the wide row's too),
+// nothing moving when a setting saves, the Toast's bar sticky with the focused control never
+// under it, a Notice in a section keeping its own padding, and #about landing on About. Run
+// from check.mjs; the run's scale and scheme come from it.
 import * as lib from './lib.mjs';
 
 /** The sections, in the drawing's order (Language is hidden while there is one language). */
@@ -316,7 +317,20 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
   await lib.sleep(800);
   await o.click('summary', 'Advanced');
   await lib.sleep(800);
+  // Inside Advanced, each row's control (its drawn box) and help: the wide Select for falling
+  // behind among the narrow ones. Its help must end where theirs do.
+  const advancedRowsSrc = `const advancedRows = (panel) =>
+    [...panel.querySelectorAll(':scope > [data-setrow]')].map((row) => {
+      const c = row.querySelector('select').parentElement.getBoundingClientRect();
+      return {
+        width: row.dataset.width,
+        start: Math.round(c.left),
+        end: Math.round(c.right),
+        help: Math.round(row.querySelector('p[id$="-help"]')?.getBoundingClientRect().right ?? 0),
+      };
+    });`;
   const bespoke = await o.eval(`
+    ${advancedRowsSrc}
     const px = (v) => parseFloat(v) || 0;
     const s = [...document.querySelectorAll('main > section')].find((x) => x.querySelector('h2').innerText === 'Audio');
     const r = s.getBoundingClientRect(), cs = getComputedStyle(s);
@@ -331,11 +345,7 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
       ends: rows.map((c) => Math.round(c.getBoundingClientRect().right * 10) / 10),
       edge: Math.round(edge * 10) / 10,
       panelRules: panel ? [...panel.children].map((c) => px(getComputedStyle(c).borderBlockStartWidth)) : [],
-      // Inside Advanced, each narrow row's control start and help end.
-      inner: panel ? [...panel.querySelectorAll(':scope > [data-setrow]:not([data-width=wide])')].map((row) => ({
-        start: Math.round(row.querySelector('select').getBoundingClientRect().left),
-        help: Math.round(row.querySelector('p[id$="-help"]')?.getBoundingClientRect().right ?? 0),
-      })) : [],
+      inner: panel ? advancedRows(panel) : [],
     };`);
   // Bespoke's readout rows sit among the Select rows: their values end where the Selects do.
   const bespokeReadout = await readouts(o, 'Audio');
@@ -366,13 +376,34 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
       bespoke.panelRules.slice(1).every((r) => r > 0),
     bespoke.panelRules,
   );
-  check(
-    'options Bespoke: rows inside Advanced share one control column, so their help ends on one edge',
-    bespoke.inner.length >= 2 &&
-      new Set(bespoke.inner.map((r) => r.help)).size === 1 &&
-      bespoke.inner.every((r) => r.help < Math.min(...bespoke.inner.map((i) => i.start))),
-    bespoke.inner,
-  );
+  // The owner's report: the wide row's help ran to the card's end while the narrow rows' help
+  // ended before the control column. At the 1200 and 600 px windows every row's help ends on
+  // one edge, before every narrow control, and every control ends on the card's end edge.
+  for (const width of [1200, 600]) {
+    await resize(o, width, scale);
+    await lib.sleep(300);
+    const adv = await o.eval(`
+      ${advancedRowsSrc}
+      const px = (v) => parseFloat(v) || 0;
+      const s = [...document.querySelectorAll('main > section')].find((x) => x.querySelector('h2').innerText === 'Audio');
+      const r = s.getBoundingClientRect(), cs = getComputedStyle(s);
+      return {
+        edge: Math.round(r.right - px(cs.paddingInlineEnd) - px(cs.borderInlineEndWidth)),
+        rows: advancedRows(s.querySelector('details summary + *')),
+      };`);
+    const helps = adv.rows.map((r) => r.help);
+    const narrowStart = Math.min(...adv.rows.filter((r) => r.width !== 'wide').map((r) => r.start));
+    check(
+      `options Bespoke ${width}: every row in Advanced, the wide one too, ends its help on one edge`,
+      adv.rows.length >= 3 &&
+        adv.rows.some((r) => r.width === 'wide') &&
+        Math.max(...helps) - Math.min(...helps) <= 1 &&
+        helps.every((h) => h < narrowStart) &&
+        adv.rows.every((r) => Math.abs(r.end - adv.edge) <= 1),
+      adv,
+    );
+  }
+  await resize(o, 600, scale);
   if (mode) await o.click('label', mode);
   await lib.sleep(600);
 
