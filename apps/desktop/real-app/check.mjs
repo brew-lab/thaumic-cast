@@ -795,6 +795,42 @@ try {
         badRules.length === 0,
         badRules,
       );
+      // About is a readout (M-dl, §11 call 96): ruled rows, each value on the card's end
+      // edge where the section's controls end, beside its term whenever the two fit.
+      const about = await a.page.evaluate(() => {
+        const px = (v) => parseFloat(v) || 0;
+        const s = [...document.querySelectorAll('main section')].find(
+          (x) => x.querySelector('h2')?.innerText.trim() === 'About',
+        );
+        const r = s.getBoundingClientRect();
+        const cs = getComputedStyle(s);
+        const edge = r.right - px(cs.paddingInlineEnd) - px(cs.borderInlineEndWidth);
+        const dl = s.querySelector('dl');
+        if (!dl) return null;
+        return {
+          overflow: dl.scrollWidth - dl.clientWidth,
+          rows: [...dl.querySelectorAll(':scope > div')].map((pair, i) => {
+            const t = pair.querySelector('dt').getBoundingClientRect();
+            const v = pair.querySelector('dd').getBoundingClientRect();
+            return {
+              ruled: px(getComputedStyle(pair).borderBlockStartWidth) === (i === 0 ? 0 : 1),
+              end: Math.round(Math.abs(v.right - edge) * 10) / 10,
+              oneLine: v.top < t.bottom - 1,
+              weight: getComputedStyle(pair.querySelector('dd')).fontWeight,
+            };
+          }),
+        };
+      });
+      check(
+        `Settings (${size}): About's readout has its value on the end edge, beside its term`,
+        Boolean(about) &&
+          about.overflow <= 0 &&
+          about.rows.length >= 1 &&
+          about.rows.every(
+            (row) => row.ruled && row.end <= 1 && row.oneLine && row.weight === '400',
+          ),
+        about,
+      );
       if (size === 'default') {
         await checkAxe(a, 'Settings');
         // Show diagnostics needs speaker monitoring; with it, a casting card shows its reserve.
