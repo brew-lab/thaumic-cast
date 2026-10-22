@@ -254,3 +254,81 @@ test('a pressed disclosure summary stays still: it fills its line, so it does no
   await page.mouse.up();
   expect(pressed).toBe(rest);
 });
+
+/**
+ * Lays out every readout in the description-list section and reads, per row, whether it is
+ * ruled, where its value ends, whether term and value share a line, and whether they could.
+ * @param page - The test's page
+ * @returns Per readout (the stat, which holds a CopyField, left out), its overflow and rows
+ */
+const readoutRows = (page: Page) =>
+  light(page, 'description-list')
+    .locator('dl')
+    .evaluateAll((lists) =>
+      lists
+        .filter((dl) => dl.querySelectorAll(':scope > div').length > 0)
+        .filter((dl) => !dl.querySelector('button'))
+        .map((dl) => {
+          const box = dl.getBoundingClientRect();
+          const gap = parseFloat(getComputedStyle(dl.firstElementChild as Element).columnGap);
+          return {
+            overflow: dl.scrollWidth - dl.clientWidth,
+            rows: [...dl.querySelectorAll(':scope > div')].map((pair, index) => {
+              const dt = pair.querySelector('dt') as HTMLElement;
+              const dd = pair.querySelector('dd') as HTMLElement;
+              const term = dt.getBoundingClientRect();
+              const value = dd.getBoundingClientRect();
+              // The value's width on one line, measured off the page in the same type.
+              const probe = dd.cloneNode(true) as HTMLElement;
+              probe.style.cssText = 'position:absolute;inline-size:max-content;white-space:nowrap';
+              pair.append(probe);
+              const natural = probe.getBoundingClientRect().width;
+              probe.remove();
+              return {
+                term: dt.innerText,
+                rule: parseFloat(getComputedStyle(pair).borderBlockStartWidth),
+                first: index === 0,
+                endGap: Math.abs(box.right - value.right),
+                insideStart: value.left >= box.left - 0.5,
+                oneLine: value.top < term.bottom - 1,
+                fits: term.width + gap + natural <= box.width + 0.5,
+              };
+            }),
+          };
+        }),
+    );
+
+test('a readout is ruled rows with every value on the end edge, at every width', async ({
+  page,
+}) => {
+  // The options page's card at a 1280, 600 and 400 px window (its inline size in px).
+  for (const width of [640, 546, 348]) {
+    await light(page, 'description-list')
+      .locator('.width-medium')
+      .first()
+      .evaluate((el, w) => {
+        (el as HTMLElement).style.inlineSize = `${w}px`;
+      }, width);
+    const lists = await readoutRows(page);
+    expect(lists.length, 'the readouts').toBeGreaterThanOrEqual(2);
+    for (const list of lists) {
+      expect(list.overflow, `${width}: nothing overflows`).toBeLessThanOrEqual(0);
+      for (const row of list.rows) {
+        const at = `${width} px, ${row.term}`;
+        expect(row.rule, `${at}: ruled after the first row`).toBe(row.first ? 0 : 1);
+        expect(row.endGap, `${at}: the value ends on the list's end edge`).toBeLessThanOrEqual(0.5);
+        expect(row.insideStart, `${at}: the value starts inside the list`).toBe(true);
+        // Term and value share a line whenever they fit; a value moves under the term only
+        // when they do not.
+        expect(row.oneLine, `${at}: on one line exactly when it fits`).toBe(row.fits);
+      }
+    }
+    if (width >= 546) {
+      const real = lists[0];
+      expect(
+        real.rows.every((row) => row.oneLine),
+        `${width}: every row of the real readout on one line`,
+      ).toBe(true);
+    }
+  }
+});
