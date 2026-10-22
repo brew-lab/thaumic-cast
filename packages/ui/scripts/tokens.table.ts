@@ -387,6 +387,20 @@ export const TIMINGS = {
 } as const;
 
 const onDanger = SEMANTIC_COLORS.tokens['on-danger'] as ThemedToken;
+const primary = SEMANTIC_COLORS.tokens.primary as ThemedToken;
+
+/**
+ * The toolbar icon's files for one theme and state, by size, as `chrome.action.setIcon` takes them.
+ * @param name - The file name before the size
+ * @returns The 16, 24 and 32 px files
+ */
+function toolbarIconFiles(name: string): Record<'16' | '24' | '32', string> {
+  return {
+    '16': `icons/${name}-16.png`,
+    '24': `icons/${name}-24.png`,
+    '32': `icons/${name}-32.png`,
+  };
+}
 
 /**
  * Colours drawn by Chrome or the OS, outside CSS (DESIGN.md T-chrome). The toolbar badge's
@@ -406,10 +420,29 @@ export const CHROME = {
     },
   },
   /**
-   * The static toolbar icon's ink: the purple ladder (hue 305, chroma .2) at OKLCH .64, between
-   * --purple-60 and --purple-76, the one stop that clears 3:1 on Chrome's light and dark toolbars.
+   * The toolbar icon (F-mark): idle is the outline, lit (a cast is running) fills the octagon.
+   * The background draws it in the popup mark's ink for the browser's theme (--mark-ink: the
+   * brand ink on a light toolbar, dark --primary on a dark one). Until the theme is known it is
+   * the fallback, also the manifest's static icon: the purple ladder (hue 305, chroma .2) at
+   * OKLCH .64, the one stop that clears 3:1 on both of Chrome's toolbars.
    */
-  toolbarIcon: { ink: '#a964eb' },
+  toolbarIcon: {
+    ink: {
+      fallback: '#a964eb',
+      light: SEMANTIC_COLORS.tokens['brand-ink'] as string,
+      dark: primary.dark,
+    },
+    idle: {
+      fallback: toolbarIconFiles('action'),
+      light: toolbarIconFiles('action-light-idle'),
+      dark: toolbarIconFiles('action-dark-idle'),
+    },
+    lit: {
+      fallback: toolbarIconFiles('action-lit'),
+      light: toolbarIconFiles('action-light-lit'),
+      dark: toolbarIconFiles('action-dark-lit'),
+    },
+  },
   tray: {
     idle: { light: 'tray/idle-light.png', dark: 'tray/idle-dark.png' },
     lit: { light: 'tray/lit-light.png', dark: 'tray/lit-dark.png' },
