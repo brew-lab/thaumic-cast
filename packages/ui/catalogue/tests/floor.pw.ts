@@ -3,17 +3,18 @@
  * (`?floor=1`, catalogue/floor.ts): the features the floor lacks are taken away, so the
  * fallbacks are what renders. It runs in both projects; the WebKit project is the one that
  * stands for macOS 13 and 14. With DS_SCREENSHOTS=1 it also takes one picture per section
- * under `floor-<section>.png`, made and kept like the other baselines (catalogue.pw.ts).
+ * under `floor-<section>.png`, each its own test on a page of only that section, made and
+ * kept like the other baselines (shots.ts).
  */
-import { existsSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { openSections } from './open';
+import { openSections, SECTION_IDS } from './open';
+import { matchesItsScreenshot } from './shots';
 
 /**
  * Opens the floor in dark: the whole page, or only the sections this file names.
  * @param page - The test's page
- * @param whole - Whether to draw every section, as axe and the screenshots read them
+ * @param whole - Whether to draw every section, as axe reads it
  */
 async function openFloor(page: Page, whole: boolean): Promise<void> {
   if (whole) {
@@ -25,48 +26,13 @@ async function openFloor(page: Page, whole: boolean): Promise<void> {
   await expect(page.locator('html[data-floor]')).toHaveCount(1);
 }
 
-// The whole-page tests first, the screenshots before axe: the longest start at once.
-test('every section on the floor matches its screenshot', async ({ page }, testInfo) => {
-  test.skip(!process.env.DS_SCREENSHOTS, 'Screenshots run in CI only (DS_SCREENSHOTS=1).');
-  test.setTimeout(600_000);
-  await openFloor(page, true);
-  await page.evaluate(() => document.fonts.ready);
-  // The catalogue's own sections: a specimen's PopupShell draws a <main> of its own.
-  const ids = await page
-    .locator('main > section.section[id]')
-    .evaluateAll((els) => els.map((e) => e.id));
-  for (const id of ids) {
-    const name = `floor-${id}.png`;
-    const section = page.locator(`#${id}`);
-    // A window's iframe loads lazily, as it nears the view: each is brought there and drawn.
-    for (const iframe of await section.locator('iframe').all()) {
-      await iframe.scrollIntoViewIfNeeded();
-      await expect
-        .poll(() =>
-          iframe.evaluate(
-            (f: HTMLIFrameElement) => !!f.contentDocument?.getElementById('app')?.childElementCount,
-          ),
-        )
-        .toBe(true);
-    }
-    if (!existsSync(testInfo.snapshotPath(name))) {
-      // At CSS scale, as toHaveScreenshot compares; at WebKit's 2x the tallest sections pass
-      // the 32767 px a screenshot can be.
-      // As toHaveScreenshot takes it: animations stopped and the caret hidden, so a section
-      // with a running animation (a busy Button's Clacks) matches its own baseline.
-      await section.screenshot({
-        path: testInfo.outputPath('new-baselines', name),
-        scale: 'css',
-        animations: 'disabled',
-        caret: 'hide',
-      });
-      testInfo.annotations.push({ type: 'new baseline', description: name });
-      continue;
-    }
-    // Soft, so one run reports every section that changed, not just the first.
-    await expect.soft(section).toHaveScreenshot(name);
-  }
-});
+for (const id of SECTION_IDS) {
+  test(`the ${id} section on the floor matches its screenshot`, async ({ page }) => {
+    await matchesItsScreenshot(page, '/?theme=dark&floor=1', id, `floor-${id}.png`, (opened) =>
+      expect(opened.locator('html[data-floor]')).toHaveCount(1),
+    );
+  });
+}
 
 test('axe finds no violations on the floor', async ({ page }) => {
   test.setTimeout(180_000);

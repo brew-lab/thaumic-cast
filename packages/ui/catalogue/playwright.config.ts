@@ -13,7 +13,7 @@ const port = Number(process.env.CATALOGUE_PORT ?? 4179);
  * Screenshots only run with DS_SCREENSHOTS=1, which CI sets. Their baselines are made in the
  * CI Linux runner only, because fonts and anti-aliasing differ between machines; locally the
  * screenshot tests are skipped, so a missing baseline never fails a local run. See
- * tests/catalogue.pw.ts for how a baseline is made and committed.
+ * tests/shots.ts for how a section is taken, and how a baseline is made and committed.
  */
 export default defineConfig({
   testDir: './tests',
