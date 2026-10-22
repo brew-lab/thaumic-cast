@@ -285,21 +285,16 @@ export const CHROME = {
     danger: { light: { bg: '#c2181d', fg: '#ffffff' }, dark: { bg: '#e88382', fg: '#3d090a' } },
   },
   /**
-   * Toolbar icon: mark 1b, idle or lit, in the ink for the browser's theme; the fallback until
-   * the theme is known (also the manifest's static icon). The PNGs are drawn in these inks.
+   * Toolbar icon: mark 1b, idle or lit, in the ink for the browser's theme; light until the
+   * theme is known (the light set is the manifest's static icon). The PNGs are drawn in these inks.
    */
   toolbarIcon: {
-    ink: { fallback: '#a964eb', light: '#4b1d6b', dark: '#c699f8' },
+    ink: { light: '#a964eb', dark: '#c699f8' },
     idle: {
-      fallback: {
+      light: {
         '16': 'icons/action-16.png',
         '24': 'icons/action-24.png',
         '32': 'icons/action-32.png',
-      },
-      light: {
-        '16': 'icons/action-light-idle-16.png',
-        '24': 'icons/action-light-idle-24.png',
-        '32': 'icons/action-light-idle-32.png',
       },
       dark: {
         '16': 'icons/action-dark-idle-16.png',
@@ -308,15 +303,10 @@ export const CHROME = {
       },
     },
     lit: {
-      fallback: {
+      light: {
         '16': 'icons/action-lit-16.png',
         '24': 'icons/action-lit-24.png',
         '32': 'icons/action-lit-32.png',
-      },
-      light: {
-        '16': 'icons/action-light-lit-16.png',
-        '24': 'icons/action-light-lit-24.png',
-        '32': 'icons/action-light-lit-32.png',
       },
       dark: {
         '16': 'icons/action-dark-lit-16.png',

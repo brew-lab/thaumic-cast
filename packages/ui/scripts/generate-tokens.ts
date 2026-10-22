@@ -425,8 +425,8 @@ export const CHROME = {
   /** chrome.action badge: the text is "!" only, never a count. */
   toolbarBadge: ${JSON.stringify(CHROME.toolbarBadge)},
   /**
-   * Toolbar icon: mark 1b, idle or lit, in the ink for the browser's theme; the fallback until
-   * the theme is known (also the manifest's static icon). The PNGs are drawn in these inks.
+   * Toolbar icon: mark 1b, idle or lit, in the ink for the browser's theme; light until the
+   * theme is known (the light set is the manifest's static icon). The PNGs are drawn in these inks.
    */
   toolbarIcon: ${JSON.stringify(CHROME.toolbarIcon)},
   /** Tray icon: mark 1b idle, filled (lit) while any cast plays; one file per OS theme. */

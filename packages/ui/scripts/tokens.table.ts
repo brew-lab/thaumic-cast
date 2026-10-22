@@ -421,27 +421,15 @@ export const CHROME = {
   },
   /**
    * The toolbar icon (F-mark): idle is the outline, lit (a cast is running) fills the octagon.
-   * The background draws it in the popup mark's ink for the browser's theme (--mark-ink: the
-   * brand ink on a light toolbar, dark --primary on a dark one). Until the theme is known it is
-   * the fallback, also the manifest's static icon: the purple ladder (hue 305, chroma .2) at
-   * OKLCH .64, the one stop that clears 3:1 on both of Chrome's toolbars.
+   * The background draws it in the ink for the browser's theme. Light, and until the theme is
+   * known, is the purple ladder (hue 305, chroma .2) at OKLCH .64, also the manifest's static
+   * icon: it never vanishes on a dark Web Store theme in Light mode (§11 call 97). Dark is the
+   * dark --primary, the popup mark's dark ink.
    */
   toolbarIcon: {
-    ink: {
-      fallback: '#a964eb',
-      light: SEMANTIC_COLORS.tokens['brand-ink'] as string,
-      dark: primary.dark,
-    },
-    idle: {
-      fallback: toolbarIconFiles('action'),
-      light: toolbarIconFiles('action-light-idle'),
-      dark: toolbarIconFiles('action-dark-idle'),
-    },
-    lit: {
-      fallback: toolbarIconFiles('action-lit'),
-      light: toolbarIconFiles('action-light-lit'),
-      dark: toolbarIconFiles('action-dark-lit'),
-    },
+    ink: { light: '#a964eb', dark: primary.dark },
+    idle: { light: toolbarIconFiles('action'), dark: toolbarIconFiles('action-dark-idle') },
+    lit: { light: toolbarIconFiles('action-lit'), dark: toolbarIconFiles('action-dark-lit') },
   },
   tray: {
     idle: { light: 'tray/idle-light.png', dark: 'tray/idle-dark.png' },

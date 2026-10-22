@@ -14,20 +14,18 @@ beforeEach(() => {
 });
 
 describe('toolbarIconFor', () => {
-  it('should pick the file set for each state and theme', () => {
-    expect(toolbarIconFor(false, 'light')['16']).toBe('icons/action-light-idle-16.png');
-    expect(toolbarIconFor(true, 'light')['24']).toBe('icons/action-light-lit-24.png');
-    expect(toolbarIconFor(false, 'dark')['32']).toBe('icons/action-dark-idle-32.png');
-    expect(toolbarIconFor(true, 'dark')['16']).toBe('icons/action-dark-lit-16.png');
+  it('should pick the dark set on a dark toolbar', () => {
+    expect(toolbarIconFor(false, true)['16']).toBe('icons/action-dark-idle-16.png');
+    expect(toolbarIconFor(true, true)['32']).toBe('icons/action-dark-lit-32.png');
   });
 
-  it('should use the manifest icon and its lit twin while the theme is unknown', () => {
-    expect(toolbarIconFor(false, null)).toEqual({
+  it('should pick the manifest icon and its lit twin on a light or unknown toolbar', () => {
+    expect(toolbarIconFor(false, false)).toEqual({
       '16': 'icons/action-16.png',
       '24': 'icons/action-24.png',
       '32': 'icons/action-32.png',
     });
-    expect(toolbarIconFor(true, null)['16']).toBe('icons/action-lit-16.png');
+    expect(toolbarIconFor(true, false)['24']).toBe('icons/action-lit-24.png');
   });
 });
 
@@ -40,13 +38,13 @@ describe('isToolbarIconLit', () => {
 
 describe('writeToolbarIcon', () => {
   it('should write a changed icon once, for every tab', async () => {
-    await writeToolbarIcon(toolbarIconFor(true, 'dark'));
-    await writeToolbarIcon(toolbarIconFor(true, 'dark'));
-    await writeToolbarIcon(toolbarIconFor(false, 'dark'));
+    await writeToolbarIcon(toolbarIconFor(true, true));
+    await writeToolbarIcon(toolbarIconFor(true, true));
+    await writeToolbarIcon(toolbarIconFor(false, true));
 
     expect(actionCalls).toEqual([
-      ['setIcon', { path: toolbarIconFor(true, 'dark') }],
-      ['setIcon', { path: toolbarIconFor(false, 'dark') }],
+      ['setIcon', { path: toolbarIconFor(true, true) }],
+      ['setIcon', { path: toolbarIconFor(false, true) }],
     ]);
   });
 });

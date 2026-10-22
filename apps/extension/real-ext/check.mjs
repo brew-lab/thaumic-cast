@@ -138,13 +138,25 @@ const watchIcons = () =>
   });
 
 /**
+ * The 16 px file the background sets: the dark set on a dark toolbar, else the manifest icon
+ * and its lit twin.
+ * @param {boolean} lit - A cast is running
+ * @param {boolean} darkIcon - The dark toolbar's ink
+ * @returns {string} The file
+ */
+const iconFile = (lit, darkIcon) =>
+  darkIcon
+    ? `icons/action-dark-${lit ? 'lit' : 'idle'}-16.png`
+    : `icons/action${lit ? '-lit' : ''}-16.png`;
+
+/**
  * Waits until the last icon set is the one for this state and theme, and Chrome took it.
  * @param {boolean} lit - A cast is running
  * @param {boolean} darkIcon - The dark toolbar's ink
  * @returns {Promise<object|null>} The last call seen
  */
 const iconIs = async (lit, darkIcon) => {
-  const want = `icons/action-${darkIcon ? 'dark' : 'light'}-${lit ? 'lit' : 'idle'}-16.png`;
+  const want = iconFile(lit, darkIcon);
   let last = null;
   await until(async () => {
     last = await env.sw.evaluate(() => globalThis.__iconCalls?.at(-1) ?? null);
@@ -152,9 +164,7 @@ const iconIs = async (lit, darkIcon) => {
   });
   return last;
 };
-const iconOk = (last, lit, darkIcon) =>
-  last?.p16 === `icons/action-${darkIcon ? 'dark' : 'light'}-${lit ? 'lit' : 'idle'}-16.png` &&
-  last.ok === true;
+const iconOk = (last, lit, darkIcon) => last?.p16 === iconFile(lit, darkIcon) && last.ok === true;
 
 try {
   await watchIcons();
