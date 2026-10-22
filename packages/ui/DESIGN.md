@@ -273,7 +273,7 @@ Colours drawn by Chrome or the OS, generated from the same table as `tokens.css`
   - Warning: `--warning-ink` with its text, generated from the set: `#935d00` / `#ffffff` light, `#ffc251` / `#2b1d00` dark.
   - Danger: `--danger-ink` / `--on-danger`, generated from the set: `#c2181d` / `#ffffff` light (6.1:1), `#e88382` / `#3d090a` dark (6.44:1).
 - **Tray icon:** idle and lit, each in light and dark.
-- **Toolbar icon:** mark 1b in `#a964eb`, one ink for both Chrome toolbars (§11 call 93).
+- **Toolbar icon:** mark 1b in `#a964eb`, one ink for both Chrome toolbars (§11 call 93). The app and extension icons use the same ink (§11 call 95).
 
 The TS shape is in annex 1, T-chrome.
 
@@ -1158,8 +1158,8 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **RoomCard's name has no 6ch floor in CSS** (`min()` with `ch` is outside the allowed values): the line wraps on max-content, so the Badge drops before the name shrinks, and the rig checks the name box is at least 6ch.
 
 93. **The mark's assets.** The owner kept mark 1b as drawn ("the logo should be as we designed it with the octogon").
-    - **App icon:** the R6 tile, the `--purple-90` mark at .68 on `--brand-ink`, radius 20 %. Below a 20 px mark (the 16 and 24 px tiles) it keeps the outer arcs only. The macOS `icon.icns` puts the tile on Apple's grid (824 of 1024, radius 185.4), so it sizes with other apps; every other platform has the full tile.
-    - **Extension:** the manifest icons are the app tile (`icon-128` keeps the Web Store's 16 px clear margin); the toolbar button is the bare mark.
+    - **App icon:** the R6 tile, the `--purple-90` mark at .68 on `--brand-ink`, radius 20 %. Below a 20 px mark (the 16 and 24 px tiles) it keeps the outer arcs only. The macOS `icon.icns` puts the tile on Apple's grid (824 of 1024, radius 185.4), so it sizes with other apps; every other platform has the full tile. _Reversed by call 95: no tile except on macOS, where the tile sits on Apple's template._
+    - **Extension:** the manifest icons are the app tile (`icon-128` keeps the Web Store's 16 px clear margin); the toolbar button is the bare mark. _Reversed by call 95: the manifest icons are the bare mark too._
     - **Toolbar ink:** a static icon cannot follow Chrome's theme, and no ladder stop clears 3:1 on both toolbars (`--purple-60` is 2.79:1 on `#35363a`, `--purple-76` 2.04:1 on `#f1f3f4`; `--primary` is 1.39:1 on dark). The ink is the purple ladder at OKLCH .64 (hue 305, chroma .2), `#a964eb`: 3.30:1 on `#f1f3f4`, 3.68:1 on white, 3.28:1 on `#35363a`, 4.38:1 on `#202124`. It is `CHROME.toolbarIcon` (T-chrome).
     - **Tray:** the drawing changes and nothing else: the same files, sizes (22 and 44 px), 2 px margin, macOS template image, Windows theme pairs and idle and active tones. Idle is the outline, active is lit.
     - **The README** shows the bare mark, `--brand-ink` in light and the dark `--primary` in dark.
@@ -1172,6 +1172,15 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **A lone room's line runs the full width** (owner: "it only extends when multiple speakers are added"). A one-room open cast drew its row with the empty Remove slot, kept so rows line up, though there was nothing to line up with and the only room never has Remove (Stop ends the cast). RoomRow `cast` keeps the slot only beside other rows (`aligned`, which GroupVolume sets from two rooms); a lone row, joined, joining or failed, keeps none. The catalogue and the real-extension rig check it.
     - **Stop never leaves the head row** (seen in the owner's screenshot: a one-room cast's Stop sat on its own line under the band, while a two-room cast's sat beside the title). It was the red guard, not the room count: the artwork was red, and the guard moved Stop off a red band, so Stop moved when the tile opened, against C-casttile's one spot. The guard now keeps Stop in place and re-points its fill (`--tone-container`, which also covers its failed fill) to the band's tonal step, which stands apart from the band in both themes, as the play button does; its ink stays the danger ink. Rejected: Stop on the band unchanged (the danger container is the red band's lightness and hue, so the button's shape vanishes); a surface-coloured Stop (a second fill on the band). The catalogue (one room on a red band) and the real-extension rig (a red artwork) check that Stop's box sits in the head row at the same spot as a compact and a several-room tile's.
 
+95. **The app and extension icons follow each platform** (owner, 2026-10-22: "i am not sure i like us adding solid background color behind it. many icons don't require that why have we added it?"; "on the favicon it looks like we have removed one of broadcast waves"; "our icons have reduced in size compared to all other app icons. we should be following best practices here"). The owner approved the result ("the new icon looks good"). This reverses call 93's app tile everywhere but macOS.
+    - **No tile where the platform does not ask for one.** Microsoft: icons "look best with a transparent background", and a plated icon has to redo the theming a transparent one gets free. Linux and Chrome draw icons with no plate. Every app and extension icon is the bare mark on a transparent canvas, except on macOS (below).
+    - **One ink, `CHROME.toolbarIcon` (`#a964eb`).** It clears 3:1 on every ground measured: 3.68:1 on white, 3.31:1 on `#f3f3f3`, 4.43:1 on `#202020`, 4.53:1 on `#1e1e1e`, 3.52:1 on `#fafafa`, 4.22:1 on `#242424`, and about 3.0:1 and 3.8:1 on the Dock's light and dark glass (approximated as `#e8e8ec` and `#2c2c2e`). Microsoft asks that at least half of an icon pass 3:1 on light and dark.
+    - **All four arcs at every size.** The 16, 24 and 32 px drawings are fitted to pixels from the R6 stroke-per-size table: at 16 px the arcs are 1.5 px with the outer arcs' edges on pixels 0 and 3; 24 px is the 24-unit drawing, already on pixels; at 32 px the arcs are 2.5 px.
+    - **As large as the apps around it.** The arcs span 92 % of the canvas (100 % at 16 px, 94 % at 32 px), as the mark did before call 93. Measured from the shipped files, Chrome, Firefox, Steam and VS Code fill 94 to 100 % at 16 to 48 px and 88 to 100 % at 256 px. The tile drew the mark at 62 % of the canvas (47 % in `icon-128`), and that is what read as small.
+    - **Chrome.** The Web Store asks for 96 px of art in 128 for a square icon and about 112 px (85 to 90 %) for a round one. The arcs lie on a circle, so `icon-128` spans 112 px and `icon-48` 42 px: the same share, so 1× and 2× screens match. `icon-16` and `icon-32` are the app's 16 and 32 px drawings. The toolbar icons and the tray are unchanged; their fill already matches.
+    - **macOS keeps a tile, on Apple's template** (the owner's choice, on macOS only). Apple's app icon is a rounded square on a 1024 canvas (the 824 px body of Apple's template), and macOS 26 sets any icon of another shape on a grey squircle, so a bare mark would show there on a grey tile. `icon.icns` is the `--brand-ink` squircle, 824 of 1024 with a light shadow, and the mark in `--purple-90` at 70 % of its width; it measures as VS Code's does (81 by 82 %). The bundle now lists `icon.icns`: without it Tauri built the macOS icon from the PNGs, so call 93's grid icns was never used.
+    - **The README** keeps its `<picture>`: the bare mark, `--brand-ink` in light and the dark `--primary` in dark.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1181,6 +1190,7 @@ Where the packets disagreed with canon or with each other, these are the calls m
 3. **"Update available" placement.** Closed (call 84): a subtle mark on the PopupHeader's Settings, which opens About.
 4. **The onboarding step title's size.** The WizardStep `h2` is `--text-6` (20 px), the popup's page-title size, inside the step's Card; the main popup's card titles are 14 px, and the drawing sets the step title on the ground, outside any card. Default: as built (a step is the page's one heading). The alternatives are the title and subtitle above the Card, as "Casting now" sits above its tile, or a smaller title in the Card.
 5. **Unused tokens.** Closed (owner, Phase 5: "yes keep unused"): `--tracking-2`, `--tracking-4` (implied steps with no reader) and `--space-8` (a T-space step only the catalogue reads) stay. Unused tokens stay listed, not an error: §10 row 5 lists them and lint does not fail.
+6. **The macOS app icon.** Closed (owner, call 95): Apple's template tile on macOS only, since macOS 26 sets a non-squircle icon on a grey squircle; the bare mark everywhere else.
 
 **Open from the Phase 4 review** (low; each has a default applied):
 
@@ -1193,7 +1203,6 @@ Where the packets disagreed with canon or with each other, these are the calls m
 
 - **The voice pass.** Closed (owner, Phase 5: "strings LGTM"): 20 strings changed (17 in the extension, 3 in the desktop), both onboardings say "{{count}} rooms answered." (§11.12), and each app has one `try_again` key ("Try again"). The rest of the strings added since the copy rewrite stay as they are. "Video sync" is settled (call 24).
 - **Old R7 sheets still draw retired variants.** The full R7 sheets for Switch, Checkbox, Radio, SegmentedControl, Select, Slider, Clacks, Tooltip, Card, Dialog, Disclosure, EmptyState, NavItem, SectionHeader, StepIndicator, Meter, WizardStep and DescriptionList also draw variants retired in §9: Toggle, filter chips, Card raised, Notice summary, timed Toasts, 18 px icons, the mixed checkbox and the sheet. The design canvas (Design system v1 page) shows each item's v1 look. The catalogue page becomes the full reference, so no redraw is planned.
-- **The macOS app icon.** Closed (call 93): the icns tile sits on Apple's grid.
 - **The toolbar icon follows the theme and lights while casting** (F-mark): `chrome.action.setIcon` with light and dark inks and the lit drawing, from the background, which already knows a dark toolbar (ToolbarBadge). Until then the static icon is `CHROME.toolbarIcon` (call 93).
 - **The tray loads its 44 px files** on Retina and Windows above 100 %; today every OS scales the 22 px file.
 
@@ -1292,6 +1301,7 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Mark assets**
 
 - **The logo is mark 1b as designed** ("the logo should be as we designed it with the octogon"): app icon, tray, toolbar and README (§11 call 93).
+- **No solid tile behind the icons, all four arcs at every size, and icons as large as other apps'** ("many icons don't require that"; "the new icon looks good"), reversing call 93's tile. macOS alone keeps a tile, on Apple's template (§11 call 95).
 
 **Owner feedback (2026-10-21)**
 
