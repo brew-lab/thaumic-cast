@@ -2,7 +2,8 @@
   /*
    * C-section. The heading (and its line), then the items: one settings grid (F-grid). From
    * a 25rem card the items are a grid of a label track and one auto control track (from 45rem
-   * a help track too); rows subgrid it (SettingsRow, Switch) and everything else spans it.
+   * a help track too); rows subgrid it (SettingsRow, Switch) and everything else spans it. A
+   * readout's rows end with the control track, so their values end where the controls do.
    * Under 25rem the items stack and each row keeps its own tracks.
    *
    * Rules: each item after the first takes a --line-hair --divider edge at its block start,
@@ -101,6 +102,21 @@
   @container card (inline-size >= 45rem) {
     .items {
       grid-template-columns: minmax(min-content, 1fr) auto minmax(0, 1fr);
+    }
+
+    /*
+     * A readout (M-dl) keeps its values where the controls end: the list still spans the
+     * grid, so its own rule runs the full width like every item's, but it subgrids the
+     * tracks and each row spans the label and control tracks only, not the help track.
+     */
+    .items > [data-readout] {
+      display: grid;
+      grid-template-columns: subgrid;
+      column-gap: var(--space-5);
+    }
+
+    .items > [data-readout] > * {
+      grid-column: 1 / 3;
     }
   }
 }

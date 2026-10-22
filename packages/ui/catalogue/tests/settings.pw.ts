@@ -1,6 +1,6 @@
 /*
  * The settings components in a real browser (Chromium and WebKit): a SettingsSection is one
- * subgrid whose rows end their controls on one edge, its items are divided by one rule
+ * subgrid whose rows end their controls on one edge (and a readout's values on it too), its items are divided by one rule
  * (none under the heading, none round a Notice, none under a subheading or above help), a
  * Notice in it keeps its own padding and sits the section's gap from its neighbours, its
  * action Buttons share one width, rows inside Advanced are divided the same way, and an
@@ -45,6 +45,36 @@ for (const density of [0, 1] as const) {
       expect(result.tracks).toBe(range === 'wide' ? 3 : 2);
       expect(result.ends.length).toBe(4);
       expect(new Set(result.ends).size, JSON.stringify(result.ends)).toBe(1);
+    }
+  });
+}
+
+for (const density of [0, 1] as const) {
+  test(`a readout's values end where the Selects end, in every frame (${density ? 'desktop' : 'popup'})`, async ({
+    page,
+  }) => {
+    for (const range of ['compact', 'medium', 'wide']) {
+      const result = await frame(page, /^Audio, Bespoke/, range, density).evaluate((el) => {
+        const grid = el.querySelector('[data-settings-grid="section"]')!;
+        const right = (e: Element) => Math.round(e.getBoundingClientRect().right * 10) / 10;
+        const dl = grid.querySelector(':scope > [data-readout]')!;
+        return {
+          selects: [...grid.querySelectorAll(':scope > [data-setrow][data-width="narrow"]')].map(
+            (row) => right(row.querySelector('select')!),
+          ),
+          values: [...dl.querySelectorAll('dd')].map(right),
+          // The readout's own rule runs the grid's full width, as every item's does.
+          listWidth: Math.round(dl.getBoundingClientRect().width),
+          gridWidth: Math.round(grid.getBoundingClientRect().width),
+        };
+      });
+      const at = `${range}: ${JSON.stringify(result)}`;
+      expect(result.selects.length, at).toBe(4);
+      expect(result.values.length, at).toBeGreaterThanOrEqual(2);
+      for (const value of result.values) {
+        expect(Math.abs(value - result.selects[0]), at).toBeLessThanOrEqual(1);
+      }
+      expect(result.listWidth, at).toBe(result.gridWidth);
     }
   });
 }
