@@ -90,6 +90,25 @@ const lined = (rows) =>
   rows.length > 1 &&
   rows.every((x) => Math.abs(x.l - rows[0].l) <= 0.5 && Math.abs(x.r - rows[0].r) <= 0.5);
 
+/**
+ * Where an open tile's Stop sits: from the card's top and end, whether its middle is the head
+ * row's (the artwork's), and whether it is on the band.
+ * @param {import('./lib.mjs').Target} target - The popup
+ * @returns {Promise<{top: number, end: number, row: boolean, onBand: boolean, red: boolean} | null>} The spot
+ */
+const stopSpot = (target) =>
+  target.eval(`const stop = document.querySelector('section button[aria-label^="Stop"]');
+    const card = stop?.closest('section');
+    const art = card?.querySelector('[class*="artwork"]');
+    const band = card?.querySelector('[style*="--art-h"]');
+    if (!stop || !art || !band) return null;
+    const c = card.getBoundingClientRect(), s = stop.getBoundingClientRect();
+    const a = art.getBoundingClientRect(), b = band.getBoundingClientRect();
+    return { top: Math.round(s.top - c.top), end: Math.round(c.right - s.right),
+      row: Math.abs(s.top + s.height / 2 - (a.top + a.height / 2)) <= 1,
+      onBand: s.top >= b.top && s.bottom <= b.bottom && s.right <= b.right,
+      red: band.matches('[class*="_red-guard_"]') }`);
+
 const tone = lib.serveTone();
 const env = await lib.launch({ profile: `check-${tag}`, scale });
 const problems = [];
@@ -529,6 +548,7 @@ try {
     const card = stop.closest('section');
     return Math.round(card.getBoundingClientRect().right - stop.getBoundingClientRect().right)`);
   check('the open tile keeps Stop inside the card, as compact', stopInset >= 12, stopInset);
+  const otherBandStop = await stopSpot(p);
   const goHere = await p.eval(`return [...document.querySelectorAll('button')]
     .filter((b) => (b.getAttribute('aria-label') || b.innerText).startsWith('Go to tab')).length`);
   check("on the cast's own tab its tile has no Go to tab", goHere === 0, goHere);
@@ -719,6 +739,37 @@ try {
   await lib.sleep(1500);
   problems.push(...p.problems);
   p.close();
+
+  // ── One room on a red band: Stop stays in the head row ────────────────
+  // A red artwork sets the red guard. Stop once moved under the band, onto its own line, so
+  // a one-room cast of "Titanium" had it there and a two-room cast beside the title (§11
+  // call 94). It sits at one spot on every band.
+  await env.audioTab(tab, '?red');
+  p = await env.popup({ dark });
+  for (const name of await p.eval(`return [...document.querySelectorAll('input[type=checkbox]:checked')]
+    .map((c) => c.closest('label').innerText.split('\\n')[0].trim())`))
+    await p.clickRoom(name);
+  await p.clickRoom('Living Room');
+  await p.click('button', 'Cast to');
+  const redStop = await until(async () => {
+    const spot = (await p.text()).includes('Casting now') && (await stopSpot(p));
+    return spot?.red && spot;
+  }, 8000);
+  await lib.sleep(400);
+  await shot(p, '09c-one-room-red-band');
+  check(
+    'on a red band Stop stays in the head row, at the spot it has on another band',
+    Boolean(redStop?.red && redStop.row && redStop.onBand) &&
+      otherBandStop !== null &&
+      redStop.top === otherBandStop.top &&
+      redStop.end === otherBandStop.end,
+    { redStop, otherBandStop },
+  );
+  await p.click('button[aria-label^="Stop"]');
+  await lib.sleep(1500);
+  problems.push(...p.problems);
+  p.close();
+  await env.audioTab(tab);
 
   // ── Every room in one cast: nothing left to add ───────────────────────
   p = await env.popup({ dark });

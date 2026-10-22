@@ -511,7 +511,7 @@ export const SECTIONS: CatalogueSection[] = [
     title: 'MediaHeader',
     tier: 'Tier 2 · M-media',
     summary:
-      'One head for the TabCard and both tile forms: the disclosure follows the grammar; the open tile sits on the artwork-seeded band, and the red guard moves Stop off it.',
+      "One head for the TabCard and both tile forms: the disclosure follows the grammar; the open tile sits on the artwork-seeded band; on a red band Stop takes the band's tonal step.",
     Specimen: MediaHeaderSpecimen,
   },
   {

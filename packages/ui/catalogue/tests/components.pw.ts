@@ -171,7 +171,7 @@ test('a tile head is one disclosure button named by its text', async ({ page }) 
   await expect(head).toHaveAttribute('aria-expanded', 'true');
 });
 
-test('the band takes its colour from the artwork, and the red guard moves Stop off it', async ({
+test("the band takes its colour from the artwork; on a red band Stop stays, on the band's tonal step", async ({
   page,
 }) => {
   const section = light(page, 'media-header');
@@ -181,12 +181,30 @@ test('the band takes its colour from the artwork, and the red guard moves Stop o
       .first()
       .evaluate((el) => getComputedStyle(el.closest('[style*="--art-h"]')!).backgroundColor);
   expect(await bg('Video title Kitchen')).not.toEqual(await bg('Neon title'));
+  // The red guard keeps Stop in the head row (§11 call 94); its fill is not the band's.
   const red = section.getByRole('button', { name: /^Film title TV Room/ });
   const band = red.locator('xpath=ancestor::*[contains(@style,"--art-h")][1]');
-  await expect(band.getByRole('button', { name: 'Stop casting Film title' })).toHaveCount(0);
-  await expect(
-    band.locator('xpath=..').getByRole('button', { name: 'Stop casting Film title' }),
-  ).toHaveCount(1);
+  const stop = band.getByRole('button', { name: 'Stop casting Film title' });
+  await expect(stop).toHaveCount(1);
+  // The danger container is the band's lightness; the band's tonal step stands apart from it.
+  const lightness = await stop.evaluate((el) => {
+    const l = (color: string): number => {
+      const probe = document.createElement('canvas').getContext('2d')!;
+      probe.fillStyle = color;
+      probe.fillRect(0, 0, 1, 1);
+      const [r, g, b] = [...probe.getImageData(0, 0, 1, 1).data].map((v) => {
+        const c = v / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    return {
+      stop: l(getComputedStyle(el).getPropertyValue('--btn-bg')),
+      band: l(getComputedStyle(el.closest('[style*="--art-h"]')!).backgroundColor),
+    };
+  });
+  // Relative luminance: the fill is at least 1.15:1 off the band (the danger container is ~1:1).
+  expect((lightness.band + 0.05) / (lightness.stop + 0.05)).toBeGreaterThanOrEqual(1.15);
 });
 
 test('the TabCard title is a heading only when there is no disclosure', async ({ page }) => {
@@ -510,6 +528,38 @@ test('the open band bleeds to the card, and its head row sits where it does comp
   expect(open.band).toEqual([open.line, open.line, open.line]);
   expect(compact.band).toBeUndefined();
   expect({ stop: open.stop, art: open.art }).toEqual({ stop: compact.stop, art: compact.art });
+});
+
+test('Stop sits at one spot in the head row: one room on a red band, three rooms, compact', async ({
+  page,
+}) => {
+  // The red guard once moved Stop under a red band (§11 call 94): it stays in the head row.
+  const section = light(page, 'cast-tile');
+  const spot = (title: string) =>
+    section
+      .getByRole('region', { name: title })
+      .first()
+      .evaluate((card) => {
+        const edge = card.getBoundingClientRect();
+        const stop = card
+          .querySelector('button[aria-label^="Stop casting"]')!
+          .getBoundingClientRect();
+        const art = card.querySelector('[class*="artwork"]')!.getBoundingClientRect();
+        const band = card.querySelector('[style*="--art-h"]')?.getBoundingClientRect();
+        return {
+          top: Math.round(stop.top - edge.top),
+          end: Math.round(edge.right - stop.right),
+          // The head row's middle is the artwork's.
+          row: Math.abs(stop.top + stop.height / 2 - (art.top + art.height / 2)) <= 1,
+          onBand:
+            !band ||
+            (stop.top >= band.top && stop.bottom <= band.bottom && stop.right <= band.right),
+        };
+      });
+  const red = await spot('Film title');
+  expect(red).toEqual(await spot('Album title'));
+  expect(red).toEqual(await spot('Mix title'));
+  expect(red.row && red.onBand).toBe(true);
 });
 
 test('the slot line on a compact tile opens it', async ({ page }) => {
