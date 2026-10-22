@@ -3,8 +3,9 @@
 // one content column and one scroller, the sections in the drawing's order, a rule between
 // items and none under a heading or round a Notice, every row's control on one edge per
 // section, Theme's control on its line from a 25rem card, Quality two by two from Economical,
-// Start no louder than first in Finer points, Bespoke with Advanced open (rules inside,
-// controls on the card's end edge), nothing moving when a setting saves, the Toast's bar
+// Start no louder than first in Finer points, the readouts (Audio's and About's) ruled with
+// every value on the end edge, Bespoke with Advanced open (rules inside, controls and the
+// readout's values on the card's end edge), nothing moving when a setting saves, the Toast's bar
 // sticky with the focused control never under it, a Notice in a section keeping its own
 // padding, and #about landing on About. Run from check.mjs; the run's scale and scheme come from it.
 import * as lib from './lib.mjs';
@@ -98,6 +99,61 @@ function wrongRules(items) {
     })
     .filter((r) => !r.ok);
 }
+
+/**
+ * The readouts (M-dl) in a section: per row, whether it is ruled, where its value ends against
+ * the card's end edge, and whether term and value share a line and could.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @param {string} title - The section's name
+ * @returns {Promise<object>} The facts
+ */
+const readouts = (o, title) =>
+  o.eval(
+    `
+    const px = (v) => parseFloat(v) || 0;
+    const s = [...document.querySelectorAll('main > section')]
+      .find((x) => x.querySelector('h2').innerText === args.title);
+    const r = s.getBoundingClientRect(), cs = getComputedStyle(s);
+    const edge = r.right - px(cs.paddingInlineEnd) - px(cs.borderInlineEndWidth);
+    return [...s.querySelectorAll('dl')].map((dl) => {
+      const box = dl.getBoundingClientRect();
+      return {
+        overflow: dl.scrollWidth - dl.clientWidth,
+        rows: [...dl.querySelectorAll(':scope > div')].map((pair, i) => {
+          const dt = pair.querySelector('dt'), dd = pair.querySelector('dd');
+          const t = dt.getBoundingClientRect(), v = dd.getBoundingClientRect();
+          const probe = dd.cloneNode(true);
+          probe.style.cssText = 'position:absolute;inline-size:max-content;white-space:nowrap';
+          pair.append(probe);
+          const natural = probe.getBoundingClientRect().width;
+          probe.remove();
+          const gap = px(getComputedStyle(pair).columnGap);
+          return {
+            term: dt.innerText,
+            ruled: px(getComputedStyle(pair).borderBlockStartWidth) === (i === 0 ? 0 : 1),
+            end: Math.round(Math.abs(v.right - edge) * 10) / 10,
+            inside: v.left >= box.left - 0.5,
+            oneLine: v.top < t.bottom - 1,
+            fits: t.width + gap + natural <= box.width + 0.5,
+          };
+        }),
+      };
+    });`,
+    { title },
+  );
+
+/**
+ * The readout rows that break M-dl: not ruled, off the card's end edge, out of the list, or
+ * wrapped though they fit (or on one line though they do not).
+ * @param {object[]} lists - What readouts() read
+ * @returns {object[]} The wrong rows, with the list's overflow
+ */
+const wrongReadout = (lists) =>
+  lists.flatMap((l) =>
+    l.rows
+      .filter((row) => !row.ruled || row.end > 1 || !row.inside || row.oneLine !== row.fits)
+      .concat(l.overflow > 0 ? [{ overflow: l.overflow }] : []),
+  );
 
 /**
  * Sets the window's CSS width (the run's scale stays the device scale).
@@ -225,6 +281,26 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
       finer?.first === 'Start no louder than',
       finer?.first,
     );
+    // The readouts are ruled rows with every value on the card's end edge, term and value on
+    // one line whenever they fit (M-dl, §11 call 96): Luxurious's "For the next tab cast",
+    // and About.
+    for (const title of ['Audio', 'About']) {
+      const lists = await readouts(o, title);
+      const wrong = wrongReadout(lists);
+      check(
+        `options ${tag}: ${title}'s readout is ruled rows, every value on the end edge`,
+        lists.length === 1 && lists[0].rows.length >= 2 && wrong.length === 0,
+        { rows: lists.map((l) => l.rows.length), wrong },
+      );
+      if (title === 'Audio' && width >= 600) {
+        const split = lists[0]?.rows.filter((row) => !row.oneLine).map((row) => row.term);
+        check(
+          `options ${tag}: every row of the Audio readout is on one line`,
+          split?.length === 0,
+          split,
+        );
+      }
+    }
     const h = await o.eval('return document.documentElement.scrollHeight');
     await resize(o, width, scale, h);
     await shot(o, `11-options-${tag}`);
@@ -261,6 +337,17 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
         help: Math.round(row.querySelector('p[id$="-help"]')?.getBoundingClientRect().right ?? 0),
       })) : [],
     };`);
+  // Bespoke's readout rows sit among the Select rows: their values end where the Selects do.
+  const bespokeReadout = await readouts(o, 'Audio');
+  const bespokeWrong = wrongReadout(bespokeReadout);
+  check(
+    "options Bespoke: the readout's values end on the Selects' end edge, ruled like the rows",
+    bespokeReadout.length === 1 &&
+      bespokeReadout[0].rows.length >= 3 &&
+      bespokeWrong.length === 0 &&
+      bespoke.ends.every((e) => Math.abs(e - bespoke.edge) <= 1),
+    { wrong: bespokeWrong, ends: bespoke.ends, edge: bespoke.edge },
+  );
   await o.eval(
     `document.querySelector('details[open]')?.scrollIntoView({ block: 'center', behavior: 'instant' })`,
   );
@@ -337,28 +424,6 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
     'options: a Notice in a section keeps its padding, its glyph inside it, the gap round it',
     notices.some((n) => n.text.startsWith('No server address')) && badNotices.length === 0,
     notices,
-  );
-  // The readout under "For the next tab cast" keeps M-dl's gaps: --space-5 between term and
-  // value, --space-2 between pairs (both non-zero, resolved in the list's own container).
-  const readout = await o.eval(`
-    const dl = document.querySelector('[data-settings-grid="section"] > dl');
-    if (!dl) return null;
-    const probe = document.createElement('div');
-    probe.style.cssText = 'display:grid;gap:var(--space-2) var(--space-5)';
-    dl.firstElementChild.append(probe);
-    const want = getComputedStyle(probe);
-    const res = { row: getComputedStyle(dl).rowGap, col: getComputedStyle(dl).columnGap,
-      wantRow: want.rowGap, wantCol: want.columnGap };
-    probe.remove();
-    return res;`);
-  check(
-    "options: the readout keeps M-dl's gaps (--space-5 across, --space-2 down)",
-    Boolean(readout) &&
-      parseFloat(readout.row) > 0 &&
-      parseFloat(readout.col) > 0 &&
-      readout.row === readout.wantRow &&
-      readout.col === readout.wantCol,
-    readout,
   );
   await o.click('label', 'Find it automatically');
   await lib.sleep(600);
