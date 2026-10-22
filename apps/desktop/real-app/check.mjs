@@ -661,7 +661,7 @@ try {
       if (size === 'default') {
         await checkAxe(a, 'Server');
         // Copy address: the shown address never changes (owner: it stays host:port), while
-        // the clipboard takes the URL a browser or a player can open (§11 call 93).
+        // the clipboard takes the URL a browser or a player can open (§11 call 94).
         const shownAddress = () =>
           a.page.evaluate(() => {
             const v = document.querySelector('main dl span.mono[tabindex="-1"]');
