@@ -1,7 +1,8 @@
 /*
  * The settings components in a real browser (Chromium and WebKit): a SettingsSection is one
  * subgrid whose rows end their controls on one edge, its items are divided by one rule
- * (none under the heading, none round a Notice, none under a subheading or above help), its
+ * (none under the heading, none round a Notice, none under a subheading or above help), a
+ * Notice in it keeps its own padding and sits the section's gap from its neighbours, its
  * action Buttons share one width, rows inside Advanced are divided the same way, and an
  * empty list draws no padding of its own inside it.
  */
@@ -80,6 +81,51 @@ test('a rule parts each item from the one before, except round a Notice, a subhe
     ).toEqual([]);
   }
 });
+
+for (const density of [0, 1] as const) {
+  test(`a Notice in a section keeps its own padding and the section's gap (${density ? 'desktop' : 'popup'})`, async ({
+    page,
+  }) => {
+    for (const range of ['compact', 'medium', 'wide']) {
+      const notices = await frame(page, /^Audio, Bespoke/, range, density).evaluate((el) => {
+        const px = (v: string): number => parseFloat(v) || 0;
+        const r1 = (v: number): number => Math.round(v * 10) / 10;
+        const grid = el.querySelector('[data-settings-grid="section"]')!;
+        const gr = grid.getBoundingClientRect();
+        return [...grid.querySelectorAll(':scope > [data-notice]')].map((n) => {
+          const cs = getComputedStyle(n);
+          const r = n.getBoundingClientRect();
+          const g = n.firstElementChild!.getBoundingClientRect();
+          return {
+            pad: [
+              cs.paddingBlockStart,
+              cs.paddingInlineEnd,
+              cs.paddingBlockEnd,
+              cs.paddingInlineStart,
+            ].map(px),
+            glyph: [r1(g.left - r.left), r1(g.top - r.top)],
+            gap: px(getComputedStyle(grid).rowGap),
+            around: [
+              r1(r.top - n.previousElementSibling!.getBoundingClientRect().bottom),
+              r1(n.nextElementSibling!.getBoundingClientRect().top - r.bottom),
+            ],
+            edges: [r1(r.left - gr.left), r1(gr.right - r.right)],
+          };
+        });
+      });
+      expect(notices.length).toBe(2);
+      for (const n of notices) {
+        const [start, end, blockEnd, inlineStart] = n.pad;
+        expect(start, JSON.stringify(n)).toBeGreaterThan(0);
+        expect(start, JSON.stringify(n)).toBe(blockEnd);
+        expect(end, JSON.stringify(n)).toBe(inlineStart);
+        expect(n.glyph, JSON.stringify(n)).toEqual([inlineStart, start]);
+        expect(n.around, JSON.stringify(n)).toEqual([n.gap, n.gap]);
+        expect(n.edges, JSON.stringify(n)).toEqual([0, 0]);
+      }
+    }
+  });
+}
 
 test('rows inside Advanced are divided by the same rule, with none under the summary', async ({
   page,

@@ -39,8 +39,9 @@ what the household plays. Last, the options page pass (`options.mjs`) at a 1200,
 window: the sections in the drawing's order, one content column and one scroller, a rule between
 items and none under a heading or round a Notice, every row's control on the card's end edge
 (Theme's on its line from a 25rem card), Quality two by two from Economical, Start no louder than
-first in Finer points, Bespoke with Advanced open (its rows on one control column), nothing moving
-when a setting saves, the Toast's bar (0 tall without a Toast, sticky with one, never over focus)
+first in Finer points, Bespoke with Advanced open (its rows on one control column), "Enter the
+address" with nothing saved (the warning Notice keeps its own padding, its glyph inside it, the
+section's gap round it; the readout keeps M-dl's gaps), nothing moving when a setting saves, the Toast's bar (0 tall without a Toast, sticky with one, never over focus)
 and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
 to open over. After the runs, the lifecycle pass (`lifecycle.mjs`, once, with its own companion):
 a page controlled by a service worker with an enforced Connection-Allowlist, as YouTube Music

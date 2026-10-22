@@ -46,14 +46,15 @@
     --section-sub-leading: var(--leading-4);
   }
 
-  .items > * + * {
+  /*
+   * The rule's edge is never set on a Notice and then taken off again: a reset of
+   * padding-block-start there would also take the Notice's own top padding (and its
+   * forced-colours border), since this selector outweighs the Notice's class. The :where()
+   * keeps the weight of `.items > * + *`, so an item's own padding still wins as before.
+   */
+  .items > * + *:where(:not([data-notice], [data-notice] + *, h3 + *, p)) {
     padding-block-start: var(--section-gap);
     border-block-start: var(--line-hair) solid var(--section-rule);
-  }
-
-  .items > :is([data-notice], [data-notice] + *, h3 + *, * + p) {
-    padding-block-start: 0;
-    border-block-start: 0;
   }
 
   .items > :is(h3 + *, * + p) {
