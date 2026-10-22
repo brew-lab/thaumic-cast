@@ -115,6 +115,31 @@ describe('design tokens', () => {
     expect(LADDERS).not.toHaveProperty('red');
   });
 
+  it("should draw the toolbar icon in the popup mark's inks, each clearing 3:1 on its toolbar", () => {
+    const { ink } = CHROME.toolbarIcon;
+    expect(ink.light).toBe(SEMANTIC_COLORS.tokens['brand-ink'] as string);
+    expect(ink.dark).toBe((SEMANTIC_COLORS.tokens.primary as { dark: string }).dark);
+    const lum = (hex: string): number => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: string, b: string): number => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    // Chrome's light toolbars (#f1f3f4 default, white) and dark toolbars (#35363a, #202124).
+    const light = ['#f1f3f4', '#ffffff'];
+    const dark = ['#35363a', '#202124'];
+    for (const ground of light) expect(ratio(ink.light, ground)).toBeGreaterThanOrEqual(3);
+    for (const ground of dark) expect(ratio(ink.dark, ground)).toBeGreaterThanOrEqual(3);
+    for (const ground of [...light, ...dark]) {
+      expect(ratio(ink.fallback, ground)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('should reject a status set read by name, and allow the tones', () => {
     for (const read of [
       'var(--danger-ink)',
