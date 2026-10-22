@@ -13,12 +13,18 @@
 
 type StorageRecord = Record<string, unknown>;
 
+type StorageChanges = Record<string, chrome.storage.StorageChange>;
+
+/** Listeners on `chrome.storage.onChanged`, which hears every area. */
+const storageListeners = new Set<(changes: StorageChanges, areaName: string) => void>();
+
 /**
  * Creates an in-memory replacement for one `chrome.storage` area.
  * @param data - The backing record, exposed so tests can seed and inspect it
+ * @param areaName - The area's name, as `chrome.storage.onChanged` reports it
  * @returns An object implementing the `get`/`set`/`remove`/`clear`/`onChanged` subset used by the code
  */
-function createStorageArea(data: StorageRecord): chrome.storage.StorageArea {
+function createStorageArea(data: StorageRecord, areaName: string): chrome.storage.StorageArea {
   type Listener = (changes: Record<string, chrome.storage.StorageChange>) => void;
   const listeners = new Set<Listener>();
   const area = {
@@ -44,6 +50,7 @@ function createStorageArea(data: StorageRecord): chrome.storage.StorageArea {
       }
       Object.assign(data, items);
       for (const listener of listeners) listener(changes);
+      for (const listener of storageListeners) listener(changes, areaName);
     },
     async remove(keys: string | string[]): Promise<void> {
       for (const name of typeof keys === 'string' ? [keys] : keys) delete data[name];
@@ -106,9 +113,15 @@ export function resetChromeStub(): void {
 
 const chromeStub = {
   storage: {
-    local: createStorageArea(chromeStorageData.local),
-    sync: createStorageArea(chromeStorageData.sync),
-    session: createStorageArea(chromeStorageData.session),
+    local: createStorageArea(chromeStorageData.local, 'local'),
+    sync: createStorageArea(chromeStorageData.sync, 'sync'),
+    session: createStorageArea(chromeStorageData.session, 'session'),
+    onChanged: {
+      addListener: (listener: (changes: StorageChanges, areaName: string) => void): void =>
+        void storageListeners.add(listener),
+      removeListener: (listener: (changes: StorageChanges, areaName: string) => void): void =>
+        void storageListeners.delete(listener),
+    },
   },
   runtime: {
     async sendMessage(message: unknown): Promise<void> {
@@ -179,6 +192,9 @@ const chromeStub = {
     },
     async setTitle(details: unknown): Promise<void> {
       actionCalls.push(['setTitle', details]);
+    },
+    async setIcon(details: unknown): Promise<void> {
+      actionCalls.push(['setIcon', details]);
     },
   },
 };

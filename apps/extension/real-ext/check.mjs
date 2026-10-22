@@ -112,7 +112,52 @@ const stopSpot = (target) =>
 const tone = lib.serveTone();
 const env = await lib.launch({ profile: `check-${tag}`, scale });
 const problems = [];
+
+/**
+ * Records every toolbar icon the background sets, and whether Chrome took it. Chrome has no
+ * getter for the action's icon and the toolbar is not in a screenshot, so the rig watches the
+ * calls the service worker makes and lets each one through to the real chrome.action.setIcon.
+ * @returns {Promise<void>} Resolves once watching
+ */
+const watchIcons = () =>
+  env.sw.evaluate(() => {
+    if (globalThis.__iconCalls) return;
+    const calls = (globalThis.__iconCalls = []);
+    const real = chrome.action.setIcon.bind(chrome.action);
+    chrome.action.setIcon = (details) => {
+      const call = { p16: details.path?.['16'] ?? null, ok: null };
+      calls.push(call);
+      return real(details).then(
+        () => void (call.ok = true),
+        (e) => {
+          call.ok = String(e?.message ?? e);
+          throw e;
+        },
+      );
+    };
+  });
+
+/**
+ * Waits until the last icon set is the one for this state and theme, and Chrome took it.
+ * @param {boolean} lit - A cast is running
+ * @param {boolean} darkIcon - The dark toolbar's ink
+ * @returns {Promise<object|null>} The last call seen
+ */
+const iconIs = async (lit, darkIcon) => {
+  const want = `icons/action-${darkIcon ? 'dark' : 'light'}-${lit ? 'lit' : 'idle'}-16.png`;
+  let last = null;
+  await until(async () => {
+    last = await env.sw.evaluate(() => globalThis.__iconCalls?.at(-1) ?? null);
+    return last?.p16 === want && last.ok === true;
+  });
+  return last;
+};
+const iconOk = (last, lit, darkIcon) =>
+  last?.p16 === `icons/action-${darkIcon ? 'dark' : 'light'}-${lit ? 'lit' : 'idle'}-16.png` &&
+  last.ok === true;
+
 try {
+  await watchIcons();
   // The household: Bathroom + Office grouped and playing; Office's own level is 23, below
   // the start cap, so joining a cast never changes it; its first RenderingControl event is
   // dropped, as the subscribe race drops it on real speakers.
@@ -538,12 +583,37 @@ try {
     { before, withLine, after },
   );
 
+  // ── The toolbar icon follows the theme the offscreen document reports ──
+  // The offscreen document reports prefers-color-scheme; emulate the other scheme there and
+  // then this run's, so the icon is set for both.
+  const offscreen = await env.offscreen();
+  await offscreen.scheme(!dark);
+  const otherIdle = await iconIs(false, !dark);
+  await offscreen.scheme(dark);
+  const ownIdle = await iconIs(false, dark);
+  check(
+    "with no cast the toolbar icon is the outline, in each toolbar's ink",
+    iconOk(otherIdle, false, !dark) && iconOk(ownIdle, false, dark),
+    { otherIdle, ownIdle },
+  );
+
   // ── Casting, then adding a grouped room ───────────────────────────────
   await p.clickRoom('Bedroom');
   await p.clickRoom('Study');
   await p.click('button', 'Cast to');
   await until(async () => (await p.text()).includes('Casting now'));
   await shot(p, '05-casting');
+  const litIcon = await iconIs(true, dark);
+  check('while a cast runs the toolbar icon is lit', iconOk(litIcon, true, dark), litIcon);
+  await offscreen.scheme(!dark);
+  const otherLit = await iconIs(true, !dark);
+  await offscreen.scheme(dark);
+  const ownLit = await iconIs(true, dark);
+  check(
+    'a lit toolbar icon follows a change of theme',
+    iconOk(otherLit, true, !dark) && iconOk(ownLit, true, dark),
+    { otherLit, ownLit },
+  );
   const stopInset = await p.eval(`const stop = document.querySelector('button[aria-label^="Stop"]');
     const card = stop.closest('section');
     return Math.round(card.getBoundingClientRect().right - stop.getBoundingClientRect().right)`);
@@ -656,7 +726,10 @@ try {
 
   await p.click('button[aria-label^="Stop"]');
   await lib.sleep(1500);
+  const outIcon = await iconIs(false, dark);
+  check('once the cast stops the toolbar icon goes out', iconOk(outIcon, false, dark), outIcon);
   problems.push(...p.problems);
+  offscreen.close();
   p.close();
 
   // ── Joining rows line up with the room playing alone ──────────────────

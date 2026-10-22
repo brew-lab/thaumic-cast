@@ -479,6 +479,18 @@ export async function launch({ profile = 'check', scale = 1, fresh = true } = {}
     throw new Error('no target ' + part);
   };
   /**
+   * Attaches to the offscreen document, which reports the browser's theme to the background.
+   * @returns {Promise<Target>} The offscreen document
+   */
+  env.offscreen = async () => {
+    for (let i = 0; i < 30; i++) {
+      const t = (await targets()).find((x) => x.url.includes('/src/offscreen/offscreen.html'));
+      if (t) return new Target(await Cdp.connect(t.webSocketDebuggerUrl)).init();
+      await sleep(200);
+    }
+    throw new Error('no offscreen document');
+  };
+  /**
    * Opens the real toolbar popup over the active tab and attaches to it.
    * @param {object} [opts] - Options
    * @param {boolean} [opts.dark] - Colour scheme to emulate

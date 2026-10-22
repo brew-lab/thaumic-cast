@@ -25,7 +25,9 @@ It builds the extension and the thaumic-core test binary, then for each run (`RU
 onboarding on every step and state (the companion found, not found, given by hand: one block
 size, and the main popup's header row, card edges, text edge and bar), the main popup's layout, a
 room row's octagon on press and focus, the CastBar's line above Cast in every state, saving a set,
-casting (the band bleeding to the card, no Go
+the toolbar icon (idle and lit, in the light and the dark ink as the offscreen document's scheme
+is emulated: the rig watches the worker's `chrome.action.setIcon` calls, since Chrome has no getter
+and the toolbar is not in a screenshot), casting (the band bleeding to the card, no Go
 to tab on the cast's own tab), adding a grouped room whose first event is lost, a second tab, a
 speaker dropping off the network and the Undo Toast, rooms joining slowly beside a room playing
 alone (every row's Slider on one start and end), a cast in every room (no Add a room), and
