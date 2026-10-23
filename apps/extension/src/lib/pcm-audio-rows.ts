@@ -50,7 +50,9 @@ export function headStartValue(ctx: PcmRowsContext): NoticeLine {
  * Builds the summary rows specific to a PCM stream.
  *
  * The added delay is smoothing plus head start; Sonos adds its own on top. It
- * is left out when the head start is unknown, rather than understated.
+ * is left out when the head start is unknown, rather than understated. With
+ * smoothing off it is the head start alone, which is what the companion holds
+ * until a late frame makes it play silence and adds that much.
  *
  * @param smoothingMs - The smoothing the stream runs with, in ms
  * @param ctx - The companion's settings and type
@@ -66,7 +68,10 @@ export function pcmAudioRows(smoothingMs: number, ctx: PcmRowsContext): AudioSum
     {
       key: 'smoothing',
       labelKey: 'audio_smoothing',
-      value: { key: 'audio_option_ms', params: { value: smoothingMs } },
+      value:
+        smoothingMs === 0
+          ? { key: 'audio_smoothing_off' }
+          : { key: 'audio_option_ms', params: { value: smoothingMs } },
     },
     { key: 'head-start', labelKey: 'audio_head_start', value: headStartValue(ctx) },
   ];

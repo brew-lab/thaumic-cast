@@ -173,8 +173,11 @@ and `subscribe()` is deliberate and field-proven.
 - **Cadence.** `create_wav_stream_with_cadence` emits one frame per tick of the stream's frame
   duration, whatever the input does: a queued frame if there is one, otherwise silence, with a
   short crossfade into and out of it. After an underrun it holds until the queue refills to the
-  jitter buffer depth. `stream/ingest_gaps.rs` decides when repeated gaps in arrival are worth
-  telling the client about.
+  jitter buffer depth. Smoothing 0 (off) queues nothing and never holds: a late frame is silence
+  until it arrives, and the frames behind it are kept, so the delay grows only by the silence
+  played. The queue's cap never drops below 300 ms of frames, so a speaker stall's backlog still
+  replays. `stream/ingest_gaps.rs` decides when repeated gaps in arrival are worth telling the
+  client about.
 - **Delivery tracking.** `stream/delivery.rs` holds the per-connection guard
   (`LoggingStreamGuard`) that logs a connection's lifecycle and summary for every codec, the watch
   over the first-connection wait, and the `EpochHook`. `stream/framing.rs` names how a body is

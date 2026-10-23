@@ -685,7 +685,7 @@ impl StreamCoordinator {
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (0-1000, 0 is smoothing off)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     ///
     /// Returns the stream ID on success. Broadcasts a `StreamEvent::Created` event.

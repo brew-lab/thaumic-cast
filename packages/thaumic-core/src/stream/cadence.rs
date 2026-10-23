@@ -15,7 +15,7 @@ use async_stream::stream;
 use bytes::Bytes;
 use futures::Stream;
 use tokio::sync::broadcast;
-use tokio::time::{interval, Instant as TokioInstant, MissedTickBehavior};
+use tokio::time::{interval_at, Instant as TokioInstant, MissedTickBehavior};
 
 pub use crate::model::head_start::{
     parse_pcm_connect_burst_ms, pcm_connect_burst_ms, PCM_CONNECT_BURST_ENV,
@@ -506,8 +506,13 @@ pub struct CadenceConfig {
     /// Intended queue depth in frames (`jitter_buffer_ms / frame_duration_ms`).
     /// After an underrun, playback is held until the queue refills to this
     /// depth so one source gap does not leave the stream with no jitter
-    /// margin. After a consumer stall, the backlog is trimmed back to it.
-    /// 0 means pass-through: resume on the first frame, never trim.
+    /// margin.
+    ///
+    /// 0 is smoothing off: no prefill is queued, each frame plays on the
+    /// first tick after it arrives, and a late frame means silence until it
+    /// does, with no hold afterwards. The frames that queued up behind a late
+    /// one are kept (up to `overflow_cap`), so the queue then holds what the
+    /// lateness was: the stream's delay grows only by the silence it played.
     pub buffer_depth: usize,
     /// Duration of each output frame in milliseconds.
     pub frame_duration_ms: u32,
@@ -550,7 +555,7 @@ impl CadenceConfig {
     /// (`jitter_buffer_ms / frame_duration_ms`) multiplied by
     /// [`crate::protocol_constants::JITTER_OVERFLOW_MULTIPLIER`], clamped to
     /// [`crate::protocol_constants::MAX_CADENCE_QUEUE_SIZE`] with a floor of
-    /// [`crate::protocol_constants::MIN_OVERFLOW_CAP`].
+    /// [`crate::protocol_constants::MIN_OVERFLOW_CAP_MS`] of frames.
     ///
     /// The prefill is trimmed to the newest `connect_burst_ms` plus the
     /// intended buffer depth, so a resume with a full ring buffer doesn't
@@ -575,14 +580,15 @@ impl CadenceConfig {
     ) -> Self {
         use crate::protocol_constants::{
             JITTER_OVERFLOW_MULTIPLIER, MAX_CADENCE_QUEUE_SIZE, MAX_PCM_CONNECT_BURST_MS,
-            MIN_OVERFLOW_CAP,
+            MIN_OVERFLOW_CAP_MS,
         };
 
         let frame_ms = u64::from(frame_duration_ms.max(1));
         let buffer_depth = jitter_buffer_ms.div_ceil(frame_ms) as usize;
         let overflow_cap = buffer_depth
             .saturating_mul(JITTER_OVERFLOW_MULTIPLIER)
-            .clamp(MIN_OVERFLOW_CAP, MAX_CADENCE_QUEUE_SIZE);
+            .max(MIN_OVERFLOW_CAP_MS.div_ceil(frame_ms) as usize)
+            .min(MAX_CADENCE_QUEUE_SIZE);
         let burst_wanted = connect_burst_ms
             .min(MAX_PCM_CONNECT_BURST_MS)
             .div_ceil(frame_ms) as usize;
@@ -618,6 +624,29 @@ impl CadenceConfig {
     #[must_use]
     pub fn burst_ms(&self) -> u64 {
         self.burst_frames.len() as u64 * u64::from(self.frame_duration_ms)
+    }
+}
+
+/// Notes a gap in the audio's arrival that just ended, after `silent_ms` of
+/// silence on a stream smoothing `fallback_smoothing_ms` (used when the
+/// stream is gone), and raises the ingest-gap notice when the gaps call for
+/// one and the stream has not raised one lately.
+fn note_ingest_gap(
+    window: &mut super::ingest_gaps::IngestGapWindow,
+    stream_state: Option<&std::sync::Weak<StreamState>>,
+    stats: &ChainStats,
+    fallback_smoothing_ms: u64,
+    silent_ms: u64,
+) {
+    let state = stream_state.and_then(std::sync::Weak::upgrade);
+    let smoothing_ms = state
+        .as_ref()
+        .map_or(fallback_smoothing_ms, |ss| ss.jitter_buffer_ms);
+    let now = Instant::now();
+    if let Some(report) = window.record(now, smoothing_ms + silent_ms, smoothing_ms) {
+        if state.is_some_and(|ss| ss.ingest_gap_notices.claim(now)) {
+            stats.report_ingest_gaps(report);
+        }
     }
 }
 
@@ -722,9 +751,18 @@ pub fn create_wav_stream_with_cadence(
         // the moment the body is first polled: if the connection is slow to
         // take the burst, the missed ticks replay afterwards and the speaker
         // still ends up the whole burst ahead of real time.
-        let mut metronome = interval(cadence_duration);
-        metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
+        //
+        // With smoothing off nothing is queued, so the immediate tick would
+        // ask for audio not yet captured and always play silence: the first
+        // tick waits a frame instead, for the frame being captured now.
         let metronome_started = TokioInstant::now();
+        let first_tick = if buffer_depth == 0 && queue.is_empty() {
+            metronome_started + cadence_duration
+        } else {
+            metronome_started
+        };
+        let mut metronome = interval_at(first_tick, cadence_duration);
+        metronome.set_missed_tick_behavior(MissedTickBehavior::Burst);
 
         // Extra room above `overflow_cap` while the ticks missed during a
         // slow connect burst replay. Live frames keep arriving while the
@@ -757,6 +795,9 @@ pub fn create_wav_stream_with_cadence(
         let mut has_played_audio = false;
         let mut rebuffering = false;
         let mut rebuffer_started: Option<TokioInstant> = None;
+        // Whether the current silence interrupted real audio, rather than
+        // being startup starvation.
+        let mut underrun_after_audio = false;
         // Underruns over the last minute, for the ingest-gap notice.
         let mut ingest_gaps = super::ingest_gaps::IngestGapWindow::new();
 
@@ -872,23 +913,14 @@ pub fn create_wav_stream_with_cadence(
                             // Frames are arriving again: the gap in their
                             // arrival was the smoothing that ran dry plus
                             // the silence played since.
-                            let smoothing_ms = stream_state
-                                .as_ref()
-                                .and_then(|w| w.upgrade())
-                                .map_or(buffer_depth as u64 * u64::from(frame_duration_ms), |ss| {
-                                    ss.jitter_buffer_ms
-                                });
                             let silent_ms = silence_start.map_or(0, |t| t.elapsed().as_millis() as u64);
-                            let now = Instant::now();
-                            if let Some(report) = ingest_gaps.record(now, smoothing_ms + silent_ms, smoothing_ms) {
-                                let claimed = stream_state
-                                    .as_ref()
-                                    .and_then(|w| w.upgrade())
-                                    .is_some_and(|ss| ss.ingest_gap_notices.claim(now));
-                                if claimed {
-                                    stats.report_ingest_gaps(report);
-                                }
-                            }
+                            note_ingest_gap(
+                                &mut ingest_gaps,
+                                stream_state.as_ref(),
+                                &stats,
+                                buffer_depth as u64 * u64::from(frame_duration_ms),
+                                silent_ms,
+                            );
                         }
                         let waited = rebuffer_started.map(|t| t.elapsed()).unwrap_or_default();
                         if rx_closed || queue.len() >= buffer_depth || waited >= rebuffer_timeout {
@@ -920,6 +952,18 @@ pub fn create_wav_stream_with_cadence(
                                     start.elapsed().as_secs_f32(),
                                     queue.len()
                                 );
+                                // With smoothing off there is no rebuffer
+                                // hold to note the gap, so it is noted
+                                // here: the silence was the whole of it.
+                                if buffer_depth == 0 && underrun_after_audio {
+                                    note_ingest_gap(
+                                        &mut ingest_gaps,
+                                        stream_state.as_ref(),
+                                        &stats,
+                                        0,
+                                        start.elapsed().as_millis() as u64,
+                                    );
+                                }
                             }
                             in_silence = false;
                         }
@@ -969,6 +1013,7 @@ pub fn create_wav_stream_with_cadence(
                             // Only an underrun that interrupted real audio is
                             // gated; startup starvation resumes on the first
                             // frame as before.
+                            underrun_after_audio = has_played_audio;
                             if has_played_audio && buffer_depth > 0 {
                                 rebuffering = true;
                                 rebuffer_started = None;
@@ -1122,7 +1167,7 @@ mod tests {
     use std::task::Poll;
     use tokio::time::{self, Duration};
 
-    use crate::protocol_constants::SILENCE_FRAME_DURATION_MS;
+    use crate::protocol_constants::{MAX_CADENCE_QUEUE_SIZE, SILENCE_FRAME_DURATION_MS};
 
     /// Default queue size for tests (10 frames = 100ms at 10ms/frame).
     const TEST_QUEUE_SIZE: usize = 10;
@@ -1765,6 +1810,135 @@ mod tests {
         drain_to_end(&mut stream.as_mut()).await;
     }
 
+    /// Smoothing off, the way [`CadenceConfig::new`] builds it, with a
+    /// `burst_ms` connect burst out of `prefill`.
+    fn smoothing_off_config(prefill: Vec<TimestampedFrame>, burst_ms: u64) -> CadenceConfig {
+        CadenceConfig::new(
+            Bytes::from(vec![0u8; BIG_FRAME]),
+            0,
+            burst_ms,
+            SILENCE_FRAME_DURATION_MS,
+            test_audio_format(),
+            prefill,
+        )
+    }
+
+    /// With smoothing off a late frame means silence until it arrives, and
+    /// then it plays at once with no hold to refill a buffer. The frames that
+    /// queued up behind it are all kept, so the gap costs only the silence.
+    #[tokio::test(start_paused = true)]
+    async fn smoothing_off_plays_late_frames_without_a_hold() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let stats = test_guard();
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            Arc::clone(&stats),
+            smoothing_off_config(vec![], 0),
+            None,
+            None,
+        ));
+        prime(&mut stream.as_mut()).await;
+        tx.send(big_frame(1)).unwrap();
+        assert_eq!(tags(&[next_tick(&mut stream.as_mut()).await]), [1]);
+        assert!(
+            is_silence(&next_tick(&mut stream.as_mut()).await),
+            "frame 2 is late"
+        );
+        for tag in 2..=4 {
+            tx.send(big_frame(tag)).unwrap();
+        }
+        let played: Vec<Bytes> = vec![
+            next_tick(&mut stream.as_mut()).await,
+            next_tick(&mut stream.as_mut()).await,
+            next_tick(&mut stream.as_mut()).await,
+        ];
+        assert_eq!(tags(&played), [2, 3, 4], "no hold, nothing dropped");
+        let totals = stats.cadence_totals();
+        assert_eq!(totals.frames_dropped, 0);
+        assert_eq!(totals.rebuffer_events, 0);
+        assert_eq!(totals.silence_events, 1);
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
+    }
+
+    /// With smoothing off nothing is queued after the connect burst, so the
+    /// first tick waits a frame for the audio being captured instead of
+    /// playing silence straight after the burst.
+    #[tokio::test(start_paused = true)]
+    async fn smoothing_off_starts_ticking_a_frame_after_the_burst() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let stats = test_guard();
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            Arc::clone(&stats),
+            smoothing_off_config(tagged_prefill(5), 30),
+            None,
+            None,
+        ));
+        assert_eq!(tags(&ready_now(&mut stream.as_mut()).await), [3, 4, 5]);
+        tx.send(big_frame(6)).unwrap();
+        assert_eq!(tags(&[next_tick(&mut stream.as_mut()).await]), [6]);
+        assert_eq!(stats.cadence_totals().silence_events, 0);
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
+    }
+
+    /// With smoothing off there is no rebuffer hold, yet two gaps within a
+    /// minute still raise the late-audio notice, suggesting the least step
+    /// that would have covered them.
+    #[tokio::test(start_paused = true)]
+    async fn smoothing_off_reports_ingest_gaps() {
+        let (tx, rx) = broadcast::channel::<Bytes>(16);
+        let events = Arc::new(StreamEvents::default());
+        let guard = Arc::new(
+            ChainStats::new("test-stream", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .with_events(Arc::clone(&events) as Arc<dyn crate::events::EventEmitter>),
+        );
+        let state = Arc::new(StreamState::new(
+            "test-stream".to_string(),
+            crate::stream::AudioCodec::Pcm,
+            test_audio_format(),
+            8,
+            16,
+            0,
+            SILENCE_FRAME_DURATION_MS,
+        ));
+        let mut stream = Box::pin(create_wav_stream_with_cadence(
+            rx,
+            guard,
+            smoothing_off_config(vec![], 0),
+            Some(Arc::downgrade(&state)),
+            None,
+        ));
+        prime(&mut stream.as_mut()).await;
+        for tag in 1..=3u8 {
+            tx.send(big_frame(tag)).unwrap();
+            assert_eq!(tags(&[next_tick(&mut stream.as_mut()).await]), [tag]);
+            for _ in 0..3 {
+                assert!(is_silence(&next_tick(&mut stream.as_mut()).await));
+            }
+        }
+        let reported: Vec<_> = events.0.lock().drain(..).collect();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        match &reported[0] {
+            crate::events::StreamEvent::IngestGaps {
+                gaps_last_minute,
+                smoothing_ms,
+                worst_gap_ms,
+                suggested_smoothing_ms,
+                ..
+            } => {
+                assert_eq!(*gaps_last_minute, 2);
+                assert_eq!(*smoothing_ms, 0);
+                assert_eq!(*worst_gap_ms, 30);
+                assert_eq!(*suggested_smoothing_ms, Some(100));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        drop(tx);
+        drain_to_end(&mut stream.as_mut()).await;
+    }
+
     /// Startup starvation is not gated: with an empty prefill the first
     /// frame plays as soon as it arrives (the pre-subscribe delay in
     /// api/stream.rs handles startup buffering).
@@ -1913,11 +2087,53 @@ mod tests {
         assert_eq!(cfg.overflow_cap, 30);
     }
 
+    /// Smoothing off keeps no target depth but still a queue that carries a
+    /// speaker stall's backlog: 300 ms of frames, rounded up.
     #[test]
-    fn cadence_config_new_respects_min_overflow_cap() {
-        // jitter_buffer_ms = 0 → buffer_depth = 0 → overflow_cap clamped to MIN_OVERFLOW_CAP (1)
+    fn smoothing_off_keeps_the_least_overflow_cap() {
         let cfg = CadenceConfig::new(test_silence_frame(), 0, 0, 20, test_audio_format(), vec![]);
-        assert_eq!(cfg.overflow_cap, 1);
+        assert_eq!(cfg.buffer_depth, 0);
+        assert_eq!(cfg.overflow_cap, 15);
+        let cfg = CadenceConfig::new(test_silence_frame(), 0, 0, 40, test_audio_format(), vec![]);
+        assert_eq!(cfg.overflow_cap, 8, "300 / 40 rounded up");
+    }
+
+    /// Every smoothing from 100 ms up keeps the cap it had before smoothing
+    /// could be off: three times its depth, at every frame duration.
+    #[test]
+    fn the_least_overflow_cap_leaves_smoothing_from_100_ms_unchanged() {
+        for frame_ms in [5u32, 10, 15, 20, 30, 40, 128, 150] {
+            for smoothing in [100u64, 200, 300, 500, 1000] {
+                let cfg = CadenceConfig::new(
+                    test_silence_frame(),
+                    smoothing,
+                    0,
+                    frame_ms,
+                    test_audio_format(),
+                    vec![],
+                );
+                let depth = smoothing.div_ceil(u64::from(frame_ms)) as usize;
+                assert_eq!(cfg.overflow_cap, (depth * 3).min(MAX_CADENCE_QUEUE_SIZE));
+            }
+        }
+    }
+
+    /// With smoothing off and a connect burst, everything the ring holds goes
+    /// out as the burst and nothing is queued.
+    #[test]
+    fn smoothing_off_queues_no_prefill() {
+        let prefill = timestamped((1..=30).map(big_frame).collect(), 10);
+        let cfg = CadenceConfig::new(
+            test_silence_frame(),
+            0,
+            250,
+            10,
+            test_audio_format(),
+            prefill,
+        );
+        assert!(cfg.prefill_frames.is_empty());
+        assert_eq!(cfg.burst_frames.len(), 25);
+        assert_eq!(cfg.burst_frames[0][0], 6, "the newest 250 ms");
     }
 
     /// Prefill frames captured one frame duration apart, oldest first, the way

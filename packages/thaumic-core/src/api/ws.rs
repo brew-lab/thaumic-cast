@@ -235,7 +235,7 @@ struct EncoderConfig {
     channels: Option<u8>,
     /// Bit depth for audio encoding (16 or 24). Only 24-bit is supported for FLAC.
     bits_per_sample: Option<u16>,
-    /// Jitter buffer size in milliseconds (100-1000). Only affects PCM codec.
+    /// Jitter buffer size in milliseconds (0-1000, 0 is smoothing off). Only affects PCM codec.
     jitter_buffer_ms: Option<u64>,
     /// Frame size in samples per channel.
     /// Server derives exact duration: duration_ms = samples * 1000 / sample_rate
@@ -2616,12 +2616,13 @@ mod tests {
 
         // And the handshake applies them: the default when none is stated,
         // either end unchanged, anything past an end brought back to it.
+        // (The least is 0, smoothing off, so nothing can be stated below it.)
         let (min, max) = (MIN_JITTER_BUFFER_MS, MAX_JITTER_BUFFER_MS);
         assert_eq!(
             stream_config(&handshake_for("pcm")).jitter_buffer_ms,
             DEFAULT_JITTER_BUFFER_MS
         );
-        for (stated, used) in [(min, min), (max, max), (min - 1, min), (max + 1, max)] {
+        for (stated, used) in [(min, min), (max, max), (max + 1, max)] {
             assert_eq!(
                 stream_config(&handshake_with_smoothing(stated)).jitter_buffer_ms,
                 used

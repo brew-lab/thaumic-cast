@@ -2580,6 +2580,11 @@ mod tests {
             "burst off"
         );
         assert_eq!(pcm_prefill_delay(0, 0, None), Duration::ZERO);
+        // Smoothing off waits for the head start alone, and not at all once
+        // the ring holds it.
+        assert_eq!(pcm_prefill_delay(0, 250, None), ms(250));
+        assert_eq!(pcm_prefill_delay(0, 250, Some(ms(100))), ms(150));
+        assert_eq!(pcm_prefill_delay(0, 250, Some(ms(5000))), Duration::ZERO);
     }
 
     /// The wait is not capped: it follows the smoothing and the configured

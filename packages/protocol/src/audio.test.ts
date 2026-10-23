@@ -13,6 +13,7 @@ import {
   JITTER_BUFFER_MS_MIN,
   PCM_SMOOTHING_DEFAULT_MS,
   PCM_SMOOTHING_OPTIONS,
+  PcmSmoothingMsSchema,
   SUPPORTED_SAMPLE_RATES,
   clampSample,
   isSupportedSampleRate,
@@ -66,6 +67,15 @@ describe('cast limits', () => {
       expect(duration).toBeGreaterThanOrEqual(FRAME_DURATION_MS_MIN);
       expect(duration).toBeLessThanOrEqual(FRAME_DURATION_MS_MAX);
     }
+  });
+
+  it('should offer smoothing off as the first step and accept only the steps', () => {
+    expect(PCM_SMOOTHING_OPTIONS[0]).toBe(0);
+    for (const step of PCM_SMOOTHING_OPTIONS) {
+      expect(PcmSmoothingMsSchema.safeParse(step).success).toBe(true);
+    }
+    expect(PcmSmoothingMsSchema.safeParse(50).success).toBe(false);
+    expect(PcmSmoothingMsSchema.safeParse(1000).success).toBe(false);
   });
 });
 

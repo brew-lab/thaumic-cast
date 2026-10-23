@@ -642,6 +642,12 @@ describe('snapToSmoothingOption', () => {
     expect(snapToSmoothingOption(400)).toBe(500);
     expect(snapToSmoothingOption(2000)).toBe(500);
   });
+
+  it('should never snap to off, which version 1 did not have', () => {
+    expect(snapToSmoothingOption(0)).toBe(100);
+    expect(snapToSmoothingOption(-5)).toBe(100);
+    expect(snapToSmoothingOption(40)).toBe(100);
+  });
 });
 
 describe('loadExtensionSettings audio migration', () => {
@@ -669,6 +675,16 @@ describe('loadExtensionSettings audio migration', () => {
 
     expect(saved.pcmSmoothingMs).toBe(100);
     expect((await loadExtensionSettings()).pcmSmoothingMs).toBe(100);
+  });
+
+  it('should store and load smoothing off', async () => {
+    storeSettings({ audioMode: 'high' });
+    await loadExtensionSettings();
+
+    const saved = await saveExtensionSettings({ pcmSmoothingMs: 0 });
+
+    expect(saved.pcmSmoothingMs).toBe(0);
+    expect((await loadExtensionSettings()).pcmSmoothingMs).toBe(0);
   });
 
   it('should keep a dismissed notice dismissed', async () => {

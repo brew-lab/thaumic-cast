@@ -169,9 +169,11 @@ export function tpdfDither(): number {
 
 /**
  * Jitter buffer size constraints and default (in milliseconds).
- * Used for PCM streaming to balance latency vs. reliability.
+ * Used for PCM streaming to balance latency vs. reliability. The least, 0,
+ * turns smoothing off: the companion plays each frame as soon as it arrives
+ * and plays silence while one is late.
  */
-export const JITTER_BUFFER_MS_MIN = 100;
+export const JITTER_BUFFER_MS_MIN = 0;
 export const JITTER_BUFFER_MS_MAX = 1000;
 export const JITTER_BUFFER_MS_DEFAULT = 200;
 
@@ -183,10 +185,11 @@ export const JITTER_BUFFER_MS_DEFAULT = 200;
 export const PCM_SMOOTHING_DEFAULT_MS = 200;
 
 /**
- * Smoothing steps the extension offers, in milliseconds. The wire accepts any
- * value from {@link JITTER_BUFFER_MS_MIN} to {@link JITTER_BUFFER_MS_MAX}.
+ * Smoothing steps the extension offers, in milliseconds; 0 is off. The wire
+ * accepts any value from {@link JITTER_BUFFER_MS_MIN} to
+ * {@link JITTER_BUFFER_MS_MAX}.
  */
-export const PCM_SMOOTHING_OPTIONS = [100, 200, 300, 500] as const;
+export const PCM_SMOOTHING_OPTIONS = [0, 100, 200, 300, 500] as const;
 
 /** A smoothing step the extension offers, in milliseconds. */
 export type PcmSmoothingMs = (typeof PCM_SMOOTHING_OPTIONS)[number];
@@ -195,6 +198,7 @@ export type PcmSmoothingMs = (typeof PCM_SMOOTHING_OPTIONS)[number];
  * Zod schema for a smoothing step the extension offers.
  */
 export const PcmSmoothingMsSchema = z.union([
+  z.literal(0),
   z.literal(100),
   z.literal(200),
   z.literal(300),

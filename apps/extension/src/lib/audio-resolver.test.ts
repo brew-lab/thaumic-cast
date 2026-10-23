@@ -196,6 +196,17 @@ describe('resolveAudio under browser-wide capture', () => {
     }
   });
 
+  it('should send smoothing off as 0 for a PCM cast, tab or browser-wide', () => {
+    for (const captureMode of ['tab', 'browser'] as const) {
+      const settings = stored({ audioMode: 'high', pcmSmoothingMs: 0, captureMode });
+
+      const { config } = resolveAudio(settings, SUPPORT.pcm);
+
+      expect(config).toMatchObject({ codec: 'pcm', jitterBufferMs: 0 });
+      expect(EncoderConfigSchema.safeParse(config).success).toBe(true);
+    }
+  });
+
   it('should keep the Quality choice as what a tab cast would send', () => {
     for (const support of Object.values(SUPPORT)) {
       for (const audioMode of MODES) {

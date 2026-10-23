@@ -653,7 +653,10 @@ export function AudioSection({
                     value={settings.pcmSmoothingMs}
                     options={PCM_SMOOTHING_OPTIONS.map((ms) => ({
                       value: ms,
-                      label: optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS),
+                      label:
+                        ms === 0
+                          ? t('audio_smoothing_off')
+                          : optionLabel(ms, PCM_SMOOTHING_DEFAULT_MS),
                     }))}
                     onChange={(ms) => handleSmoothingChange(ms as PcmSmoothingMs)}
                     aria-describedby={describedBy}

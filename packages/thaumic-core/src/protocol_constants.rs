@@ -149,9 +149,11 @@ pub const MIN_FRAME_DURATION_MS: u32 = 5;
 /// 150ms provides margin for all cases.
 pub const MAX_FRAME_DURATION_MS: u32 = 150;
 
-/// Frame size constraints (samples per channel).
-/// Minimum jitter buffer size (ms).
-pub const MIN_JITTER_BUFFER_MS: u64 = 100;
+/// Minimum jitter buffer size (ms). `0` is smoothing off: the cadence keeps
+/// no target depth, plays each frame on the first tick after it arrives,
+/// and plays silence when one is late (see
+/// [`crate::stream::CadenceConfig::buffer_depth`]).
+pub const MIN_JITTER_BUFFER_MS: u64 = 0;
 
 /// Maximum jitter buffer size (ms).
 pub const MAX_JITTER_BUFFER_MS: u64 = 1000;
@@ -165,14 +167,19 @@ pub const DEFAULT_JITTER_BUFFER_MS: u64 = 200;
 /// input (slow HTTP consumer with fast WebSocket producer).
 pub const JITTER_OVERFLOW_MULTIPLIER: usize = 3;
 
-/// Minimum overflow cap (frames). Ensures at least one frame can be queued
-/// even when the configured jitter buffer is 0 (pass-through mode).
-pub const MIN_OVERFLOW_CAP: usize = 1;
+/// Least audio the cadence queue holds before it drops the oldest frame, in
+/// ms, whatever the smoothing. The queue also carries the backlog a speaker
+/// connection builds while it stalls, which the missed ticks replay; with a
+/// cap of one frame, smoothing 0 would drop every frame that arrived next to
+/// another and replay a stall as silence. Three times the 100 ms that was
+/// once the least smoothing, so every smoothing from 100 ms up keeps the cap
+/// it had.
+pub const MIN_OVERFLOW_CAP_MS: u64 = 300;
 
 /// The smoothing (jitter buffer) steps the extension offers for PCM, in ms.
 /// The ingest-gap notice only ever suggests one of these; the wire still
 /// accepts anything from [`MIN_JITTER_BUFFER_MS`] to [`MAX_JITTER_BUFFER_MS`].
-pub const PCM_SMOOTHING_OPTIONS_MS: [u32; 4] = [100, 200, 300, 500];
+pub const PCM_SMOOTHING_OPTIONS_MS: [u32; 5] = [0, 100, 200, 300, 500];
 
 /// Maximum cadence queue size (frames).
 /// Upper bound on the overflow cap. Calculated using `MIN_FRAME_DURATION_MS`
