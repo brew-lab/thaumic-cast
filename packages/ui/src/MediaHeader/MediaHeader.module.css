@@ -27,6 +27,19 @@
     flex-direction: column;
     gap: var(--space-2);
     min-inline-size: 0;
+    border-color: var(--media-rim);
+
+    /*
+     * A new band (another track's artwork) cross-fades over --dur-change rather than jumping:
+     * the band and its rim here, the inks on the title, the subtitle, the chevron and the
+     * transport, and the fills on the play button and Stop by their own fades. Each painted
+     * colour fades on its own element, so none chases an ancestor's fade; a skip mid-fade
+     * turns from the colour shown. The band fades in and out with the artwork the same way.
+     * Opening or shutting the tile stays instant (CastTile's data-instant; §11 calls 83, 99).
+     */
+    transition:
+      background-color var(--dur-change) var(--ease-effects),
+      border-color var(--dur-change) var(--ease-effects);
   }
 
   .lg {
@@ -69,6 +82,7 @@
     letter-spacing: var(--tracking-3);
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition: color var(--dur-change) var(--ease-effects);
   }
 
   .title:focus-visible {
@@ -91,6 +105,7 @@
     color: var(--media-sub);
     font-size: var(--media-sub-size);
     line-height: var(--media-sub-leading);
+    transition: color var(--dur-change) var(--ease-effects);
   }
 
   .subtitle-text {
@@ -131,6 +146,7 @@
     display: inline-grid;
     place-items: center;
     color: var(--media-sub);
+    transition: color var(--dur-change) var(--ease-effects);
   }
 
   /* The Disclosure's chevron and turn: down while shut, up while open. */
@@ -186,9 +202,16 @@
     gap: var(--space-2);
   }
 
+  /* IconButton's fades, and its ink's too, so the transport's ink fades with the band. */
   .transport > button,
   .play > button {
     --ib-fg: var(--media-title);
+
+    transition:
+      color var(--dur-change) var(--ease-effects),
+      background-color var(--dur-effects) var(--ease-effects),
+      border-radius var(--dur-shape) var(--ease-effects),
+      corner-shape var(--dur-shape) var(--ease-effects);
   }
 
   .play > button {

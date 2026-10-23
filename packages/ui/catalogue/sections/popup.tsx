@@ -1477,10 +1477,36 @@ function Tile({
   return <CastTile {...props} />;
 }
 
+/** The tracks the skip specimen steps through: its artwork's seed, or none (no band). */
+const SKIPS = [
+  { title: 'Skip title', seed: SEEDS.pastel },
+  { title: 'Skip title', seed: SEEDS.neon },
+  { title: 'Skip title', seed: SEEDS.red },
+  { title: 'Skip title', seed: undefined },
+] as const;
+
+/**
+ * An open tile whose track changes on "Change track": the band cross-fades to the new
+ * artwork's colour, and fades out and back in for a track with no artwork (§11 call 99).
+ * @returns The specimen
+ */
+function TrackSkip(): JSX.Element {
+  const [at, setAt] = useState(0);
+  const track = SKIPS[at % SKIPS.length];
+  return (
+    <div class="stack" data-specimen="track-skip" data-track={at % SKIPS.length}>
+      <Tile title={track.title} seed={track.seed} rooms={['Kitchen']} open />
+      <Button kind="outline" size="sm" onClick={() => setAt(at + 1)}>
+        Change track
+      </Button>
+    </div>
+  );
+}
+
 /**
  * CastTile: a single cast open with no chevron; several rooms open with video sync and a
  * tile note; compact tiles with and without a slot line; one room on a red band; a cast with no
- * artwork, open and compact.
+ * artwork, open and compact; a track skip that changes the band.
  * @returns The specimen
  */
 export function CastTileSpecimen(): JSX.Element {
@@ -1526,6 +1552,10 @@ export function CastTileSpecimen(): JSX.Element {
           <Tile title="Tone title" rooms={['Kitchen', 'Office']} open />
           <Tile title="Hum title" rooms={['Study']} />
         </div>
+      </div>
+      <div class="popup-specimen popup-ground">
+        <p class="label">a new track: the band fades to its colour, and out with no artwork</p>
+        <TrackSkip />
       </div>
     </div>
   );
