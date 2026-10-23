@@ -7,8 +7,11 @@
 // every value on the end edge, Bespoke with Advanced open (rules inside, controls and the
 // readout's values on the card's end edge, every row's help on one edge, the wide row's too),
 // nothing moving when a setting saves, the Toast's bar sticky with the focused control never
-// under it, a Notice in a section keeping its own padding, and #about landing on About. Run
+// under it, a Notice in a section keeping its own padding, About's Check for updates (the
+// releases page unpacked, each answer of a stand-in store), and #about landing on About. Run
 // from check.mjs; the run's scale and scheme come from it.
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import * as lib from './lib.mjs';
 
 /** The sections, in the drawing's order (Language is hidden while there is one language). */
@@ -189,6 +192,167 @@ async function clickSwitch(o, name) {
     { name },
   );
   await o.clickAt(at);
+}
+
+/** Where Check for updates sends an unpacked copy (GITHUB_RELEASES_URL in @thaumic-cast/shared). */
+const RELEASES = 'https://github.com/brew-lab/thaumic-cast/releases';
+
+/**
+ * Reads About's Updates row: its name, help, note, Button and where the Button ends against
+ * the card's end edge.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @returns {Promise<object|null>} The row's facts, or null when it is missing
+ */
+const updatesRow = (o) =>
+  o.eval(`
+    const about = document.getElementById('about');
+    const row = [...about.querySelectorAll('[data-setrow]')]
+      .find((r) => r.querySelector('p')?.innerText.trim() === 'Updates');
+    if (!row) return null;
+    const b = row.querySelector('button');
+    const ps = [...row.querySelectorAll(':scope > p')].map((p) => p.innerText.trim());
+    const cs = getComputedStyle(about);
+    const edge = about.getBoundingClientRect().right - parseFloat(cs.paddingInlineEnd)
+      - parseFloat(cs.borderInlineEndWidth);
+    return {
+      button: b.innerText.trim(), disabled: b.disabled, help: ps[0], note: ps[1] ?? null,
+      described: (b.getAttribute('aria-describedby') || '').split(' ').filter(Boolean).length,
+      endGap: Math.round((edge - b.getBoundingClientRect().right) * 10) / 10,
+      rule: parseFloat(getComputedStyle(row).borderBlockStartWidth),
+    };`);
+
+/**
+ * Saves About alone, in each scheme, for the review sheet.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @param {string} name - The state's name
+ * @param {boolean} dark - The run's scheme, put back afterwards
+ */
+async function aboutShots(o, name, dark) {
+  for (const scheme of [false, true]) {
+    await o.scheme(scheme);
+    await lib.sleep(300);
+    const r = await o.eval(`
+      const a = document.getElementById('about');
+      a.scrollIntoView({ block: 'center', behavior: 'instant' });
+      const r = a.getBoundingClientRect();
+      return { x: r.x + scrollX - 8, y: r.y + scrollY - 8, w: r.width + 16, h: r.height + 16 };`);
+    const shot = await o.cdp.send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      clip: { x: r.x, y: r.y, width: r.w, height: r.h, scale: 1 },
+    });
+    writeFileSync(
+      join(lib.SHOTS, `updates-${name}-${scheme ? 'dark' : 'light'}.png`),
+      Buffer.from(shot.data, 'base64'),
+    );
+  }
+  await o.scheme(dark);
+}
+
+/**
+ * About's Check for updates. The rig loads the extension unpacked, so the row opens the
+ * releases page. A store install is then stood in for: before the page loads, the manifest
+ * gains an update_url and requestUpdateCheck answers from a list (nothing newer, throttled,
+ * then 9.9.9), and the row must say each. Restart is never pressed: it would reload the
+ * extension under the rest of the run.
+ * @param {object} env - What lib.launch() returned
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @param {object} t - The check's helpers
+ * @param {(name: string, ok: boolean, detail?: unknown) => void} t.check - Records a check
+ * @param {boolean} t.dark - The run's scheme
+ */
+async function updatesPass(env, o, { check, dark }) {
+  const settle = async () => {
+    for (let i = 0; i < 30; i++) {
+      if ((await o.eval(`return document.querySelectorAll('main > section').length`)) >= 6) break;
+      await lib.sleep(200);
+    }
+  };
+  const manual = await updatesRow(o);
+  check(
+    'options: an unpacked copy offers Check for updates, opening the releases page',
+    manual?.button === 'Check for updates' &&
+      manual.help === 'Opens the releases page. A copy loaded by hand never updates itself.' &&
+      manual.note === null &&
+      manual.described === 1 &&
+      manual.rule > 0 &&
+      Math.abs(manual.endGap) < 1,
+    manual,
+  );
+  await aboutShots(o, 'manual', dark);
+  const before = new Set(env.ctx.pages());
+  await o.click('#about button', 'Check for updates');
+  let opened;
+  for (let i = 0; i < 25 && !opened; i++) {
+    opened = env.ctx.pages().find((p) => !before.has(p));
+    if (!opened) await lib.sleep(200);
+  }
+  // The tab opens on the releases URL; offline it stays there on an error page.
+  for (let i = 0; i < 25 && opened && !opened.url().startsWith(RELEASES); i++) await lib.sleep(200);
+  check(
+    'options: Check for updates opens the releases page in a new tab',
+    Boolean(opened?.url().startsWith(RELEASES)),
+    opened?.url(),
+  );
+  await opened?.close();
+  const page = env.ctx.pages().find((x) => x.url().includes('/src/options/'));
+  await page?.bringToFront();
+
+  // ── Stand in for a store install ──
+  const { identifier } = await o.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `
+      const manifest = chrome.runtime.getManifest();
+      const answers = [
+        { status: 'no_update' },
+        { status: 'throttled' },
+        { status: 'update_available', version: '9.9.9' },
+      ];
+      chrome.runtime.getManifest = () => ({
+        ...manifest,
+        update_url: 'https://clients2.google.com/service/update2/crx',
+      });
+      chrome.runtime.requestUpdateCheck = async () => answers.shift() ?? { status: 'no_update' };`,
+  });
+  await o.cdp.send('Page.reload');
+  await lib.sleep(800);
+  await settle();
+  const store = await updatesRow(o);
+  check(
+    'options: a store install offers Check for updates, asking the store',
+    store?.button === 'Check for updates' &&
+      store.help === 'Your browser updates the extension in its own good time. This asks now.' &&
+      store.note === null,
+    store,
+  );
+  for (const want of ['This is the latest version.', 'Checked a moment ago. Try again later.']) {
+    await o.click('#about button', 'Check for updates');
+    await lib.sleep(1400);
+    const row = await updatesRow(o);
+    check(`options: a store check says "${want}"`, row?.note === want, row);
+  }
+  await o.click('#about button', 'Check for updates');
+  await lib.sleep(1400);
+  const ready = await updatesRow(o);
+  const casting = await o.eval(
+    `return (await chrome.runtime.sendMessage({ type: 'GET_ACTIVE_CASTS' }))?.casts?.length ?? 0`,
+  );
+  check(
+    'options: a version found offers Restart the extension, held while a cast runs',
+    ready?.button === 'Restart the extension' &&
+      ready.described === 2 &&
+      (casting
+        ? ready.disabled &&
+          ready.note ===
+            'A newer version is ready, and can wait until the casts end: restarting would stop them.'
+        : !ready.disabled && ready.note === 'Version 9.9.9 is ready.') &&
+      Math.abs(ready.endGap) < 1,
+    { ready, casting },
+  );
+  await aboutShots(o, 'store-ready', dark);
+  await o.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  await o.cdp.send('Page.reload');
+  await lib.sleep(800);
+  await settle();
 }
 
 /**
@@ -521,6 +685,10 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
   } else {
     check('options: a saved set to remove for the Toast', false, 'no saved set');
   }
+
+  // ── About's Check for updates ──────────────────────────────────────────
+  await resize(o, 600, scale);
+  await updatesPass(env, o, { check, dark });
 
   // ── The popup's marked Settings opens About ────────────────────────────
   await resize(o, 600, scale, 640);

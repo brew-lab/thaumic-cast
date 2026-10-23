@@ -356,6 +356,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
   - Add a room: quiet, with `plus` and `expanded`.
   - Sets: quiet, `pressed`, `align="start"`.
   - Update available (About, in the options page): link, with `external`.
+  - Check for updates (About, in the options page): tonal, in an action row; with `external` when it opens the releases page, "Restart the extension" with `refresh` once a version is ready (§11 call 99).
 - **States:** rest, hover, focus-visible, active, pressed (on), disabled, busy, done, failed (danger-container, "Try again").
   - **Changing state:** the Button fits what it shows now (idle, busy, done or failed: a glyph and words). On a change it measures itself as it is on screen, renders the new state, measures again and eases `inline-size` and `padding-inline-start` from the old values to the new over `--dur-change` with `--ease-effects` (WAAPI); a change that interrupts another starts from the live width. Nothing is configured: the layout decides which side grows. A free end grows at the end, an end-aligned Button (a SettingsRow, the end of a row) grows towards the start, and a full-width Button never changes width. Neighbours ease with it, because it is layout, not a transform.
     - **The words take turns and never overlap (d = `--dur-change`).** The words it leaves fade out with a `--space-1` rise over 0 to 0.4d, held where they were from the edge that stays, out of the flow and the accessibility tree, and clipped to the box. The words it goes to fade in from `--space-1` below over 0.5d to d, centred and clipped. By 0.5d the box has covered about 84 % of the change, so only a few faint pixels are cut and nothing arrives tail first. Words that do not change do not move; only the glyph in the start slot fades, old out and then new in, on the same clock.
@@ -1202,6 +1203,12 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **The rule.** From 25rem every row's help sits in the label track, a wide row's too; from 45rem in the help track; under 25rem under the name across the row. A wide control still shares the name's line at the end when both fit, reaching left past the control track's start on that line only (so it never widens the track and squeezes every label); when it wraps under the name it stays on the end edge. It never runs over the help.
     - **Set aside.** Putting the wide control in the shared control track would line up its start too, but the track would grow to the widest control (263 px, over 16rem, for "Let delay grow (up to a limit)"), squeezing every name and help in the section; F-grid already declines that for narrow cards. Stacking every wide control under its help adds a line to each wide row for no gain once the help's measure is fixed.
 
+99. **Check for updates in the extension's About** (owner, 2026-10-23: "also lets add the 'Check for updates' to extension settings page"). One SettingsRow, "Updates", under About's readout, `controlWidth="action"`, as the desktop's About has its Check for updates under its readout. Checked by unit tests and the real-extension rig's options pass, which loads the extension unpacked and then stands in for a store install.
+    - **The Button suits how the copy updates.** A store install (the Chrome Web Store, Edge Add-ons, any Chromium store) has an `update_url` in its installed manifest and is updated by the browser; the release zip, loaded unpacked, has none and never updates itself. The manifest is read, not `chrome.management.getSelf()`'s `installType`, which says the same through another namespace.
+    - **Store install:** the help is "Your browser updates the extension in its own good time. This asks now." The Button runs `chrome.runtime.requestUpdateCheck()`, busy "Checking…", failed "Try again". Its answer is the row's note, said through the Announcer: "This is the latest version.", "Checked a moment ago. Try again later." (throttled) or "Version {{version}} is ready." A version that is ready turns the Button into "Restart the extension" (`chrome.runtime.reload()`), which applies it; the browser would otherwise apply it on its next restart.
+    - **A restart ends every cast**, since it reloads the background and the offscreen document. So while a cast from this browser runs the restart Button is disabled and the note says "A newer version is ready, and can wait until the casts end: restarting would stop them." It is enabled again when the casts end. Set aside: a confirm Dialog (a second step for an action that is rarely taken), and restarting regardless (a click in Settings would silently stop the music).
+    - **Unpacked:** the Button opens the releases page in a new tab, with `external`; the help is "Opens the releases page. A copy loaded by hand never updates itself." It does not ask GitHub for the latest version: that is a network call and a rate limit for a line the releases page already gives.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1342,6 +1349,10 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Help measure (2026-10-22)**
 
 - **Every row's help keeps to the label track, a wide control's row too** ("the 'When the connection falls behind' helper text does not seem to follow the same grid as others"); a wide control that wraps under its name stays on the end edge (§11 call 98).
+
+**Check for updates (2026-10-23)**
+
+- **The extension's About gets Check for updates** ("also lets add the 'Check for updates' to extension settings page"): a store install asks the store and offers Restart the extension, held while a cast runs; an unpacked copy opens the releases page (§11 call 99).
 
 **Standing**
 

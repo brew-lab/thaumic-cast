@@ -45,8 +45,10 @@ first in Finer points, the readouts (Audio's and About's) ruled with every value
 edge, Bespoke with Advanced open (its rows on one control column, the readout's values on the
 Selects' edge), "Enter the address" with nothing saved (the warning Notice keeps its own padding,
 its glyph inside it, the section's gap round it), nothing moving when a setting saves, the Toast's
-bar (0 tall without a Toast, sticky with one, never over focus)
-and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
+bar (0 tall without a Toast, sticky with one, never over focus),
+About's Check for updates (unpacked, it opens the releases page; a stand-in store install, its
+manifest given an `update_url` and `requestUpdateCheck` answering from a list, says each answer
+and offers Restart, never pressed) and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
 to open over. After the runs, the lifecycle pass (`lifecycle.mjs`, once, with its own companion):
 a page controlled by a service worker with an enforced Connection-Allowlist, as YouTube Music
 sends, must still get the content scripts with nothing blocked or logged; a cast's companion
