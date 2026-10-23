@@ -228,6 +228,14 @@ async fn ipc(State(sys): Sys, Path(command): Path<String>, body: Bytes) -> IpcRe
             sys.app_state.config.write().drift_compensation = mode;
             drift(&sys)
         }
+        "get_speaker_setting_defaults" => {
+            let core = crate::Config::default();
+            json!({
+                "speakerMonitor": core.speaker_monitor,
+                "pcmConnectBurstMs": core.pcm_connect_burst_ms,
+                "driftCompensation": core.drift_compensation,
+            })
+        }
         // Stub: the real probe asks port 1400, where no fake speaker listens;
         // a fake speaker's address answers with its room, anything else is
         // unreachable.

@@ -13,6 +13,7 @@ import {
   setHeadStart,
   getDriftCompensation,
   setDriftCompensation,
+  getSpeakerSettingDefaults,
   type DriftCompensationSetting,
   type HeadStartSetting,
   type SpeakerMonitorSetting,
@@ -28,6 +29,7 @@ import {
   Button,
   Cluster,
   DescriptionList,
+  Dialog,
   PageHeader,
   SegmentedControl,
   Select,
@@ -42,6 +44,12 @@ import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { hasLanguageChoice } from '../lib/language-choice';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
 import { addManualSpeaker, getSpeakerErrorMessage } from '../lib/manual-speaker';
+import {
+  isAtDefaults,
+  resetSettings,
+  type ResettableSettings,
+  type SpeakerSettingDefaults,
+} from '../lib/settings-reset';
 
 const log = createLogger('Settings');
 
@@ -59,6 +67,8 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  * - Theme (auto/light/dark)
  * - Speaker monitoring, the speaker head start, clock drift correction, Show
  *   diagnostics and speakers added by IP address
+ * - Reset all settings, which asks first in a Dialog, as Disconnect does, and puts
+ *   every setting above back to its default except the speakers added by IP address
  * @returns The rendered Settings page
  */
 export function Settings() {
@@ -71,6 +81,8 @@ export function Settings() {
     i18n.language as SupportedLocale,
   );
   const [currentTheme, setCurrentTheme] = useState<ThemeMode>(getTheme);
+  const [defaults, setDefaults] = useState<SpeakerSettingDefaults | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   // Manual speaker state
   const [manualIps, setManualIps] = useState<string[]>([]);
@@ -112,6 +124,10 @@ export function Settings() {
     getDriftCompensation()
       .then(setDriftState)
       .catch((error) => log.error('Failed to read the drift correction setting:', error));
+
+    getSpeakerSettingDefaults()
+      .then(setDefaults)
+      .catch((error) => log.error('Failed to read the speaker settings defaults:', error));
 
     getVersion()
       .then(setAppVersion)
@@ -195,6 +211,59 @@ export function Settings() {
     applyTheme(theme);
     saveTheme(theme);
     setCurrentTheme(theme);
+  };
+
+  // What a reset puts back, once every value has loaded (C-section's Reset).
+  const resettable: ResettableSettings | null =
+    autostart !== null && speakerMonitor && headStart && drift
+      ? {
+          autostart,
+          theme: currentTheme,
+          diagnostics: showDiagnostics.value,
+          speakerMonitor,
+          headStart,
+          drift,
+        }
+      : null;
+  const canReset = resettable !== null && defaults !== null && !isAtDefaults(resettable, defaults);
+
+  const handleReset = async (): Promise<void> => {
+    if (!resettable || !defaults) return;
+    try {
+      const next = await resetSettings(resettable, defaults, {
+        setAutostart: setAutostartEnabled,
+        setTheme: (theme) => {
+          applyTheme(theme);
+          saveTheme(theme);
+        },
+        setDiagnostics: setShowDiagnostics,
+        setSpeakerMonitor,
+        setHeadStart,
+        setDrift: setDriftCompensation,
+      });
+      setAutostart(next.autostart);
+      setCurrentTheme(next.theme);
+      setSpeakerMonitorState(next.speakerMonitor);
+      setHeadStartState(next.headStart);
+      setDriftState(next.drift);
+    } catch (error) {
+      log.error('Failed to reset the settings:', error);
+      // Re-read so every control shows what was saved; the Dialog shows Try again.
+      setCurrentTheme(getTheme());
+      getAutostartEnabled()
+        .then(setAutostart)
+        .catch(() => {});
+      getSpeakerMonitor()
+        .then(setSpeakerMonitorState)
+        .catch(() => {});
+      getHeadStart()
+        .then(setHeadStartState)
+        .catch(() => {});
+      getDriftCompensation()
+        .then(setDriftState)
+        .catch(() => {});
+      throw error;
+    }
   };
 
   const availableLanguages = Object.keys(resources) as SupportedLocale[];
@@ -343,6 +412,24 @@ export function Settings() {
         />
       </SettingsSection>
 
+      <SettingsSection id="reset" title={t('settings.reset')}>
+        <SettingsRow
+          label={t('settings.reset_all')}
+          help={t('settings.reset_all_description')}
+          controlWidth="action"
+          control={
+            <Button
+              kind="outline"
+              disabled={!canReset}
+              onClick={() => setConfirmReset(true)}
+              aria-label={t('settings.reset_all')}
+            >
+              {t('settings.reset')}
+            </Button>
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection id="about" title={t('settings.about')}>
         <DescriptionList
           kind="readout"
@@ -372,6 +459,20 @@ export function Settings() {
         </Cluster>
         <p id="settings-updates-hint">{t('settings.check_for_updates_description')}</p>
       </SettingsSection>
+
+      <Dialog
+        open={confirmReset}
+        title={t('settings.reset_all')}
+        description={t('settings.reset_all_description')}
+        cancelLabel={t('cancel')}
+        closeLabel={t('close')}
+        confirm={{
+          label: t('settings.reset'),
+          failed: t('try_again'),
+          onAction: handleReset,
+        }}
+        onClose={() => setConfirmReset(false)}
+      />
     </>
   );
 }

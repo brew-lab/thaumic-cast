@@ -492,6 +492,15 @@ pub fn set_drift_compensation(
     Ok(get_drift_compensation(state))
 }
 
+/// Returns the speaker settings' defaults (speaker monitoring, the head start
+/// and drift correction), as a reset in the settings view puts them back.
+/// Settings' "Reset all settings" saves each through its own command, so it
+/// applies exactly as a change by hand does.
+#[tauri::command]
+pub fn get_speaker_setting_defaults() -> DesktopSettings {
+    DesktopSettings::default()
+}
+
 /// Tells every client the speaker-side audio settings new connections now
 /// get, so what they show about them never goes stale.
 fn broadcast_companion_audio(state: &AppState) {
