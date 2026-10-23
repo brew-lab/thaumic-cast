@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useLocation } from 'wouter-preact';
 import {
   getAutostartEnabled,
   setAutostartEnabled,
@@ -50,6 +51,7 @@ import {
   type ResettableSettings,
   type SpeakerSettingDefaults,
 } from '../lib/settings-reset';
+import { restartOnboarding } from '../lib/onboarding';
 
 const log = createLogger('Settings');
 
@@ -69,10 +71,12 @@ const LANGUAGE_NAMES: Record<SupportedLocale, string> = {
  *   diagnostics and speakers added by IP address
  * - Reset all settings, which asks first in a Dialog, as Disconnect does, and puts
  *   every setting above back to its default except the speakers added by IP address
+ * - About: the versions, Check for updates and Show again for the onboarding
  * @returns The rendered Settings page
  */
 export function Settings() {
   const { t } = useTranslation();
+  const [, navigate] = useLocation();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [speakerMonitor, setSpeakerMonitorState] = useState<SpeakerMonitorSetting | null>(null);
   const [headStart, setHeadStartState] = useState<HeadStartSetting | null>(null);
@@ -137,6 +141,12 @@ export function Settings() {
   const handleCheckForUpdates = useCallback(() => {
     open(GITHUB_RELEASES_URL);
   }, []);
+
+  // The onboarding replaces the window at once; it ends on Rooms, as on a first run.
+  const handleShowIntroduction = useCallback(() => {
+    navigate('/');
+    restartOnboarding();
+  }, [navigate]);
 
   const handleRemoveSpeaker = useCallback(async (ip: string) => {
     setRemovingIp(ip);
@@ -458,6 +468,16 @@ export function Settings() {
           </Button>
         </Cluster>
         <p id="settings-updates-hint">{t('settings.check_for_updates_description')}</p>
+        <SettingsRow
+          label={t('settings.introduction')}
+          help={t('settings.introduction_description')}
+          controlWidth="action"
+          control={(a11y) => (
+            <Button onClick={handleShowIntroduction} aria-describedby={a11y['aria-describedby']}>
+              {t('settings.introduction_show')}
+            </Button>
+          )}
+        />
       </SettingsSection>
 
       <Dialog

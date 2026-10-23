@@ -797,7 +797,8 @@ export const ExtensionOnboardingSchema = z.object({
 });
 export type ExtensionOnboarding = z.infer<typeof ExtensionOnboardingSchema>;
 
-const ONBOARDING_STORAGE_KEY = 'extensionOnboarding';
+/** The chrome.storage.local key that holds the onboarding state. */
+export const ONBOARDING_STORAGE_KEY = 'extensionOnboarding';
 
 const DEFAULT_ONBOARDING: ExtensionOnboarding = {
   completed: false,
@@ -882,5 +883,21 @@ export async function skipOnboarding(): Promise<void> {
     completed: true,
     skipped: true,
     completedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Puts onboarding back to its first-run state, so the popup opens on its first step. Unlike
+ * the other writers it lets a failed write throw: the caller is about to open the popup.
+ * Settings, the address and saved sets are other keys and are left alone.
+ * @returns Resolves once the state is written
+ */
+export async function restartOnboarding(): Promise<void> {
+  await ensureMigrationComplete();
+  await chrome.storage.local.set({
+    [ONBOARDING_STORAGE_KEY]: {
+      ...DEFAULT_ONBOARDING,
+      stepsCompleted: { ...DEFAULT_ONBOARDING.stepsCompleted },
+    },
   });
 }

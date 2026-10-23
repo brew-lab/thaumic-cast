@@ -100,6 +100,9 @@
   "settings.about_protocol": "Protocol · Version {{version}}",
   "settings.check_for_updates": "Check for updates",
   "settings.check_for_updates_description": "Opens the releases page in your browser.",
+  "settings.introduction": "Introduction",
+  "settings.introduction_description": "Goes through the first-run steps again, from the start.",
+  "settings.introduction_show": "Show again",
 
   "dashboard.speaker_notice_head_start_ran_out": "{{name}} cut out: the Wi-Fi stalled for {{stall}} ms, and a {{current}} ms head start lasts {{current}} ms. Set it to {{suggested}} ms.",
   "dashboard.speaker_notice_head_start_ran_out_drained": "{{name}} cut out: the Wi-Fi stalled for {{stall}} ms, and what was left of its {{current}} ms head start did not stretch to it. Set it to {{suggested}} ms.",

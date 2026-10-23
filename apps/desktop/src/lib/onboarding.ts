@@ -132,8 +132,11 @@ export function skipOnboarding(): void {
 }
 
 /**
- * Resets onboarding state (useful for testing).
+ * Starts the onboarding again from its first step (Settings › About › Show again). The state
+ * goes back to a first run's, so the app shows the onboarding at once, and leaving it part-way
+ * (closing the app) brings it back next time, as on a first run. Settings are stored elsewhere
+ * and are left alone.
  */
-export function resetOnboarding(): void {
-  localStorage.removeItem(STORAGE_KEY);
+export function restartOnboarding(): void {
+  saveOnboardingState({ ...DEFAULT_STATE, stepsCompleted: { ...DEFAULT_STEPS } });
 }

@@ -358,6 +358,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
   - Update available (About, in the options page): link, with `external`.
   - Download the companion (About's Companion value while nothing is connected): link, with `external`, under the words (§11 call 104).
   - Check for updates (About, in the options page): tonal, in an action row; with `external` when it opens the releases page, "Restart the extension" with `refresh` once a version is ready (§11 call 99).
+  - Show again (About, in both apps): tonal, in the "Introduction" action row; it starts the onboarding from its first step (§11 call 105).
 - **States:** rest, hover, focus-visible, active, pressed (on), disabled, busy, done, failed (danger-container, "Try again").
   - **Changing state:** the Button fits what it shows now (idle, busy, done or failed: a glyph and words). On a change it measures itself as it is on screen, renders the new state, measures again and eases `inline-size` and `padding-inline-start` from the old values to the new over `--dur-change` with `--ease-effects` (WAAPI); a change that interrupts another starts from the live width. Nothing is configured: the layout decides which side grows. A free end grows at the end, an end-aligned Button (a SettingsRow, the end of a row) grows towards the start, and a full-width Button never changes width. Neighbours ease with it, because it is layout, not a transform.
     - **The words take turns and never overlap (d = `--dur-change`).** The words it leaves fade out with a `--space-1` rise over 0 to 0.4d, held where they were from the edge that stays, out of the flow and the accessibility tree, and clipped to the box. The words it goes to fade in from `--space-1` below over 0.5d to d, centred and clipped. By 0.5d the box has covered about 84 % of the change, so only a few faint pixels are cut and nothing arrives tail first. Words that do not change do not move; only the glyph in the start slot fades, old out and then new in, on the same clock.
@@ -1251,6 +1252,14 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **The words** (owner, 2026-10-23: "on the onboarding we say "Download the desktop app" but really we should say "Download the companion""). The releases page offers the desktop app and the server, so one key, `download_companion`, "Download the companion", serves the onboarding's button, About and the banner; it replaces `onboarding.desktop.download_button`. Strings that name the desktop app itself ("Update desktop app") stay.
     - Checked by unit tests (the banner's link only for nothing answering, beside Try again) and the real-extension rig's lifecycle pass: connected, neither About nor the popup offers it; then a fresh profile with no companion, its onboarding skipped, as the issue has it: the banner shows Try again and the link, and both the link and About's open the releases page in a new tab. The catalogue's not-found banner shows the link. Frames: `thaumic-design/download-when-unconnected.png`.
 
+105. **Introduction: the onboarding again, from About** (owner, 2026-10-23: "on both extension and desktop apps it would be good to give the option to user to run through the onboarding experience again. for example if a user skipped it the first time and then is stuck. thoughts?"; on the proposal, "yes agree skip the optional"). Checked by unit tests in both apps, the real-extension rig's options pass and the desktop real-app rig.
+
+
+    - **Where.** One SettingsRow, "Introduction", in each app's About, after Check for updates: help "Goes through the first-run steps again, from the start.", a tonal Button "Show again" (`controlWidth="action"`). About holds what is not a setting, and the onboarding is not one, so a reset (call 101) leaves it alone. The optional second way in, from the popup's not-found notice, was dropped ("skip the optional").
+    - **Desktop.** Show again starts the onboarding at once, over the window, on its first step: the stored onboarding goes back to a first run's (`restartOnboarding`). Finishing or skipping it ends on Rooms, as a first run does; closing the app part-way brings it back next time, as on a first run. Nothing else changes: settings, the address and the speakers added by IP address stay.
+    - **Extension.** The onboarding lives in the toolbar popup, so Show again puts its stored state back to a first run's and opens the popup with `chrome.action.openPopup()` (feature-detected; it can be missing or refuse, for example with no focused window). Opened, the popup shows the onboarding's first step and the options page adds nothing. Not opened, the row's note says "Open Thaumic Cast from the toolbar to start." (through the Announcer), and the note goes once the onboarding is finished or skipped. Finishing or skipping sets the state as the first time did. Settings, the address and saved sets stay.
+    - **Strings (new, the same in both apps):** "Introduction", "Goes through the first-run steps again, from the start.", "Show again"; and in the extension "Open Thaumic Cast from the toolbar to start."
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1420,6 +1429,11 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Next cast notice (2026-10-23)**
 
 - **Settings says when a change waits for the next cast** ("if a user makes changes to settings that will impact the stream should the extension show a message to say these updates won't be reflected until next cast? I know we say that in places like 'For the next tab cast' etc but this might not be clear. Thoughts?"; then "yes build but skip the extras"): an info Notice first in Audio while a running cast's stream settings differ from the current ones, with no Restart action and no popup line (§11 call 103).
+
+**Introduction (2026-10-23)**
+
+- **Both apps can show the onboarding again** ("on both extension and desktop apps it would be good to give the option to user to run through the onboarding experience again. for example if a user skipped it the first time and then is stuck. thoughts?"): a row "Introduction" in About with "Show again"; the extension opens the popup on its first step, or says to open it from the toolbar (§11 call 105).
+- **No second way in from the popup's not-found notice** ("yes agree skip the optional") (§11 call 105).
 
 **Standing**
 
