@@ -38,6 +38,9 @@ This data is stored locally on your device in the browser’s extension storage.
   your browser's permission prompt.
 - The extension streams audio and related control/metadata messages to that companion app over a local connection.
 - From there, audio is streamed to your Sonos speakers on your local network.
+- To colour the cast card in the popup, the extension loads the artwork the page itself shows (for example, the cover
+  a music site displays), from the address the page gave it. It sends nothing of yours with that request, and keeps
+  only the colour it works out, on your device.
 
 In plain terms, your audio does not go to us. It goes from your tab to your machine to your speakers, and stays inside
 your local network.
@@ -49,10 +52,10 @@ metadata on our servers.
 
 The extension:
 
-- Does not include analytics or advertising trackers.
+- Has no ads and no trackers: no analytics or advertising code of any kind.
 - Does not sell user data.
 - Does not transmit your data to third-party services.
-- Only connects to `http://localhost` (the companion app you run).
+- Connects only to the companion app you run, and to the address of artwork the page you cast is already showing.
 
 ## Contact
 
