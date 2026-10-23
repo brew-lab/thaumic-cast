@@ -6,6 +6,10 @@
  * metadata, playbackState and setActionHandler, emits structured events to the bridge, and
  * invokes the page's action handlers on control commands.
  *
+ * The page's metadata and playbackState still reach the browser's own media session (its media
+ * controls, the OS overlay and the media keys read them there): the reader's accessors call the
+ * browser's own getter and setter, and only add an emit.
+ *
  * Only one reader may run in a page. Every installed copy of the extension (a store install
  * beside an unpacked build, or two unpacked builds) injects its own reader into the same MAIN
  * world, and every reader hears every bridge's control event: with two readers, one press of
@@ -149,36 +153,37 @@ export function startMediaReader(page: ReaderPage): boolean {
   }
 
   /**
-   * Intercepts MediaSession.metadata setter to capture changes.
+   * Finds the browser's own accessor for a media session property, on its prototype chain.
+   * @param key - The property
+   * @returns The accessor's descriptor, or undefined when there is none
    */
-  function interceptMetadata(): void {
-    if (!session) return;
-
-    let currentMetadata = session.metadata;
-
-    Object.defineProperty(session, 'metadata', {
-      get: () => currentMetadata,
-      set: (value: MediaMetadata | null) => {
-        currentMetadata = value;
-        scheduleEmit();
-      },
-      configurable: true,
-      enumerable: true,
-    });
+  function nativeAccessor(key: 'metadata' | 'playbackState'): PropertyDescriptor | undefined {
+    for (let o = session && Object.getPrototypeOf(session); o; o = Object.getPrototypeOf(o)) {
+      const desc = Object.getOwnPropertyDescriptor(o, key);
+      if (desc) return desc.get && desc.set ? desc : undefined;
+    }
+    return undefined;
   }
 
   /**
-   * Intercepts MediaSession.playbackState setter to capture changes.
+   * Watches a media session property: every value the page sets still reaches the browser's
+   * own media session (its media controls, the OS overlay and the media keys read it there),
+   * and each one schedules an emit to the bridge.
+   * @param key - The property
    */
-  function interceptPlaybackState(): void {
+  function intercept(key: 'metadata' | 'playbackState'): void {
     if (!session) return;
+    const native = nativeAccessor(key);
+    // Without the browser's accessor (never in Chrome) the value is kept here.
+    let kept: unknown = session[key];
 
-    let currentPlaybackState = session.playbackState;
-
-    Object.defineProperty(session, 'playbackState', {
-      get: () => currentPlaybackState,
-      set: (value: MediaSessionPlaybackState) => {
-        currentPlaybackState = value;
+    Object.defineProperty(session, key, {
+      get: () => (native ? native.get!.call(session) : kept),
+      set: (value: unknown) => {
+        // The browser validates the value; a value it refuses throws to the page, as it would
+        // without the reader, and is not emitted.
+        if (native) native.set!.call(session, value);
+        else kept = value;
         scheduleEmit();
       },
       configurable: true,
@@ -233,8 +238,8 @@ export function startMediaReader(page: ReaderPage): boolean {
   }
 
   // Initialize interceptions
-  interceptMetadata();
-  interceptPlaybackState();
+  intercept('metadata');
+  intercept('playbackState');
   interceptActionHandler();
 
   // Handle explicit requests from bridge (for on-demand refresh)

@@ -57,8 +57,9 @@ note "Open Thaumic Cast from the toolbar to start.", the toolbar popup on step 1
 gone after Skip) and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
 to open over. After the runs, the lifecycle pass (`lifecycle.mjs`, once, with its own companion):
 a page controlled by a service worker with an enforced Connection-Allowlist, as YouTube Music
-sends, must still get the content scripts with nothing blocked or logged; one press of Next or
-Previous track in a cast's popup must send one command and run the page's handler once; a cast's
+sends, must still get the content scripts with nothing blocked or logged; the metadata and play
+state a page sets must reach the browser's own media session; one press of Next or Previous
+track in a cast's popup must send one command and run the page's handler once; a cast's
 companion quitting and coming back must log no warnings or errors (only Chromium's own line for each refused
 reconnect); and reloading the extension in place (CDP `Extensions.loadUnpacked`, as an update
 does) with a tab open must throw nothing when the tab's orphaned content scripts next hear from

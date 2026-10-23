@@ -377,6 +377,39 @@ async function nothingAnswers(env) {
 }
 
 /**
+ * The page's media session values reach the browser's own media session, which its media
+ * controls, the OS overlay and the media keys read: the reader watches them without keeping
+ * them. Read through MediaSession.prototype's getters, past the reader's accessors.
+ * @param {import('@playwright/test').Page} tab - A page the reader runs in
+ */
+async function nativeSessionPass(tab) {
+  const native = () =>
+    tab.evaluate(() => {
+      const get = (key) =>
+        Object.getOwnPropertyDescriptor(MediaSession.prototype, key).get.call(
+          navigator.mediaSession,
+        );
+      return { title: get('metadata')?.title ?? null, state: get('playbackState') };
+    });
+  const atLoad = await native();
+  check(
+    "the metadata the page set as it loaded reaches the browser's media session",
+    atLoad.title === 'Test tone',
+    atLoad,
+  );
+  await tab.evaluate(() => {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: 'Set later', artist: 'Rig' });
+    navigator.mediaSession.playbackState = 'playing';
+  });
+  const later = await native();
+  check(
+    "metadata and playbackState the page sets later reach the browser's media session",
+    later.title === 'Set later' && later.state === 'playing',
+    later,
+  );
+}
+
+/**
  * Has the page register Next and Previous track handlers that count their calls.
  * @param {import('@playwright/test').Page} tab - The page
  * @returns {Promise<void>} Resolves once registered
@@ -514,6 +547,7 @@ try {
   const casting = await until(async () => (await p.text()).includes('Casting now'), 10000);
   check('a cast starts', Boolean(casting));
   p.close();
+  await nativeSessionPass(tab);
   await transportPass(env, tab);
   await problems.sweep();
   await lib.sleep(2000);
