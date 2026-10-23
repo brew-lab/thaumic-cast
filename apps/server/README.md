@@ -13,7 +13,7 @@ HTTP/WebSocket API as the desktop app, so the extension can cast through it from
 
 Left to itself, the extension looks for a companion on its own machine and nowhere else. When the server is somewhere
 else, the extension has to be told: **Settings → Companion → Enter the address → `http://<server-ip>:49400` →
-Connect**, then say yes when Chrome asks whether the extension may use that address.
+Connect**, then say yes when your browser asks whether the extension may use that address.
 
 ## Network requirements
 
@@ -305,8 +305,8 @@ exact command is printed at the end).
    ```
 
 5. **Point the extension at it.** Settings → Companion → Enter the address → `http://<container-ip>:49400` → Connect.
-   Chrome asks whether the extension may "read and change your data" at that address. That is its standard
-   wording for access to any site, and here it covers that one host and no other; say yes.
+   Your browser asks whether the extension may use that address. Chrome words it as "read and change your data"
+   at that address, its standard wording for access to any site; here it covers that one host and no other. Say yes.
 
 No speakers in the list? Go back to the [network requirements](#network-requirements): same VLAN, or mDNS reflected
 across subnets, or add one by IP address with `POST /api/speakers/manual` (`{"ip":"192.168.1.50"}`). It is kept in
@@ -337,7 +337,7 @@ The server serves the same HTTP/WebSocket API as the desktop app:
 | `WS /ws`                             | WebSocket for real-time events and audio |
 
 The API sends no CORS headers. The extension may talk to `localhost` without asking. For a server on another machine
-it asks you once, through Chrome's own permission prompt, when you press **Connect** in its settings. Ordinary web
+it asks you once, through your browser's own permission prompt, when you press **Connect** in its settings. Ordinary web
 pages cannot read API responses.
 
 ## Graceful shutdown

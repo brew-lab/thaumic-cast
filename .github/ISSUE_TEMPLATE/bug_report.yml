@@ -24,7 +24,7 @@ body:
       description: Which part of Thaumic Cast is misbehaving?
       options:
         - Desktop App
-        - Chrome Extension
+        - Browser Extension
         - Headless Server
         - Core Library
         - Other

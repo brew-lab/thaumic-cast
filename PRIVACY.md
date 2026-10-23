@@ -16,7 +16,7 @@ There is no cloud. If you see one, it is probably weather.
 
 To provide its single purpose (streaming tab audio to Sonos via your local companion app), the extension processes:
 
-- Tab audio you choose to cast (captured via Chrome’s tab capture APIs).
+- Tab audio you choose to cast (captured through the browser’s tab capture API).
 - Basic tab information used for display and media identification (for example: tab URL/hostname, page title, favicon
   URL).
 - Media metadata from the page when available (for example: track title/artist) to show in the extension UI and on Sonos.
@@ -29,13 +29,13 @@ The extension stores settings and state to function across sessions, such as:
 - Speaker/group selection and onboarding progress.
 - Audio quality settings and codec capability cache.
 
-This data is stored locally on your device using Chrome extension storage.
+This data is stored locally on your device in the browser’s extension storage.
 
 ## Where data goes
 
 - The extension connects only to your companion app: by default on your machine (`http://localhost`), or, if you
   point it at a companion elsewhere on your network, only at the address you entered and explicitly allowed through
-  Chrome's permission prompt.
+  your browser's permission prompt.
 - The extension streams audio and related control/metadata messages to that companion app over a local connection.
 - From there, audio is streamed to your Sonos speakers on your local network.
 
