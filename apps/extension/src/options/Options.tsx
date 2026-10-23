@@ -9,6 +9,7 @@ import { LanguageSection } from './components/LanguageSection';
 import { AdvancedSection } from './components/AdvancedSection';
 import { AboutSection } from './components/AboutSection';
 import { SetsSection } from './components/SetsSection';
+import { ResetSection } from './components/ResetSection';
 import { useSavedSets } from './hooks/useSavedSets';
 import type { RemovedSet } from '../lib/room-sets';
 import { useExtensionSettings } from './hooks/useExtensionSettings';
@@ -20,7 +21,7 @@ import { hasLanguageChoice } from '../lib/i18n';
 /**
  * The options page (DESIGN.md L-page): the OptionsShell with its sections in the drawing's
  * order (Appearance, Language while there is a choice, Companion, Audio, Finer points, Saved
- * sets, About). A failed load or save is one danger Notice for the page, said once and
+ * sets, Reset, About). A failed load or save is one danger Notice for the page, said once and
  * cleared by the next good save; loading shows its words in place of the sections. The bar
  * at the page's end holds the Toast after a removed set.
  * @returns The options page element
@@ -99,6 +100,8 @@ export function Options(): JSX.Element {
           />
 
           <SetsSection saved={saved} onRemoved={setRemoved} onChange={() => setRemoved(null)} />
+
+          <ResetSection settings={settings} onUpdate={updateSettings} />
 
           <AboutSection connection={connection} />
         </>
