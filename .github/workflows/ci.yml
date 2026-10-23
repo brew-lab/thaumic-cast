@@ -176,6 +176,8 @@ jobs:
       # runner image and the Playwright version, the two things that change the packages.
       - name: Keep apt's packages in the cache's folder
         id: apt
+        # Where @playwright/test is installed: at the root, bunx would fetch the latest.
+        working-directory: packages/ui
         run: |
           mkdir -p ~/apt-archives/partial
           echo "Dir::Cache::Archives \"$HOME/apt-archives\";" |
