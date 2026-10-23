@@ -7,7 +7,8 @@
 // own companion, so run.sh runs it once, after the popup passes, with BIN set to the companion
 // test binary. Exit 1 on any failure. See README.md.
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { cpSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import http from 'node:http';
 import { join } from 'node:path';
 import * as lib from './lib.mjs';
@@ -375,6 +376,95 @@ async function nothingAnswers(env) {
     ?.close();
 }
 
+/**
+ * Has the page register Next and Previous track handlers that count their calls.
+ * @param {import('@playwright/test').Page} tab - The page
+ * @returns {Promise<void>} Resolves once registered
+ */
+const countTrackCalls = (tab) =>
+  tab.evaluate(() => {
+    window.__trackCalls = [];
+    for (const action of ['nexttrack', 'previoustrack']) {
+      navigator.mediaSession.setActionHandler(action, () => window.__trackCalls.push(action));
+    }
+  });
+
+/**
+ * One press of Next or Previous track in the popup moves the page's media session one track:
+ * the background sends one CONTROL_MEDIA and the page's handler runs once. The rig watches the
+ * worker's chrome.tabs.sendMessage calls and lets each through.
+ * @param {object} env - What lib.launch() returned
+ * @param {import('@playwright/test').Page} tab - The cast's tab
+ */
+async function transportPass(env, tab) {
+  await countTrackCalls(tab);
+  await env.sw.evaluate(() => {
+    const sent = (globalThis.__controlsSent = []);
+    const real = chrome.tabs.sendMessage.bind(chrome.tabs);
+    chrome.tabs.sendMessage = (tabId, message, ...rest) => {
+      if (message?.type === 'CONTROL_MEDIA') sent.push(message.action);
+      return real(tabId, message, ...rest);
+    };
+  });
+  const p = await env.popup();
+  for (const [label, action] of [
+    ['Next track', 'nexttrack'],
+    ['Previous track', 'previoustrack'],
+  ]) {
+    await until(() => p.eval(`return !!document.querySelector('button[aria-label="${label}"]')`));
+    await tab.evaluate(() => (window.__trackCalls = []));
+    await env.sw.evaluate(() => (globalThis.__controlsSent.length = 0));
+    await p.click('button', label);
+    await lib.sleep(1000);
+    const calls = await tab.evaluate(() => window.__trackCalls);
+    const sent = await env.sw.evaluate(() => [...globalThis.__controlsSent]);
+    check(
+      `one press of ${label} sends one ${action} and the page's handler runs once`,
+      JSON.stringify(calls) === JSON.stringify([action]) &&
+        JSON.stringify(sent) === JSON.stringify([action]),
+      { calls, sent },
+    );
+  }
+  p.close();
+}
+
+/**
+ * Two copies of the extension in one browser (a store install beside an unpacked build) each
+ * inject a media reader into the page, and every reader hears every bridge's control event:
+ * one Next called the page's handler twice and skipped a track. Only the first reader serves.
+ */
+async function twoCopiesPass() {
+  const copy = join(tmpdir(), 'thaumic-real-ext-second-copy');
+  rmSync(copy, { recursive: true, force: true });
+  cpSync(lib.EXT, copy, { recursive: true });
+  const env = await lib.launch({ profile: 'lifecycle-two-copies', also: [copy] });
+  try {
+    const workers = await until(
+      () =>
+        env.ctx.serviceWorkers().filter((w) => w.url().includes('service-worker-loader')).length ===
+          2 || undefined,
+    );
+    check('two copies of the extension load side by side', Boolean(workers));
+    const tab = await env.audioTab();
+    await countTrackCalls(tab);
+    await lib.sleep(500);
+    await env.sw.evaluate(async () => {
+      const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      await chrome.tabs.sendMessage(t.id, { type: 'CONTROL_MEDIA', action: 'nexttrack' });
+    });
+    await lib.sleep(500);
+    const calls = await tab.evaluate(() => window.__trackCalls);
+    check(
+      "with two copies installed, one nexttrack runs the page's handler once",
+      JSON.stringify(calls) === JSON.stringify(['nexttrack']),
+      calls,
+    );
+  } finally {
+    await env.close();
+    rmSync(copy, { recursive: true, force: true });
+  }
+}
+
 if (!process.env.BIN) {
   console.error('BIN must name the thaumic-core test binary (run.sh sets it)');
   process.exit(2);
@@ -424,6 +514,7 @@ try {
   const casting = await until(async () => (await p.text()).includes('Casting now'), 10000);
   check('a cast starts', Boolean(casting));
   p.close();
+  await transportPass(env, tab);
   await problems.sweep();
   await lib.sleep(2000);
   problems.take();
@@ -478,6 +569,9 @@ try {
     reloadProblems.length === 0,
     reloadProblems,
   );
+
+  // ── Two copies of the extension: one press is still one track ──────────
+  await twoCopiesPass();
 } catch (e) {
   check('the lifecycle pass finished', false, String(e.stack ?? e));
 } finally {
