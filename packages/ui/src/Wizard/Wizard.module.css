@@ -2,19 +2,24 @@
   /*
    * C-wizard, full form: the desktop's onboarding, inside the WizardShell, which scrolls it.
    * The StepIndicator, the step and the footer, --space-6 apart; the footer is a rule, then
-   * Skip at the start and Back and Carry on at the end, on one line. The footer sticks to the
-   * end of the scroller on --ground, so Carry on is in view on a step taller than the window;
-   * its end padding is taken back from the column's, so nothing moves on a short step, and
-   * the WizardShell's end scroll padding keeps a focused control clear of it (WCAG 2.4.11).
+   * Skip at the start and Back and Carry on at the end, on one line. The Wizard fills the
+   * shell's column and the step takes the room left, top-aligned, so on a short step the
+   * footer sits at the window's end, not under the step (§11 call 106). On a step taller than
+   * the window the footer sticks to the end of the scroller on --ground, so Carry on stays in
+   * view; it takes the column's whole end padding as its own, so its row sits in the same
+   * place either way, and the WizardShell's end scroll padding keeps a focused control clear
+   * of it (WCAG 2.4.11).
    */
   .wizard {
     display: flex;
+    flex: 1 0 auto;
     flex-direction: column;
     gap: var(--space-6);
   }
 
   .content {
     display: flex;
+    flex: 1 0 auto;
     flex-direction: column;
     min-inline-size: 0;
   }
@@ -25,8 +30,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
-    margin-block-end: calc(-1 * var(--space-5));
-    padding-block-end: var(--space-5);
+    margin-block-end: calc(-1 * var(--space-7));
+    padding-block-end: var(--space-7);
     background: var(--ground);
   }
 

@@ -12,17 +12,27 @@
     color: var(--on-surface);
   }
 
-  /* The end scroll padding clears the Wizard's sticky footer: its rule, gap, md row and pad. */
+  /*
+   * The end scroll padding clears the Wizard's sticky footer: its rule, gap, md row and pad.
+   * Main is a flex column so the column is at least as tall as the window: the Wizard fills
+   * it and its footer sits at the window's end on every step (§11 call 106).
+   */
   .main {
     container: content / inline-size;
+    display: flex;
+    flex-direction: column;
     min-block-size: 0;
     overflow-y: auto;
     scroll-padding-block-end: calc(
-      var(--line-hair) + var(--space-4) + var(--control-md) + var(--space-5) + var(--space-3)
+      var(--line-hair) + var(--space-4) + var(--control-md) + var(--space-7) + var(--space-3)
     );
   }
 
   .column {
+    display: flex;
+    flex: 1 0 auto;
+    flex-direction: column;
+    inline-size: 100%;
     max-inline-size: calc(var(--page-max) + 2 * var(--space-7));
     margin-inline: auto;
     padding: var(--space-7);

@@ -44,8 +44,9 @@ It builds the frontend and the thaumic-core test binary, then for each run (`RUN
 scale and a scheme) starts a fresh companion and walks the app at the default window (840 ×
 640), a narrow one (600 × 640, under 45rem) and a wide one (1280 × 800):
 
-- onboarding, every step, from a fresh profile: Skip, Back and Carry on on one line, Back from
-  step 2, the rule above the footer, Carry on in view without scrolling (the footer is pinned)
+- onboarding, every step, from a fresh profile, also at a tall window (840 × 1000): Skip, Back
+  and Carry on on one line, Back from step 2, the rule above the footer, the footer at the
+  window's end and in the same place on every step, Carry on in view without scrolling
   and a tabbed-to control never under it, the full form not a modal, the rooms counted;
 - Rooms with nothing cast and with a real cast (`POST /cast`): one card per room, a grouped
   room's "Grouped with", casting rooms first, each name at least 6ch and never under its Badge,

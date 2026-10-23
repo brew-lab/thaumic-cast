@@ -208,3 +208,68 @@ test('the full Wizard is not a modal, and its footer is one line with Back from 
   expect(new Set(rows).size).toBe(1);
   expect(await scrollers(page)).toEqual(['main']);
 });
+
+/**
+ * Where the full Wizard's footer sits: Carry on's end, the column's end padding, the rule's
+ * top, the window, and whether main scrolls.
+ * @param page - The page
+ * @returns The footer's geometry
+ */
+const wizardFoot = (page: Page) =>
+  page.evaluate(() => {
+    const next = [...document.querySelectorAll('button')].find((b) =>
+      /^(Carry on|That'll do)$/.test(b.innerText.trim()),
+    )!;
+    const main = document.querySelector('main')!;
+    const column = main.firstElementChild!;
+    return {
+      bottom: next.getBoundingClientRect().bottom,
+      pad: parseFloat(getComputedStyle(column).paddingBlockEnd),
+      foot: [...main.querySelectorAll('hr, [role="separator"]')].at(-1)!.getBoundingClientRect()
+        .top,
+      vh: innerHeight,
+      scrolls: main.scrollHeight > main.clientHeight,
+    };
+  });
+
+for (const [width, height] of [
+  [600, 560],
+  [840, 640],
+  [1280, 900],
+] as const) {
+  test(`the full Wizard's footer sits at the window's end on every step at ${width}×${height}`, async ({
+    page,
+  }) => {
+    await open(page, 'wizard&step=0', width, height);
+    const where: number[] = [];
+    for (let step = 0; step < 3; step++) {
+      const f = await wizardFoot(page);
+      expect(f.scrolls).toBe(false);
+      expect(Math.abs(f.bottom - (f.vh - f.pad))).toBeLessThanOrEqual(1);
+      where.push(Math.round(f.bottom));
+      if (step < 2) await page.getByRole('button', { name: 'Carry on' }).click();
+    }
+    expect(new Set(where).size).toBe(1);
+  });
+}
+
+test("a step taller than the window scrolls above the full Wizard's footer, never under it", async ({
+  page,
+}) => {
+  await open(page, 'wizard&step=0&long=1', 600, 400);
+  const top = await wizardFoot(page);
+  expect(top.scrolls).toBe(true);
+  // Pinned in the same place as on a short step.
+  expect(Math.abs(top.bottom - (top.vh - top.pad))).toBeLessThanOrEqual(1);
+  await page.evaluate(() => {
+    const main = document.querySelector('main')!;
+    main.scrollTop = main.scrollHeight;
+  });
+  const end = await wizardFoot(page);
+  expect(Math.abs(end.bottom - (end.vh - end.pad))).toBeLessThanOrEqual(1);
+  // At the end of the scroll, the step's last paragraph ends above the footer.
+  const last = await page.evaluate(
+    () => [...document.querySelectorAll('main p')].at(-1)!.getBoundingClientRect().bottom,
+  );
+  expect(last).toBeLessThanOrEqual(end.foot + 0.5);
+});

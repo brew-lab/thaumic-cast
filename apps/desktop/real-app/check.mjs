@@ -18,11 +18,15 @@ const EXPECTED_FAIL = new Set(
 );
 const results = [];
 
-/** The windows, in CSS px: the default (L-desktop), a narrow one and a wide one. */
+/**
+ * The windows, in CSS px: the default (L-desktop), a narrow one and a wide one; the onboarding
+ * also takes a tall one, where every step is shorter than the window.
+ */
 const SIZES = {
   default: { width: 840, height: 640 },
   narrow: { width: 600, height: 640 },
   wide: { width: 1280, height: 800 },
+  tall: { width: 840, height: 1000 },
 };
 
 /**
@@ -477,12 +481,14 @@ async function openApp(size, o = {}) {
 }
 
 try {
-  // ── Onboarding, every step, at the default and the narrow window ──────────
+  // ── Onboarding, every step, at the default, the narrow and a tall window ──────
   await section('Onboarding', async () => {
-    for (const size of ['default', 'narrow']) {
+    for (const size of ['default', 'narrow', 'tall']) {
       const a = await openApp(size, { onboarded: false });
       await a.goto('/');
       const rooms = lib.ROOMS.length;
+      // Where Carry on ends on each step: the footer is pinned to the window's end (§11 call 106).
+      const ends = [];
       for (let step = 1; step <= 5; step++) {
         const last = step === 5;
         const next = button(a, last ? "That'll do" : 'Carry on');
@@ -508,7 +514,9 @@ try {
             (h) => h.getBoundingClientRect().bottom <= (next?.getBoundingClientRect().top ?? 0),
           );
           const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+          const column = document.querySelector('[data-scroller]').firstElementChild;
           return {
+            pad: parseFloat(getComputedStyle(column).paddingBlockEnd),
             skip: box(skip),
             back: box(back),
             next: box(next),
@@ -523,6 +531,12 @@ try {
           foot.next !== null && foot.next.b <= foot.vh,
           { next: foot.next, vh: foot.vh },
         );
+        check(
+          `onboarding step ${step} (${size}): the footer sits at the window's end`,
+          foot.next !== null && Math.abs(foot.next.b - (foot.vh - foot.pad)) <= 1,
+          { next: foot.next, vh: foot.vh, pad: foot.pad },
+        );
+        if (foot.next) ends.push(foot.next.b);
         const row = [foot.skip, foot.back, foot.next].filter(Boolean);
         const mid = (b) => (b.t + b.b) / 2;
         check(
@@ -585,6 +599,11 @@ try {
         }
         await next.click();
       }
+      check(
+        `onboarding (${size}): the footer is in the same place on every step`,
+        ends.length === 5 && Math.max(...ends) - Math.min(...ends) <= 1,
+        ends,
+      );
       const landed = await until(() =>
         a.page.evaluate(() => document.querySelector('h1')?.innerText.trim() === 'Rooms'),
       );
