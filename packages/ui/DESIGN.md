@@ -356,6 +356,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
   - Add a room: quiet, with `plus` and `expanded`.
   - Sets: quiet, `pressed`, `align="start"`.
   - Update available (About, in the options page): link, with `external`.
+  - Download the companion (About's Companion value while nothing is connected): link, with `external`, under the words (§11 call 104).
   - Check for updates (About, in the options page): tonal, in an action row; with `external` when it opens the releases page, "Restart the extension" with `refresh` once a version is ready (§11 call 99).
 - **States:** rest, hover, focus-visible, active, pressed (on), disabled, busy, done, failed (danger-container, "Try again").
   - **Changing state:** the Button fits what it shows now (idle, busy, done or failed: a glyph and words). On a change it measures itself as it is on screen, renders the new state, measures again and eases `inline-size` and `padding-inline-start` from the old values to the new over `--dur-change` with `--ease-effects` (WAAPI); a change that interrupts another starts from the live width. Nothing is configured: the layout decides which side grows. A free end grows at the end, an end-aligned Button (a SettingsRow, the end of a row) grows towards the start, and a full-width Button never changes width. Neighbours ease with it, because it is layout, not a transform.
@@ -609,7 +610,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 
 ### M-notice · Notice: FINAL
 
-- **API:** `kind: 'banner'|'section', tone: 'danger'|'warning'|'info', lead, text?, action?, details?, onDismiss?, also?, index?`. `index` is its place in a list of notices, for the entrance stagger (T-motion). The `info` tone reads the info set (T-colour). Under 25rem, a Details that starts the action row is flush with the text.
+- **API:** `kind: 'banner'|'section', tone: 'danger'|'warning'|'info', lead, text?, action?, link?, details?, onDismiss?, also?, index?`. `link` is `{ label, href }`: one way out to a page, after the action, as an EmptyState has its link under its action; a quiet Button with `external`, an `<a>` opening a new tab. Under 25rem it takes a line of its own under the action, flush with the text (§11 call 104). `index` is its place in a list of notices, for the entrance stagger (T-motion). The `info` tone reads the info set (T-colour). Under 25rem, a Details that starts the action row is flush with the text.
 - **Kinds:** a banner is page level, at most one, and a `role="region"` named by its lead. A section is a `<section>` named by its lead. There is no `role="alert"`. The tone is shown by the container colour, the glyph and the lead's words together (never colour alone).
 - **X rule:** a blocking danger notice has no X. Esc never dismisses.
 - **Layout:** the action goes under the text below 25rem and beside it from 25rem.
@@ -1234,6 +1235,14 @@ Where the packets disagreed with canon or with each other, these are the calls m
     - **What changed.** The desktop's first view is Rooms (its rail item and heading; Not found says "Back to Rooms"). In the popup the room list loads with "Asking for rooms…", and the CastBar's replace lines say "Whatever the room is playing will stop." and "The cast already in this room will end." The README asks you to choose a room or several, and sends different tabs to different rooms. The catalogue's desktop mocks, rail, NavItem and PageHeader specimens follow.
     - **What stays "speakers".** Desktop Settings › Speakers: every control in it acts on the devices (speaker monitoring, the speaker head start, clock drift correction, adding a device by its IP address), and the notices send you there by that name. Both onboardings' speakers step ("Finding the speakers", "The speakers"): it is discovery, though what answers is counted in rooms ("6 rooms answered."). The desktop's empty Rooms view says the network returned no Sonos speakers, since nothing answered at all. The server's help and README, which are about the network, ports and devices throughout. Code identifiers, protocol fields, events, storage keys, i18n key names, the route and the rail's speaker glyph do not change.
 
+104. **A way to download the companion wherever nothing answers** (owner, 2026-10-23: "on the extension settings when no companion is found we say "Nothing connected. The extension can do very little on its own, and is doing it." which is great but this assumes the user has the server or desktop app set up. we should add a link to download it if they don't have it"; issue #109: "If I skip onboarding or uninstall the app/server in the future I have no way of finding where to download the app/server"). Both open the releases page (`GITHUB_RELEASES_URL`) in a new tab, and neither shows while a companion is connected.
+
+
+    - **About:** while the Companion value says "Nothing connected…", a link Button with `external`, "Download the companion", sits under the words in the same value cell, as "Update available" sits in it when connected (M-dl: one trailing action). Not the Updates row: that row is about the extension's own version. Not the Server section: its "No server address is saved…" notice is about the address field, not about nothing answering, and one link on the page is enough. With an unpacked copy, Check for updates also opens the releases page; it stays, since it answers a different question.
+    - **The popup's banner:** only for "No desktop app or server answered" (`error_desktop_not_found`), not for a lost connection or a refused address, where the companion exists. M-notice allows one action, and Try again stays it, since the banner's text ends "start one, then try again". The download is the new `link`: a quiet link after the action, as M-empty pairs an action with a link. Set aside: swapping Try again for the download (it breaks the text, and the user who only has to start the app loses the action they need); a second action (two outline Buttons of equal weight); the link under the disconnected picker's EmptyState (the picker is a disabled fieldset, so the link would be drawn disabled among it).
+    - **The words** (owner, 2026-10-23: "on the onboarding we say "Download the desktop app" but really we should say "Download the companion""). The releases page offers the desktop app and the server, so one key, `download_companion`, "Download the companion", serves the onboarding's button, About and the banner; it replaces `onboarding.desktop.download_button`. Strings that name the desktop app itself ("Update desktop app") stay.
+    - Checked by unit tests (the banner's link only for nothing answering, beside Try again) and the real-extension rig's lifecycle pass: connected, neither About nor the popup offers it; then a fresh profile with no companion, its onboarding skipped, as the issue has it: the banner shows Try again and the link, and both the link and About's open the releases page in a new tab. The catalogue's not-found banner shows the link. Frames: `thaumic-design/download-when-unconnected.png`.
+
 ## 12. Still open
 
 **Owner calls.** Only real decisions; each has a default applied, so none blocks the build.
@@ -1394,6 +1403,11 @@ Owner decisions only, in order. Rounds 6 to 12 are copied from the round 12 note
 **Terminology (2026-10-23)**
 
 - **Rooms for the things you cast to and control, in both apps; speakers only for the hardware itself** ("in the extension we call speakers 'rooms' and in the desktop we call them 'Speakers' what should it be?"; "yes lets update to use rooms"). The desktop's Speakers view becomes Rooms; Settings › Speakers, the onboarding's discovery step and the hardware notices keep "speakers" (§11 call 102).
+
+**Download the companion (2026-10-23)**
+
+- **Wherever nothing answers, a link to download the companion** ("we should add a link to download it if they don't have it"; issue #109): under About's "Nothing connected" and on the popup's "No desktop app or server answered" banner, beside Try again (§11 call 104).
+- **It is the companion, not the desktop app** ("on the onboarding we say "Download the desktop app" but really we should say "Download the companion""): one string for the onboarding, About and the banner (§11 call 104).
 
 **Standing**
 

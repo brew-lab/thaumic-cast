@@ -88,7 +88,7 @@ export function DesktopConnectionStep({
 
           <Cluster stack>
             <Button size="md" kind="filled" icon="external" onClick={handleDownload}>
-              {t('onboarding.desktop.download_button')}
+              {t('download_companion')}
             </Button>
             <Button size="md" icon="refresh" onClick={handleRetry} disabled={isSeeking}>
               {t('onboarding.desktop.retry_button')}

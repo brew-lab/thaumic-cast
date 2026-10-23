@@ -790,6 +790,7 @@ export function NoticeSpecimen(): JSX.Element {
           lead="No desktop app or server answered"
           text="Thaumic Cast needs the desktop app or a server running to reach the speakers; start one, then try again."
           action={{ label: 'Try again', onClick: noop }}
+          link={{ label: 'Download the companion', href: '#notice' }}
         />
         <Notice
           kind="banner"

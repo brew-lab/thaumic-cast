@@ -60,8 +60,16 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
     </>
   );
 
+  // Nothing connected: whoever skipped the onboarding, or removed the companion, can still
+  // find it from here.
   const companionValue = !companion ? (
-    t('about_companion_not_connected')
+    <>
+      {t('about_companion_not_connected')}
+      <br />
+      <Button kind="link" icon="external" onClick={handleOpenReleases}>
+        {t('download_companion')}
+      </Button>
+    </>
   ) : companion.appVersion && companion.protocolVersion ? (
     <>
       {t(companionTypeLabelKey(companion.appType))} ·{' '}

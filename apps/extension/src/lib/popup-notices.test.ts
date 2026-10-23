@@ -106,6 +106,28 @@ describe('placeNotices: the banner (rules 1 and 8)', () => {
     }
   });
 
+  it('should link to the download only when nothing answered, beside Try again', () => {
+    const placed = placeNotices(
+      inputs({ connection: { ...lost, error: 'error_desktop_not_found' } }),
+    );
+    expect(placed.banner?.action?.kind).toBe('retry');
+    expect(placed.banner?.link).toEqual({
+      kind: 'download',
+      label: { key: 'download_companion' },
+    });
+    for (const error of [
+      'error_connection_lost',
+      'error_server_error',
+      'error_wrong_server',
+      'error_network_failed',
+      'error_permission_needed',
+      'error_permission_denied',
+    ]) {
+      expect(placeNotices(inputs({ connection: { ...lost, error } })).banner?.link).toBeUndefined();
+    }
+    expect(placeNotices(inputs()).banner).toBeNull();
+  });
+
   it('should fold a second condition into the banner as its lead', () => {
     const placed = placeNotices(
       inputs({
@@ -360,6 +382,7 @@ describe('the words the rules choose', () => {
       'connection_status_disconnected',
       'retry_connection',
       'try_again',
+      'download_companion',
     ];
     expect(keys.filter((key) => typeof strings[key] !== 'string')).toEqual([]);
   });
