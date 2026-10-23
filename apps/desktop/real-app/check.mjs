@@ -285,6 +285,132 @@ const focusFacts = (app) =>
   });
 
 /**
+ * The speaker settings, launch at login, the theme and Show diagnostics as saved, and what a
+ * reset must keep (the server's port and the speakers added by IP address).
+ * @param {import('./lib.mjs').App} app - The app
+ * @returns {Promise<object>} The facts
+ */
+const savedSettings = async (app) => ({
+  autostart: await lib.ipc('get_autostart_enabled'),
+  monitor: (await lib.ipc('get_speaker_monitor')).enabled,
+  headStart: (await lib.ipc('get_pcm_connect_burst_ms')).ms,
+  drift: (await lib.ipc('get_drift_compensation')).mode,
+  port: await lib.ipc('get_server_port'),
+  manual: await lib.ipc('get_manual_speaker_ips'),
+  ...(await app.page.evaluate(() => ({
+    theme: localStorage.getItem('thaumic-cast-theme'),
+    diagnostics: localStorage.getItem('thaumic-cast-diagnostics'),
+  }))),
+});
+
+/**
+ * Settings › Reset (DESIGN.md §11 call 101): with settings changed, Reset asks first in the
+ * Dialog; Cancel changes nothing and gives focus back; Reset puts every setting back to its
+ * default, keeps the port and the speakers added by IP address, and disables itself.
+ * Screenshots the section and the Dialog in the dark theme, then after the reset (auto, so
+ * this run's scheme), and the Dialog again over the light theme.
+ * @param {import('./lib.mjs').App} a - The app, on any view
+ */
+async function checkReset(a) {
+  await a.goto('/settings');
+  await a.page.waitForTimeout(300);
+  const reset = a.page.getByRole('button', { name: 'Reset all settings' });
+  const defaults = await lib.ipc('get_speaker_setting_defaults');
+  await lib.ipc('add_manual_speaker_ip', { ip: '192.168.1.250' });
+  await a.goto('/');
+  await a.goto('/settings');
+  await a.page.waitForTimeout(300);
+  // Change one of each kind: the theme, launch at login, a speaker setting the core reads.
+  await a.page.locator('[role="radiogroup"] label', { hasText: 'Dark' }).click();
+  const autostart = a.page.getByRole('switch', { name: /^Launch at login/ });
+  if (await autostart.isChecked()) await autostart.click();
+  await autostart.click();
+  const headStart = a.page.locator('#settings-head-start');
+  const other = await headStart.evaluate(
+    (el, ms) => [...el.options].map((o) => o.value).find((v) => v !== String(ms)),
+    defaults.pcmConnectBurstMs,
+  );
+  await headStart.selectOption(other);
+  await a.page.getByRole('switch', { name: /^Clock drift correction/ }).click();
+  await a.page.waitForTimeout(400);
+  const before = await savedSettings(a);
+  check(
+    'Reset is enabled once a setting differs from its default',
+    !(await reset.isDisabled()),
+    before,
+  );
+  await reset.scrollIntoViewIfNeeded();
+  await a.shot(`13-settings-reset-dark-${tag}`);
+
+  await reset.click();
+  await a.page.waitForTimeout(300);
+  let d = await dialogFacts(a);
+  check(
+    'Reset all settings asks first in the Dialog, starting on Cancel',
+    d.open && d.title === 'Reset all settings' && d.focus === 'Cancel',
+    d,
+  );
+  await a.shot(`14-settings-reset-dialog-dark-${tag}`);
+  await checkAxe(a, 'the Reset all settings Dialog');
+  await a.page.locator('dialog[open]').getByRole('button', { name: 'Cancel' }).click();
+  await a.page.waitForTimeout(300);
+  d = await dialogFacts(a);
+  const kept = await savedSettings(a);
+  check(
+    'Cancel closes the Dialog, changes nothing and gives focus back to Reset',
+    !d.open && d.focus === 'Reset all settings' && JSON.stringify(kept) === JSON.stringify(before),
+    { d, before, kept },
+  );
+
+  await reset.click();
+  await a.page.waitForTimeout(300);
+  await a.page
+    .locator('dialog[open]')
+    .getByRole('button', { name: /^Reset$/ })
+    .click();
+  await until(async () => !(await dialogFacts(a)).open, 3000);
+  await a.page.waitForTimeout(400);
+  const after = await savedSettings(a);
+  check(
+    'Reset puts every setting back to its default',
+    after.autostart === false &&
+      after.monitor === defaults.speakerMonitor &&
+      after.headStart === defaults.pcmConnectBurstMs &&
+      after.drift === defaults.driftCompensation &&
+      after.theme === 'auto' &&
+      after.diagnostics === 'off',
+    { defaults, after },
+  );
+  check(
+    'Reset keeps the connection: the port and the speakers added by IP address',
+    after.port === before.port && JSON.stringify(after.manual) === JSON.stringify(before.manual),
+    { before, after },
+  );
+  check(
+    'the page shows the defaults: the theme is Auto and the head start the default',
+    (await a.page.getByRole('radio', { name: 'Auto' }).isChecked()) &&
+      (await headStart.inputValue()) === String(defaults.pcmConnectBurstMs),
+  );
+  const landed = await focusFacts(a);
+  check(
+    'after a reset, Reset is disabled and focus lands on a control in the page',
+    (await reset.isDisabled()) && landed.inMain && landed.control,
+    landed,
+  );
+  await a.shot(`15-settings-reset-done-${tag}`);
+
+  await a.page.locator('[role="radiogroup"] label', { hasText: 'Light' }).click();
+  await a.page.waitForTimeout(300);
+  await reset.click();
+  await a.page.waitForTimeout(300);
+  await a.shot(`16-settings-reset-dialog-light-${tag}`);
+  await a.page.keyboard.press('Escape');
+  await a.page.waitForTimeout(300);
+  await a.page.locator('[role="radiogroup"] label', { hasText: 'Auto' }).click();
+  await lib.ipc('remove_manual_speaker_ip', { ip: '192.168.1.250' });
+}
+
+/**
  * The toast row and focus: whether a toast shows, its words, and whether it sits outside the
  * scroller and clear of the focused control.
  * @param {import('./lib.mjs').App} app - The app
@@ -886,6 +1012,7 @@ try {
           (await roomCards(a)).find((c) => c.name === 'Kitchen'),
         );
         await stopEverything();
+        await checkReset(a);
       }
     }
   });

@@ -7,15 +7,17 @@
 // every value on the end edge, Bespoke with Advanced open (rules inside, controls and the
 // readout's values on the card's end edge, every row's help on one edge, the wide row's too),
 // nothing moving when a setting saves, the Toast's bar sticky with the focused control never
-// under it, a Notice in a section keeping its own padding, About's Check for updates (the
-// releases page unpacked, each answer of a stand-in store), and #about landing on About. Run
+// under it, a Notice in a section keeping its own padding, Reset all settings (asks first,
+// Cancel changes nothing, Reset puts the defaults back and keeps the companion's address),
+// About's Check for updates (the releases page unpacked, each answer of a stand-in store), and
+// #about landing on About. Run
 // from check.mjs; the run's scale and scheme come from it.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as lib from './lib.mjs';
 
 /** The sections, in the drawing's order (Language is hidden while there is one language). */
-const ORDER = ['Appearance', 'Companion', 'Audio', 'Finer points', 'Saved sets', 'About'];
+const ORDER = ['Appearance', 'Companion', 'Audio', 'Finer points', 'Saved sets', 'Reset', 'About'];
 
 /** The windows the page is checked at, in CSS px. */
 const WIDTHS = [1200, 600, 400];
@@ -354,6 +356,119 @@ async function updatesPass(env, o, { check, dark }) {
 }
 
 /**
+ * The stored settings, the Reset button's state and where focus is.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @returns {Promise<object>} The facts
+ */
+const resetFacts = (o) =>
+  o.eval(`
+    const s = (await chrome.storage.local.get('extensionSettings')).extensionSettings ?? {};
+    const reset = document.querySelector('button[aria-label="Reset all settings"]');
+    const d = document.querySelector('dialog[open]');
+    const a = document.activeElement;
+    return {
+      theme: s.theme, audioMode: s.audioMode, keepTabAudible: s.keepTabAudible,
+      startCeiling: s.startCeiling, serverUrl: s.serverUrl, useAutoDiscover: s.useAutoDiscover,
+      dark: document.documentElement.dataset.theme ?? null,
+      resetDisabled: reset?.disabled ?? null,
+      dialog: d ? d.querySelector('h2')?.innerText.trim() : null,
+      focus: (a?.getAttribute('aria-label') || a?.innerText || a?.tagName || '').trim(),
+      focusControl: Boolean(a && a !== document.body && a.matches('button, a[href], input, select')),
+    };`);
+
+/**
+ * Settings › Reset: with settings changed (Theme by hand, the rest stored as the page saves
+ * them), Reset asks first in the Dialog, starting on Cancel; Cancel changes nothing and gives
+ * focus back; Reset puts the defaults back, keeps the companion's address and how it is found,
+ * and disables itself. Screenshots the section and the Dialog in the dark theme, then after
+ * the reset (Auto, this run's scheme), and the Dialog over the light theme.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @param {object} t - The check's helpers
+ * @param {(name: string, ok: boolean, detail?: unknown) => void} t.check - Records a check
+ * @param {(target: object, step: string) => Promise<string>} t.shot - Saves a screenshot
+ * @param {number} t.scale - The device scale
+ */
+async function resetPass(o, { check, shot, scale }) {
+  await resize(o, 600, scale, 900);
+  await o.eval(`
+    const s = (await chrome.storage.local.get('extensionSettings')).extensionSettings;
+    await chrome.storage.local.set({ extensionSettings: { ...s, audioMode: 'low',
+      keepTabAudible: false, startCeiling: 55 } });`);
+  await lib.sleep(400);
+  await o.click('label', 'Dark');
+  await lib.sleep(600);
+  const before = await resetFacts(o);
+  check(
+    'options: Reset is enabled once a setting differs from its default',
+    before.resetDisabled === false && before.theme === 'dark',
+    before,
+  );
+  await o.eval(
+    `document.querySelector('button[aria-label="Reset all settings"]').scrollIntoView({ block: 'center', behavior: 'instant' })`,
+  );
+  await lib.sleep(300);
+  await shot(o, '12-options-reset-dark');
+
+  await o.click('button[aria-label="Reset all settings"]');
+  await lib.sleep(500);
+  let d = await resetFacts(o);
+  check(
+    'options: Reset all settings asks first in the Dialog, starting on Cancel',
+    d.dialog === 'Reset all settings' && d.focus === 'Cancel',
+    d,
+  );
+  await shot(o, '13-options-reset-dialog-dark');
+  await o.click('dialog[open] button', 'Cancel');
+  await lib.sleep(500);
+  d = await resetFacts(o);
+  check(
+    'options: Cancel closes the Dialog, changes nothing and gives focus back to Reset',
+    d.dialog === null &&
+      d.focus === 'Reset all settings' &&
+      d.theme === 'dark' &&
+      d.audioMode === 'low' &&
+      d.startCeiling === 55,
+    d,
+  );
+
+  await o.click('button[aria-label="Reset all settings"]');
+  await lib.sleep(500);
+  await o.click('dialog[open] button', 'Reset');
+  await lib.sleep(1000);
+  const after = await resetFacts(o);
+  check(
+    'options: Reset puts every setting back to its default',
+    after.dialog === null &&
+      after.theme === 'auto' &&
+      after.audioMode === 'high' &&
+      after.keepTabAudible === true &&
+      after.startCeiling === 30,
+    after,
+  );
+  check(
+    "options: Reset keeps the companion's address and how it is found",
+    after.serverUrl === before.serverUrl && after.useAutoDiscover === before.useAutoDiscover,
+    { before, after },
+  );
+  check(
+    'options: after a reset, Reset is disabled and focus lands on a control',
+    after.resetDisabled === true && after.focusControl,
+    after,
+  );
+  await shot(o, '14-options-reset-done');
+
+  await o.click('label', 'Light');
+  await lib.sleep(600);
+  await o.click('button[aria-label="Reset all settings"]');
+  await lib.sleep(500);
+  await shot(o, '15-options-reset-dialog-light');
+  await o.key('Escape');
+  await lib.sleep(400);
+  await o.click('label', 'Auto');
+  await lib.sleep(400);
+}
+
+/**
  * Runs the options page pass.
  * @param {object} env - What lib.launch() returned
  * @param {object} t - The check's helpers
@@ -622,8 +737,9 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
   await lib.sleep(600);
 
   // ── Nothing moves when a setting saves ─────────────────────────────────
+  // A closed Dialog is in no layout (and an open one is in the top layer), so it is left out.
   const tops = () =>
-    o.eval(`return [...document.querySelectorAll('main > :not([data-sticky-bar])')].map((e) =>
+    o.eval(`return [...document.querySelectorAll('main > :not([data-sticky-bar], dialog)')].map((e) =>
       Math.round(e.getBoundingClientRect().top + scrollY))`);
   const before = await tops();
   await clickSwitch(o, 'Video sync');
@@ -683,6 +799,9 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
   } else {
     check('options: a saved set to remove for the Toast', false, 'no saved set');
   }
+
+  // ── Reset all settings (§11 call 101) ──────────────────────────────────
+  await resetPass(o, { check, shot, scale });
 
   // ── About's Check for updates ──────────────────────────────────────────
   await resize(o, 600, scale);

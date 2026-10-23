@@ -61,7 +61,9 @@ scale and a scheme) starts a fresh companion and walks the app at the default wi
   (its value regular, on the card's end edge, beside its term), Show diagnostics
   disabled without speaker monitoring, and the reserve Meter on a casting card after an injected
   reading (`POST /health`; the fake speakers have no playout clock, so the monitor never measures
-  one here);
+  one here), and Reset all settings: with settings changed it asks first in the Dialog, Cancel
+  changes nothing and gives focus back, Reset puts every setting back to its default (read back
+  through the commands) and keeps the port and the speakers added by IP address;
 - Not found: its title the page heading, Back to Speakers a link that goes there;
 - at every view: exactly one scroller, nothing wider than the window, the rail narrow under 45rem
   and wide from it, axe in this run's scheme, and no console errors, failed requests or
