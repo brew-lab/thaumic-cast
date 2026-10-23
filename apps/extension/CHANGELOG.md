@@ -1,5 +1,11 @@
 # @thaumic-cast/extension
 
+## 0.13.1
+
+### Patch Changes
+
+- [#273](https://github.com/brew-lab/thaumic-cast/pull/273) [`73ce18a`](https://github.com/brew-lab/thaumic-cast/commit/73ce18a4ce9a64b3fd60e51bb8f1d9489408e945) Thanks [@skezo](https://github.com/skezo)! - The extension is now called "Thaumic Cast: Play Any Tab on Sonos" in the Chrome Web Store, on the extensions page and in the install prompt, so its name says what it does. The toolbar button and menus keep the short "Thaumic Cast".
+
 ## 0.13.0
 
 ### Minor Changes
