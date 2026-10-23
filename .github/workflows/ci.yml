@@ -170,9 +170,36 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The browser's system packages (some 120 MB of them for WebKit) come from apt, and the
+      # runners' mirror can take minutes to serve them; so apt keeps what it fetches in a
+      # folder that is cached, and a later run only fetches what changed. The key follows the
+      # runner image and the Playwright version, the two things that change the packages.
+      - name: Keep apt's packages in the cache's folder
+        id: apt
+        run: |
+          mkdir -p ~/apt-archives/partial
+          echo "Dir::Cache::Archives \"$HOME/apt-archives\";" |
+            sudo tee /etc/apt/apt.conf.d/99-ci-archives
+          echo "key=playwright-apt-${{ matrix.project }}-$ImageOS-$ImageVersion-$(
+            bunx playwright --version | tr -cd '0-9.')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore apt's packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt.outputs.key }}
+          restore-keys: playwright-apt-${{ matrix.project }}-
+
       - name: Install Playwright ${{ matrix.project }}
         working-directory: packages/ui
         run: bunx playwright install --with-deps ${{ matrix.project }}
+
+      # Packages no longer in the archive are dropped, so the cache does not grow, and the
+      # folder is handed back to the runner's user so the cache can read it.
+      - name: Tidy apt's packages for the cache
+        run: |
+          sudo apt-get autoclean
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - name: Run axe, the behaviour tests and screenshots
         working-directory: packages/ui
