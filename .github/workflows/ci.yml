@@ -310,13 +310,14 @@ jobs:
             sudo tee /etc/apt/apt.conf.d/99-ci-archives
           echo "key=tauri-apt-$ImageOS-$ImageVersion-$(echo "$PACKAGES" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
           echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "prefix=tauri-apt-$ImageOS-" >> "$GITHUB_OUTPUT"
 
       - name: Restore apt's packages
         uses: actions/cache@v4
         with:
           path: ~/apt-archives
           key: ${{ steps.apt.outputs.key }}
-          restore-keys: tauri-apt-
+          restore-keys: ${{ steps.apt.outputs.prefix }}
 
       - name: Install system dependencies
         run: |
