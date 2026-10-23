@@ -3,16 +3,53 @@ import { describe, expect, it } from 'bun:test';
 import { CONTROL_EVENT, METADATA_EVENT } from './constants';
 import { startMediaReader, type ReaderPage } from './reader';
 
-/** A media session that records what reaches the browser's own setActionHandler. */
+/**
+ * A media session shaped like the browser's: metadata and playbackState are accessors on the
+ * prototype, and the values they hold are what the browser's media session sees.
+ */
+class FakeSession {
+  /** What the browser's media session holds. */
+  readonly browser = {
+    metadata: null as MediaMetadata | null,
+    playbackState: 'none' as MediaSessionPlaybackState,
+    handlers: new Map<string, MediaSessionActionHandler | null>(),
+  };
+
+  get metadata(): MediaMetadata | null {
+    return this.browser.metadata;
+  }
+
+  set metadata(value: MediaMetadata | null) {
+    this.browser.metadata = value;
+  }
+
+  get playbackState(): MediaSessionPlaybackState {
+    return this.browser.playbackState;
+  }
+
+  set playbackState(value: MediaSessionPlaybackState) {
+    if (!['none', 'paused', 'playing'].includes(value)) throw new TypeError('bad state');
+    this.browser.playbackState = value;
+  }
+
+  setActionHandler(action: MediaSessionAction, handler: MediaSessionActionHandler | null): void {
+    this.browser.handlers.set(action, handler);
+  }
+}
+
+/**
+ * Reads a property through the browser's own getter, past the reader's accessor.
+ * @param session - The session
+ * @param key - The property
+ * @returns What the browser's media session holds
+ */
+function nativeValue(session: MediaSession, key: 'metadata' | 'playbackState'): unknown {
+  return Object.getOwnPropertyDescriptor(FakeSession.prototype, key)!.get!.call(session);
+}
+
+/** A fake browser media session. */
 function fakeSession(): MediaSession {
-  const native = new Map<string, MediaSessionActionHandler | null>();
-  return {
-    metadata: null,
-    playbackState: 'none',
-    setActionHandler(action: MediaSessionAction, handler: MediaSessionActionHandler | null) {
-      native.set(action, handler);
-    },
-  } as unknown as MediaSession;
+  return new FakeSession() as unknown as MediaSession;
 }
 
 /** A page: its window and media session. */
@@ -84,5 +121,45 @@ describe('startMediaReader', () => {
     expect(states).toEqual([
       expect.objectContaining({ supportedActions: ['nexttrack'], playbackState: 'none' }),
     ]);
+  });
+
+  it('should pass metadata and playbackState on to the browser and still emit them', async () => {
+    const page = fakePage();
+    startMediaReader(page);
+    const states: unknown[] = [];
+    page.win.addEventListener(METADATA_EVENT, (e) => void states.push((e as CustomEvent).detail));
+    const metadata = { title: 'Song', artist: 'Band', album: '', artwork: [] };
+
+    page.session.metadata = metadata as unknown as MediaMetadata;
+    page.session.playbackState = 'playing';
+
+    expect(nativeValue(page.session, 'metadata')).toBe(metadata);
+    expect(nativeValue(page.session, 'playbackState')).toBe('playing');
+    expect(page.session.metadata).toBe(metadata as unknown as MediaMetadata);
+    expect(page.session.playbackState).toBe('playing');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(states).toEqual([
+      expect.objectContaining({ title: 'Song', artist: 'Band', playbackState: 'playing' }),
+    ]);
+  });
+
+  it('should let a value the browser refuses throw to the page, unchanged', () => {
+    const page = fakePage();
+    startMediaReader(page);
+
+    expect(() => {
+      page.session.playbackState = 'stopped' as MediaSessionPlaybackState;
+    }).toThrow(TypeError);
+    expect(nativeValue(page.session, 'playbackState')).toBe('none');
+  });
+
+  it('should pass values on to the browser when a second reader stood down', () => {
+    const page = fakePage();
+    startMediaReader(page);
+    startMediaReader(page);
+
+    page.session.playbackState = 'paused';
+
+    expect(nativeValue(page.session, 'playbackState')).toBe('paused');
   });
 });
