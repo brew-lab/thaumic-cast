@@ -744,7 +744,7 @@ export function EmptyStateSpecimen(): JSX.Element {
           <EmptyState body="No speaker answered. Check they are switched on, and on the same network as the companion." />
         </Card>
         <Card>
-          <EmptyState kind="searching" body="Asking for speakers…" />
+          <EmptyState kind="searching" body="Asking for rooms…" />
         </Card>
         <Card>
           <EmptyState
@@ -1082,7 +1082,7 @@ export function PageHeaderSpecimen(): JSX.Element {
   return (
     <div class="stack" data-density="desktop">
       <PageHeader
-        title="Speakers"
+        title="Rooms"
         summary="4 rooms, 2 casting"
         actions={
           <Cluster>
@@ -1112,7 +1112,7 @@ export function CardSpecimen(): JSX.Element {
           <p class="label">A titled card is a section named by its SectionHeader.</p>
         </Card>
         <Card
-          title="Speakers"
+          title="Rooms"
           level={3}
           meta="2 casting"
           actions={

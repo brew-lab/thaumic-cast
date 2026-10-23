@@ -342,7 +342,7 @@ export function RailSpecimen(): JSX.Element {
 
 /** The rail's destinations. */
 const RAIL_ITEMS: RailItem[] = [
-  { href: '#speakers', icon: 'speaker', label: 'Speakers' },
+  { href: '#speakers', icon: 'speaker', label: 'Rooms' },
   { href: '#server', icon: 'server', label: 'Server' },
   { href: '#settings', icon: 'settings', label: 'Settings' },
 ];
@@ -424,7 +424,7 @@ export function FluidSpecimen(): JSX.Element {
           announce={false}
         />
         <Card>
-          <EmptyState title="No speakers yet" body="Speakers are listed here once they answer." />
+          <EmptyState title="No rooms yet" body="Rooms are listed here once they answer." />
         </Card>
       </div>
     </div>

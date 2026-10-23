@@ -1,5 +1,5 @@
 /**
- * The Speakers view's rooms: one card per room, worked out from the household's groups, the
+ * The Rooms view's rooms: one card per room, worked out from the household's groups, the
  * casts and the transport states, in the order the view shows them.
  */
 import { roomsOf, type Room, type ZoneGroup } from '@thaumic-cast/protocol';

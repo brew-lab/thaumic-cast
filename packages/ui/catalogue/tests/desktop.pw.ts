@@ -188,7 +188,7 @@ test('a Toast sits in the row under main, outside the scroller, and never over f
 test("Not found's title is the page heading and its action a link", async ({ page }) => {
   await open(page, 'desktop&view=notfound', 600, 360);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('There is no page here');
-  await expect(page.getByRole('link', { name: 'Back to Speakers' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Back to Rooms' })).toBeVisible();
 });
 
 test('the full Wizard is not a modal, and its footer is one line with Back from step 2', async ({

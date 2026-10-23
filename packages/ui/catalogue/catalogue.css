@@ -1102,7 +1102,7 @@
     gap: var(--space-4);
   }
 
-  /* The Speakers view's grid, as the desktop lays it out. */
+  /* The Rooms view's grid, as the desktop lays it out. */
   .speaker-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--track-card)), 1fr));

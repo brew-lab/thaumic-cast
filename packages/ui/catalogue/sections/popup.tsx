@@ -1029,20 +1029,20 @@ export function CastBarSpecimen(): JSX.Element {
       <PopupColumn label="nothing chosen; ready, no line and one line; leaves, restarts and the hint; an older companion">
         <Bar label="Cast" disabled lines={['Choose a room to cast to.']} />
         <Bar label="Cast to 1 room" />
-        <Bar label="Cast to 4 rooms" lines={['Whatever the speaker is playing will stop.']} />
+        <Bar label="Cast to 4 rooms" lines={['Whatever the room is playing will stop.']} />
         <Bar
           label="Cast to 2 rooms"
           lines={[
             'Kitchen leaves its Sonos group until you stop.',
             'Music in Patio starts again from the top.',
-            'Whatever the speaker is playing will stop.',
+            'Whatever the room is playing will stop.',
           ]}
         />
         <Bar
           label="Cast to 3 rooms"
           lines={[
             'Patio plays too, as it is grouped with Kitchen.',
-            'Whatever the speaker is playing will stop.',
+            'Whatever the room is playing will stop.',
           ]}
         />
       </PopupColumn>

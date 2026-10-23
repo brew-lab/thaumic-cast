@@ -104,6 +104,6 @@ export const PICKER: RoomPickerStrings = {
   waiting: 'Rooms are listed here once the companion answers.',
   empty:
     'No speaker answered. Check they are switched on, and on the same network as the companion.',
-  loading: 'Asking for speakers…',
+  loading: 'Asking for rooms…',
   start: START,
 };

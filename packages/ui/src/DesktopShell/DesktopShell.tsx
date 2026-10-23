@@ -11,7 +11,7 @@ export interface DesktopShellProps {
   /** The one Toast (what Stop all casts stopped), or nothing: the row is 0 tall without one. */
   toast?: ComponentChildren;
   /**
-   * The view runs the main's full width (Speakers, for its card grid). Otherwise the view
+   * The view runs the main's full width (Rooms, for its card grid). Otherwise the view
    * keeps to `--page-max` (Server, Settings, Not found).
    */
   wide?: boolean;
