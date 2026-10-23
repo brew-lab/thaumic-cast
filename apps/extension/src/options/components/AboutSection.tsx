@@ -6,6 +6,7 @@ import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
 import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
 import type { ConnectionStatus } from '../../popup/hooks/useConnectionStatus';
 import { UpdatesRow } from './UpdatesRow';
+import { IntroductionRow } from './IntroductionRow';
 
 /** The About card's id, which the popup's marked Settings opens (`#about`). */
 export const ABOUT_ID = 'about';
@@ -16,7 +17,8 @@ const ABOUT_HASH = `#${ABOUT_ID}`;
  * connected to a desktop app or server — that companion's reported version
  * metadata. Reads the options page's `useConnectionStatus` (backed by
  * `connectionState`), which is populated by `/health` at discovery and
- * `INITIAL_STATE` on WebSocket connect. Under the readout, Check for updates (UpdatesRow).
+ * `INITIAL_STATE` on WebSocket connect. Under the readout, Check for updates (UpdatesRow)
+ * and Show again for the onboarding (IntroductionRow).
  * @param root0
  * @param root0.connection - The options page's connection status
  * @returns The about section element
@@ -98,6 +100,7 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
     <SettingsSection id={ABOUT_ID} title={t('about_section_title')}>
       <DescriptionList kind="readout" rows={rows} />
       <UpdatesRow />
+      <IntroductionRow />
     </SettingsSection>
   );
 }

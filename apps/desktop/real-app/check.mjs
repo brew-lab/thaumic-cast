@@ -1016,6 +1016,89 @@ try {
       }
     }
   });
+  // ── Settings › About › Show again: the onboarding from its first step ───────
+  await section('Introduction', async () => {
+    const a = await openApp('default');
+    await a.goto('/settings');
+    await a.page.getByRole('heading', { name: 'About' }).waitFor();
+    // Everything Show again must leave alone: the app's stored values but the onboarding, and
+    // the settings the core keeps.
+    const kept = async () =>
+      JSON.stringify({
+        local: await a.page.evaluate(() =>
+          Object.fromEntries(
+            Object.entries(localStorage).filter(([k]) => k !== 'thaumic-cast-onboarding'),
+          ),
+        ),
+        autostart: await lib.ipc('get_autostart_enabled'),
+        monitor: await lib.ipc('get_speaker_monitor'),
+        headStart: await lib.ipc('get_pcm_connect_burst_ms'),
+        drift: await lib.ipc('get_drift_compensation'),
+        manual: await lib.ipc('get_manual_speaker_ips'),
+      });
+    const onboarding = () =>
+      a.page.evaluate(() => JSON.parse(localStorage.getItem('thaumic-cast-onboarding') ?? 'null'));
+    const before = await kept();
+    const show = button(a, 'Show again');
+    check(
+      'Settings: About offers Introduction, Show again, with its help',
+      (await show.count()) === 1 &&
+        (await a.page.evaluate(() =>
+          document.body.innerText.includes(
+            'Goes through the first-run steps again, from the start.',
+          ),
+        )),
+    );
+    for (const dark of [false, true]) {
+      await a.page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await a.page.waitForTimeout(200);
+      const about = a.page.locator('main section', {
+        has: a.page.getByRole('heading', { name: 'About' }),
+      });
+      await about.scrollIntoViewIfNeeded();
+      await about.screenshot({
+        path: `${lib.SHOTS}/13-about-introduction-${dark ? 'dark' : 'light'}-${tag}.png`,
+      });
+    }
+    await a.page.emulateMedia({ colorScheme: scheme });
+    await show.click();
+    const first = await until(() =>
+      a.page.evaluate(() => {
+        const text = document.body.innerText;
+        return text.includes('Welcome to Thaumic Cast') &&
+          document.body.innerHTML.includes('Step 1 of 5') &&
+          !document.querySelector('nav')
+          ? text
+          : null;
+      }),
+    );
+    await a.shot(`13-introduction-step-1-${tag}`);
+    const reset = await onboarding();
+    check(
+      'Show again starts the onboarding at once, over the window, at step 1',
+      Boolean(first) && reset?.completed === false && reset?.skipped === false,
+      reset,
+    );
+    await button(a, 'Skip the formalities').click();
+    const home = await until(() =>
+      a.page.evaluate(
+        () =>
+          Boolean(document.querySelector('nav')) &&
+          document.querySelector('h1')?.innerText.trim() === 'Rooms',
+      ),
+    );
+    await a.shot(`13-introduction-skipped-${tag}`);
+    const after = await onboarding();
+    check(
+      'skipping it goes back to the window, on Rooms, and marks it skipped as the first time',
+      Boolean(home) && after?.completed === true && after?.skipped === true,
+      after,
+    );
+    check('Show again changes no setting', (await kept()) === before, {
+      before,
+      after: await kept(),
+    });
+  });
   // ── Not found ─────────────────────────────────────────────────────────────
   await section('Not found', async () => {
     for (const size of ['default', 'narrow']) {

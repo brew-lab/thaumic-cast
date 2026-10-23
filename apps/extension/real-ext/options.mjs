@@ -9,7 +9,8 @@
 // nothing moving when a setting saves, the Toast's bar sticky with the focused control never
 // under it, a Notice in a section keeping its own padding, Reset all settings (asks first,
 // Cancel changes nothing, Reset puts the defaults back and keeps the companion's address),
-// About's Check for updates (the releases page unpacked, each answer of a stand-in store), and
+// About's Check for updates (the releases page unpacked, each answer of a stand-in store),
+// About's Show again (the popup opened on the onboarding's first step, or the toolbar note), and
 // #about landing on About. Run
 // from check.mjs; the run's scale and scheme come from it.
 import { writeFileSync } from 'node:fs';
@@ -469,6 +470,158 @@ async function resetPass(o, { check, shot, scale }) {
 }
 
 /**
+ * Reads About's Introduction row: its name, help, note and Button.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @returns {Promise<object|null>} The row's facts, or null when it is missing
+ */
+const introductionRow = (o) =>
+  o.eval(`
+    const about = document.getElementById('about');
+    const row = [...about.querySelectorAll('[data-setrow]')]
+      .find((r) => r.querySelector('p')?.innerText.trim() === 'Introduction');
+    if (!row) return null;
+    const b = row.querySelector('button');
+    const ps = [...row.querySelectorAll(':scope > p')].map((p) => p.innerText.trim());
+    const cs = getComputedStyle(about);
+    const edge = about.getBoundingClientRect().right - parseFloat(cs.paddingInlineEnd)
+      - parseFloat(cs.borderInlineEndWidth);
+    return {
+      button: b.innerText.trim(), help: ps[0], note: ps[1] ?? null,
+      described: (b.getAttribute('aria-describedby') || '').split(' ').filter(Boolean).length,
+      endGap: Math.round((edge - b.getBoundingClientRect().right) * 10) / 10,
+    };`);
+
+/**
+ * What the options page and the popup keep in storage: the onboarding, and the settings and
+ * saved sets Show again must leave alone.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @returns {Promise<object>} The stored values, the latter two as JSON
+ */
+const stored = (o) =>
+  o.eval(`
+    const all = await chrome.storage.local.get(null);
+    const rest = Object.fromEntries(Object.entries(all).filter(([k]) => k !== 'extensionOnboarding'));
+    return { onboarding: all.extensionOnboarding ?? null, rest: JSON.stringify(rest) };`);
+
+/**
+ * Whether the popup shows the onboarding on its first step.
+ * @param {import('./lib.mjs').Target} p - The popup
+ * @returns {Promise<object>} What it shows
+ */
+const firstStep = (p) =>
+  p.eval(`
+    const text = document.body.innerText;
+    return {
+      welcome: text.includes('Welcome to Thaumic Cast'),
+      step1: document.body.innerHTML.includes('Step 1 of 4'),
+      skip: text.includes('Skip the formalities'),
+    };`);
+
+/**
+ * About's Show again. Pressed, it must reset the onboarding (and nothing else) and open the
+ * popup on the onboarding's first step; skipping there must mark it skipped again, as the
+ * first time. Then the browser is made to refuse openPopup: the row must say to open Thaumic
+ * Cast from the toolbar, the popup opened from the toolbar must start the onboarding, and
+ * skipping it must clear the note. The onboarding ends skipped, as the run found it.
+ * @param {object} env - What lib.launch() returned
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @param {object} t - The check's helpers
+ * @param {(name: string, ok: boolean, detail?: unknown) => void} t.check - Records a check
+ * @param {boolean} t.dark - The run's scheme
+ */
+async function introductionPass(env, o, { check, dark }) {
+  const page = env.ctx.pages().find((x) => x.url().includes('/src/options/'));
+  const row = await introductionRow(o);
+  check(
+    'options: About offers Introduction, Show again',
+    row?.button === 'Show again' &&
+      row.help === 'Goes through the first-run steps again, from the start.' &&
+      row.note === null &&
+      row.described === 1 &&
+      Math.abs(row.endGap) < 1,
+    row,
+  );
+  const before = await stored(o);
+  // No popup left open from earlier, so the one found after the press is the one it opened.
+  for (const t of (await env.targets()).filter((x) => x.url.includes('/src/popup/index.html'))) {
+    await fetch(`http://127.0.0.1:${env.port}/json/close/${t.id}`).catch(() => {});
+  }
+  await page?.bringToFront();
+  await lib.sleep(400);
+  await o.click('#about button', 'Show again');
+  let p = await env.attach('/src/popup/index.html').catch(() => null);
+  const after = await stored(o);
+  check(
+    'options: Show again resets the onboarding and leaves settings and sets alone',
+    before.onboarding?.completed === true &&
+      after.onboarding?.completed === false &&
+      after.onboarding?.skipped === false &&
+      after.rest === before.rest,
+    { before: before.onboarding, after: after.onboarding, same: after.rest === before.rest },
+  );
+  check('options: Show again opens the popup', Boolean(p));
+  if (p) {
+    await p.scheme(dark);
+    await lib.sleep(1200);
+    const first = await firstStep(p);
+    check(
+      'popup: opened from Show again, it starts the onboarding at step 1',
+      first.welcome && first.step1 && first.skip,
+      first,
+    );
+    await p.shot('introduction-popup');
+    await p.click('button', 'Skip the formalities');
+    await lib.sleep(800);
+    const skipped = await stored(o);
+    check(
+      'popup: skipping the onboarding again marks it skipped, as the first time',
+      skipped.onboarding?.completed === true && skipped.onboarding?.skipped === true,
+      skipped.onboarding,
+    );
+    p.close();
+  }
+  const row2 = await introductionRow(o);
+  check('options: with the popup opened, the row adds no note', row2?.note === null, row2);
+
+  // ── A browser that cannot open the popup from here ──
+  await page?.bringToFront();
+  await o.eval(`chrome.action.openPopup = async () => {
+    throw new Error('Could not find an active browser window.');
+  }`);
+  await o.click('#about button', 'Show again');
+  await lib.sleep(800);
+  const refused = await introductionRow(o);
+  const reset = await stored(o);
+  check(
+    'options: when the popup cannot open, the row says to open it from the toolbar',
+    refused?.note === 'Open Thaumic Cast from the toolbar to start.' &&
+      refused.described === 2 &&
+      reset.onboarding?.completed === false,
+    { refused, onboarding: reset.onboarding },
+  );
+  await aboutShots(o, 'introduction-toolbar', dark);
+  p = await env.popup({ dark });
+  const first = await firstStep(p);
+  check(
+    'popup: opened from the toolbar after the note, it starts the onboarding at step 1',
+    first.welcome && first.step1 && first.skip,
+    first,
+  );
+  await p.click('button', 'Skip the formalities');
+  await lib.sleep(800);
+  p.close();
+  const cleared = await introductionRow(o);
+  check(
+    'options: skipping the onboarding clears the toolbar note',
+    cleared?.note === null && (await stored(o)).onboarding?.skipped === true,
+    cleared,
+  );
+  await page?.bringToFront();
+  await o.cdp.send('Page.reload');
+  await lib.sleep(1200);
+}
+
+/**
  * Runs the options page pass.
  * @param {object} env - What lib.launch() returned
  * @param {object} t - The check's helpers
@@ -735,6 +888,11 @@ export async function optionsPass(env, { check, shot, dark, scale }) {
   );
   await o.click('label', 'Find it automatically');
   await lib.sleep(600);
+
+  // ── About's Show again ─────────────────────────────────────────────────
+  // Before a setting is switched below: under xvfb the window loses focus for good once Video
+  // sync is toggled, and openPopup then finds no active window.
+  await introductionPass(env, o, { check, dark });
 
   // ── Nothing moves when a setting saves ─────────────────────────────────
   // A closed Dialog is in no layout (and an open one is in the top layer), so it is left out.

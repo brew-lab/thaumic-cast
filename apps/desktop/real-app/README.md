@@ -64,6 +64,8 @@ scale and a scheme) starts a fresh companion and walks the app at the default wi
   one here), and Reset all settings: with settings changed it asks first in the Dialog, Cancel
   changes nothing and gives focus back, Reset puts every setting back to its default (read back
   through the commands) and keeps the port and the speakers added by IP address;
+- About's Show again: the onboarding at once, over the window, at step 1; Skip goes back to the
+  window on Rooms with the onboarding marked skipped, and no setting changed;
 - Not found: its title the page heading, Back to Rooms a link that goes there;
 - at every view: exactly one scroller, nothing wider than the window, the rail narrow under 45rem
   and wide from it, axe in this run's scheme, and no console errors, failed requests or

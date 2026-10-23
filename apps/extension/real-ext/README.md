@@ -51,7 +51,10 @@ bar (0 tall without a Toast, sticky with one, never over focus), Reset all setti
 first in the Dialog, Cancel changes nothing, Reset puts the defaults back and keeps the companion's
 address), About's Check for updates (unpacked, it opens the releases page; a stand-in store install, its
 manifest given an `update_url` and `requestUpdateCheck` answering from a list, says each answer
-and offers Restart, never pressed) and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
+and offers Restart, never pressed), About's Show again (the onboarding reset and nothing else, the
+popup opened on its first step and Skip marking it skipped again; with `openPopup` refused, the
+note "Open Thaumic Cast from the toolbar to start.", the toolbar popup on step 1, and the note
+gone after Skip) and `#about`. It runs last because once it closes its tab the toolbar popup finds no active window
 to open over. After the runs, the lifecycle pass (`lifecycle.mjs`, once, with its own companion):
 a page controlled by a service worker with an enforced Connection-Allowlist, as YouTube Music
 sends, must still get the content scripts with nothing blocked or logged; a cast's companion
