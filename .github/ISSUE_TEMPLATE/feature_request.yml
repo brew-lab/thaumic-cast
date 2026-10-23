@@ -22,7 +22,7 @@ body:
       description: Which part of Thaumic Cast would this affect?
       options:
         - Desktop App
-        - Chrome Extension
+        - Browser Extension
         - Headless Server
         - Core Library
         - Documentation

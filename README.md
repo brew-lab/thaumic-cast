@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="../../releases/latest">Download</a> · <a href="https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm">Chrome extension</a> · <a href="#quick-start">Quick start</a> · <a href="#development">Development</a>
+  <a href="../../releases/latest">Download</a> · <a href="https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm">Browser extension</a> · <a href="#quick-start">Quick start</a> · <a href="#development">Development</a>
 </p>
 
 <p align="center">
@@ -22,9 +22,10 @@ because there is nobody to have an account with.
 
 ## Quick start
 
-It comes in two pieces. The extension lives in Chrome and is where you press Cast. The other piece finds the speakers
-and serves them the audio: either the desktop app, or Thaumic Cast Server, which is the same machinery with the window
-taken off, for the sort of computer that is kept in a cupboard and visited twice a year.[^1]
+It comes in two pieces. The extension lives in your browser (Chrome, Edge, Brave and others built on Chrome) and is
+where you press Cast. The other piece finds the speakers and serves them the audio: either the desktop app, or Thaumic
+Cast Server, which is the same machinery with the window taken off, for the sort of computer that is kept in a cupboard
+and visited twice a year.[^1]
 
 1. Download and run the **desktop app** from the [latest release](../../releases/latest). If the computer in question
    has no screen to show it on, run the server instead: see [`apps/server/README.md`](apps/server/README.md).
@@ -41,7 +42,7 @@ taken off, for the sort of computer that is kept in a cupboard and visited twice
 ## Downloads
 
 - Desktop app (Windows/macOS/Linux): [Latest release](../../releases/latest)
-- Chrome extension: [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm), or the zip from the [latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
+- Browser extension: [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm), or the zip from the [latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
 - Thaumic Cast Server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
 
 > [!NOTE]

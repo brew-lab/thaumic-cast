@@ -176,9 +176,9 @@
   "onboarding.speakers.manual_error_generic": "The speaker could not be added, and the reason did not make it this far. Check the address, then try again.",
 
   "onboarding.extension.title": "The extension",
-  "onboarding.extension.subtitle": "The half that lives in Chrome",
-  "onboarding.extension.body": "Install the Thaumic Cast extension in Chrome. It is where you choose a tab and press Cast; without it this app has speakers and nothing to tell them.",
-  "onboarding.extension.chrome_link": "Install for Chrome",
+  "onboarding.extension.subtitle": "The half that lives in your browser",
+  "onboarding.extension.body": "Install the Thaumic Cast extension in your browser (Chrome, Edge, Brave and others built on Chrome). It is where you choose a tab and press Cast; without it this app has speakers and nothing to tell them.",
+  "onboarding.extension.chrome_link": "Install from the Chrome Web Store",
   "onboarding.extension.github_link": "Download from GitHub",
   "onboarding.extension.checking": "Waiting to hear from the extension…",
   "onboarding.extension.connected": "The extension has connected.",
