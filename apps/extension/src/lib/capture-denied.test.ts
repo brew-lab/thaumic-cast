@@ -43,7 +43,7 @@ describe('captureDeniedError', () => {
     const err = captureDeniedError("Extension has not been invoked for the current page's tab.");
 
     expect(i18n.t(err.message, errorParamsOf(err) ?? {})).toBe(
-      "Chrome would not hand over this tab's audio, and wrote its reason down: “Extension has " +
+      "Your browser would not hand over this tab's audio, and wrote its reason down: “Extension has " +
         "not been invoked for the current page's tab.” Try another tab.",
     );
   });

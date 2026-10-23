@@ -165,4 +165,9 @@ describe('extension en.json', () => {
       'Patio and Deck are not answering, so only Kitchen and Study play.',
     );
   });
+
+  it('should call the browser "your browser", never Chrome, since it may be Edge or Brave', () => {
+    const naming = Object.entries(strings).filter(([, value]) => /\bchrome\b/i.test(value));
+    expect(naming).toEqual([]);
+  });
 });
