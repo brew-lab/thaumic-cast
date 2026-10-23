@@ -320,7 +320,7 @@ async function updatesPass(env, o, { check, dark }) {
   check(
     'options: a store install offers Check for updates, asking the store',
     store?.button === 'Check for updates' &&
-      store.help === 'Your browser updates the extension in its own good time. This asks now.' &&
+      store.help === 'Your browser updates the extension by itself. This checks now.' &&
       store.note === null,
     store,
   );
@@ -341,9 +341,7 @@ async function updatesPass(env, o, { check, dark }) {
     ready?.button === 'Restart the extension' &&
       ready.described === 2 &&
       (casting
-        ? ready.disabled &&
-          ready.note ===
-            'A newer version is ready, and can wait until the casts end: restarting would stop them.'
+        ? ready.disabled && ready.note === 'A newer version is ready. Restart once the casts end.'
         : !ready.disabled && ready.note === 'Version 9.9.9 is ready.') &&
       Math.abs(ready.endGap) < 1,
     { ready, casting },
