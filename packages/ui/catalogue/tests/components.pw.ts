@@ -562,6 +562,143 @@ test('Stop sits at one spot in the head row: one room on a red band, three rooms
   expect(red.row && red.onBand).toBe(true);
 });
 
+/** One frame's colours on the skip specimen's band, as RGBA 0–255, from the page's start. */
+interface BandFrame {
+  /** Milliseconds since the first press. */
+  t: number;
+  /** The band's background. */
+  bg: number[];
+  /** The title's ink. */
+  title: number[];
+}
+
+/**
+ * Presses "Change track" on the skip specimen (again after each delay in `then`) and samples
+ * the band and title colours every frame for `ms`.
+ * @param specimen - The skip specimen
+ * @param ms - How long to sample for
+ * @param then - Delays, from the first press, of further presses
+ * @returns The frames
+ */
+async function skipAndSample(
+  specimen: Locator,
+  ms: number,
+  then: number[] = [],
+): Promise<BandFrame[]> {
+  return specimen.evaluate(
+    (root, [ms, then]) =>
+      new Promise<BandFrame[]>((resolve) => {
+        const probe = document
+          .createElement('canvas')
+          .getContext('2d', { willReadFrequently: true })!;
+        const rgba = (color: string): number[] => {
+          probe.clearRect(0, 0, 1, 1);
+          probe.fillStyle = color;
+          probe.fillRect(0, 0, 1, 1);
+          // Premultiplied, so a nearly clear colour reads as nearly clear, whatever its hue.
+          const [r, g, b, a] = probe.getImageData(0, 0, 1, 1).data;
+          return [(r * a) / 255, (g * a) / 255, (b * a) / 255, a];
+        };
+        const title = root.querySelector<HTMLElement>('[id$="-title"]')!;
+        // The band is the head's own element, there with or without a band.
+        const band = title.closest<HTMLElement>('[class*="head"] > div > div')!;
+        const next = [...root.querySelectorAll('button')].find(
+          (b) => b.textContent === 'Change track',
+        )!;
+        const frames: BandFrame[] = [];
+        const pending = [...then];
+        next.click();
+        const t0 = performance.now();
+        const tick = (): void => {
+          const t = performance.now() - t0;
+          if (pending.length && t >= pending[0]) {
+            pending.shift();
+            next.click();
+          }
+          frames.push({
+            t,
+            bg: rgba(getComputedStyle(band).backgroundColor),
+            title: rgba(getComputedStyle(title).color),
+          });
+          if (t < ms) requestAnimationFrame(tick);
+          else resolve(frames);
+        };
+        requestAnimationFrame(tick);
+      }),
+    [ms, then] as const,
+  );
+}
+
+const apart = (a: number[], b: number[]): number =>
+  Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+
+test('a new track cross-fades the band over --dur-change; a quick skip turns from where it is', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const specimen = light(page, 'cast-tile').locator('[data-specimen="track-skip"]');
+  const dur = await specimen.evaluate((el) => {
+    const value = getComputedStyle(el).getPropertyValue('--dur-change').trim();
+    return parseFloat(value) * (value.endsWith('ms') ? 1 : 1000);
+  });
+  expect(dur).toBeGreaterThan(100);
+
+  // Pastel to neon: the band and the title's ink pass through colours that are neither end,
+  // and land on neon within the duration.
+  const frames = await skipAndSample(specimen, dur + 400);
+  await expect(specimen).toHaveAttribute('data-track', '1');
+  const [first, last] = [frames[0], frames.at(-1)!];
+  expect(apart(first.bg, last.bg)).toBeGreaterThan(20);
+  const mid = frames.find((f) => f.t >= dur * 0.4)!;
+  expect(apart(mid.bg, first.bg)).toBeGreaterThan(4);
+  expect(apart(mid.bg, last.bg)).toBeGreaterThan(4);
+  expect(apart(mid.title, first.title) + apart(mid.title, last.title)).toBeGreaterThan(0);
+  const landed = frames.find((f) => apart(f.bg, last.bg) <= 1)!;
+  expect(landed.t).toBeLessThanOrEqual(dur + 100);
+
+  // Neon to red, then at once to no artwork: the band turns from the colour shown, so no
+  // frame jumps (an instant change moves the whole way in one frame) and none flashes back.
+  const quick = await skipAndSample(specimen, dur + 500, [dur / 3]);
+  await expect(specimen).toHaveAttribute('data-track', '3');
+  const span = Math.max(...quick.map((f) => apart(f.bg, quick[0].bg)));
+  const steps = quick.slice(1).map((f, i) => apart(f.bg, quick[i].bg));
+  expect(span).toBeGreaterThan(20);
+  expect(Math.max(...steps)).toBeLessThan(span * 0.6);
+  expect(quick.at(-1)!.bg[3]).toBe(0);
+
+  // Under reduced motion --dur-change is 0: the band arrives in the next frame.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const instant = await skipAndSample(specimen, 200);
+  await expect(specimen).toHaveAttribute('data-track', '0');
+  expect(apart(instant[0].bg, instant.at(-1)!.bg)).toBeLessThanOrEqual(1);
+  expect(instant.at(-1)!.bg[3]).toBe(255);
+});
+
+test('opening a tile puts its band up at once, though a new band fades (§11 calls 83, 99)', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const head = light(page, 'cast-tile')
+    .getByRole('region', { name: 'Mix title' })
+    .getByRole('button', { name: /^Mix title/ });
+  const colours = await head.evaluate(
+    (el) =>
+      new Promise<string[]>((resolve) => {
+        const band = el.closest<HTMLElement>('[class*="head"] > div > div')!;
+        const seen: string[] = [];
+        (el as HTMLElement).click();
+        const tick = (): void => {
+          seen.push(getComputedStyle(band).backgroundColor);
+          if (seen.length < 20) requestAnimationFrame(tick);
+          else resolve(seen);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  expect(new Set(colours).size).toBe(1);
+  expect(colours[0]).not.toBe('rgba(0, 0, 0, 0)');
+});
+
 test('the slot line on a compact tile opens it', async ({ page }) => {
   const tile = light(page, 'cast-tile').getByRole('region', { name: 'Album title' }).last();
   await tile.getByRole('button', { name: 'Kitchen may cut out soon: open this cast' }).click();

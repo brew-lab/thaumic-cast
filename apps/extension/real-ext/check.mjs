@@ -848,6 +848,57 @@ try {
       redStop.end === otherBandStop.end,
     { redStop, otherBandStop },
   );
+
+  // ── A new track's band fades to its colour (§11 call 99) ──────────────
+  // The owner saw the band jump when the artwork changed. The page plays a new track with the
+  // teal artwork; the band, sampled every frame, must pass through colours that are neither end
+  // over about --dur-change, never moving most of the way in one frame.
+  await p.eval(`const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    const rgba = (c) => { probe.clearRect(0, 0, 1, 1); probe.fillStyle = c; probe.fillRect(0, 0, 1, 1);
+      return [...probe.getImageData(0, 0, 1, 1).data]; };
+    const band = document.querySelector('section [style*="--art-h"]');
+    const title = band.querySelector('[id$="-title"]');
+    window.__band = { frames: [], done: false };
+    const t0 = performance.now();
+    const tick = () => {
+      const t = performance.now() - t0;
+      window.__band.frames.push({ t, bg: rgba(getComputedStyle(band).backgroundColor),
+        ink: rgba(getComputedStyle(title).color) });
+      if (t < 5000) requestAnimationFrame(tick); else window.__band.done = true;
+    };
+    requestAnimationFrame(tick);
+    return true`);
+  await lib.sleep(300);
+  await tab.evaluate(() => {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'Test tone',
+      artist: 'Real-extension rig',
+      artwork: [{ src: location.origin + '/art.png', sizes: '96x96', type: 'image/png' }],
+    });
+  });
+  await until(() => p.eval('return window.__band.done'), 8000);
+  const fade = await p.eval(`const f = window.__band.frames;
+    const apart = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+    const first = f[0], last = f.at(-1);
+    const moved = f.filter((x) => apart(x.bg, first.bg) > 1 && apart(x.bg, last.bg) > 1);
+    const steps = f.slice(1).map((x, i) => apart(x.bg, f[i].bg));
+    const dur = getComputedStyle(document.documentElement).getPropertyValue('--dur-change').trim();
+    return { span: apart(first.bg, last.bg), between: moved.length,
+      took: moved.length ? Math.round(moved.at(-1).t - moved[0].t) : 0,
+      maxStep: Math.max(...steps), inkMoved: f.some((x) => apart(x.ink, first.ink) > 1 && apart(x.ink, last.ink) > 1),
+      dur, title: document.querySelector('section [id$="-title"]').textContent }`);
+  await shot(p, '09d-band-after-track-change');
+  check(
+    "a new track's band fades to its colour, the title's ink with it, over --dur-change",
+    fade?.title === 'Test tone' &&
+      fade.span > 20 &&
+      fade.between >= 4 &&
+      fade.took >= 100 &&
+      fade.took <= 450 &&
+      fade.maxStep < fade.span * 0.6 &&
+      fade.inkMoved,
+    fade,
+  );
   await p.click('button[aria-label^="Stop"]');
   await lib.sleep(1500);
   problems.push(...p.problems);

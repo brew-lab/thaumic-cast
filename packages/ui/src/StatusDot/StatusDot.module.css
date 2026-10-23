@@ -1,8 +1,9 @@
 @layer components {
   /*
-   * A-dot. Four shapes: a dot, the Clacks, circle-x and the lamp. Never animated. Every state
-   * draws in one --icon-sm square, its mark centred, so the words beside a column of dots
-   * start at one edge and the dots line up with Icons in the same column.
+   * A-dot. Four shapes: a dot, the Clacks, circle-x and the lamp. Never animated (an on-fill
+   * ring's colour only follows its fill). Every state draws in one --icon-sm square, its mark
+   * centred, so the words beside a column of dots start at one edge and the dots line up with
+   * Icons in the same column.
    */
   .slot {
     --dot-size: var(--size-dot-sm);
@@ -45,6 +46,11 @@
 
   .on-fill {
     --dot-shadow: 0 0 0 var(--line-bold) var(--dot-ring);
+  }
+
+  /* The ring is its fill's colour, so it fades with a fill that fades (a band; §11 call 99). */
+  .on-fill > .round {
+    transition: box-shadow var(--dur-change) var(--ease-effects);
   }
 
   .checking {
