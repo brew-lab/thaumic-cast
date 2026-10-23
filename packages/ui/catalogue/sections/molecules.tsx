@@ -531,7 +531,7 @@ export function AddressFieldSpecimen(): JSX.Element {
         <ServerAddress
           initial=""
           onTest={() => Promise.resolve(answered)}
-          help="Select Connect to use the address; it is saved only if Thaumic Cast answers there."
+          help="Select Connect to check the address. It is saved only when Thaumic Cast answers. If Thaumic Cast is on another computer, your browser asks for your permission first."
         />
         <p class="label">testing</p>
         <ServerAddress initial="http://192.168.1.20:49400" onTest={never} press />
