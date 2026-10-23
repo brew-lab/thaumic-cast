@@ -672,13 +672,14 @@ test('a new track cross-fades the band over --dur-change; a quick skip turns fro
   await expect(specimen).toHaveAttribute('data-track', '3');
   const span = Math.max(...quick.map((f) => apart(f.bg, quick[0].bg)));
   expect(span).toBeGreaterThan(20);
-  // A step may move only as far as the time since the last frame allows (with room for
-  // easing), so a slow engine's long frames are not taken for a jump.
+  // A jump moves the whole way in one frame. A step may move as far as the time since the last
+  // frame allows, with room for the easing's steepest part (about 3× the linear rate), so a slow
+  // engine's long frames are not taken for a jump. Only frames shorter than a third of the fade
+  // can tell a fade from a jump, so longer ones are not judged.
   quick.slice(1).forEach((f, i) => {
     const dt = f.t - quick[i].t;
-    expect(apart(f.bg, quick[i].bg)).toBeLessThanOrEqual(
-      span * Math.min(1, (dt / dur) * 1.6) + span * 0.15,
-    );
+    if (dt > dur / 3) return;
+    expect(apart(f.bg, quick[i].bg)).toBeLessThanOrEqual(span * ((dt / dur) * 3 + 0.15));
   });
   expect(quick.at(-1)!.bg[3]).toBe(0);
 
