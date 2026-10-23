@@ -278,7 +278,7 @@ export async function writeBadge(badge: BadgeState | null): Promise<void> {
   const t = await translate();
   const title = badge
     ? t('toolbar_title', { lead: t(badge.lead.key, badge.lead.params ?? {}) })
-    : chrome.i18n.getMessage('extensionName');
+    : chrome.i18n.getMessage('extensionShortName');
   const next = JSON.stringify({ badge, title });
   if (next === written) return;
   written = next;

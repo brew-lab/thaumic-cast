@@ -178,7 +178,12 @@ const chromeStub = {
   },
   i18n: {
     getUILanguage: (): string => 'en-US',
-    getMessage: (name: string): string => (name === 'extensionName' ? 'Thaumic Cast' : ''),
+    getMessage: (name: string): string =>
+      name === 'extensionShortName'
+        ? 'Thaumic Cast'
+        : name === 'extensionName'
+          ? 'Thaumic Cast: Play Any Tab on Sonos'
+          : '',
   },
   action: {
     async setBadgeText(details: unknown): Promise<void> {
