@@ -297,10 +297,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Tauri's system packages come from apt, whose mirror can take many minutes to serve them
+      # (one run waited 25), so apt keeps what it fetches in a cached folder, as the catalogue's
+      # Playwright install does. The key follows the runner image and the package list.
+      - name: Keep apt's packages in the cache's folder
+        id: apt
+        env:
+          PACKAGES: libglib2.0-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libappindicator3-dev librsvg2-dev patchelf
+        run: |
+          mkdir -p ~/apt-archives/partial
+          echo "Dir::Cache::Archives \"$HOME/apt-archives\";" |
+            sudo tee /etc/apt/apt.conf.d/99-ci-archives
+          echo "key=tauri-apt-$ImageOS-$ImageVersion-$(echo "$PACKAGES" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+
+      - name: Restore apt's packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt.outputs.key }}
+          restore-keys: tauri-apt-
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglib2.0-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y ${{ steps.apt.outputs.packages }}
+
+      # Packages no longer in the archive are dropped, so the cache does not grow, and the folder
+      # is handed back to the runner's user so the cache can read it.
+      - name: Tidy apt's packages for the cache
+        run: |
+          sudo apt-get autoclean
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
