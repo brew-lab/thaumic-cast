@@ -408,9 +408,11 @@ export class Target {
  * @param {string} [options.profile] - Profile name; its directory is under the temp dir
  * @param {number} [options.scale] - Device scale factor (1.25 for 125 %)
  * @param {boolean} [options.fresh] - Start from an empty profile
+ * @param {string[]} [options.also] - More unpacked extensions to load beside it (another copy of
+ *   the extension, as a store install beside an unpacked build gives); the helpers drive EXT
  * @returns {Promise<object>} The browser, its context, the service worker and helpers
  */
-export async function launch({ profile = 'check', scale = 1, fresh = true } = {}) {
+export async function launch({ profile = 'check', scale = 1, fresh = true, also = [] } = {}) {
   const dir = join(tmpdir(), `thaumic-real-ext-${profile}`);
   if (fresh) rmSync(dir, { recursive: true, force: true });
   mkdirSync(SHOTS, { recursive: true });
@@ -424,8 +426,8 @@ export async function launch({ profile = 'check', scale = 1, fresh = true } = {}
       '--no-default-browser-check',
       '--autoplay-policy=no-user-gesture-required',
       `--force-device-scale-factor=${scale}`,
-      `--disable-extensions-except=${EXT}`,
-      `--load-extension=${EXT}`,
+      `--disable-extensions-except=${[EXT, ...also].join(',')}`,
+      `--load-extension=${[EXT, ...also].join(',')}`,
       `--allowlisted-extension-id=${unpackedId(EXT)}`,
       '--auto-accept-this-tab-capture',
       // Lets CDP's Extensions.loadUnpacked reload the extension in place, as an update does.
@@ -444,7 +446,11 @@ export async function launch({ profile = 'check', scale = 1, fresh = true } = {}
   const ctx = browser.contexts()[0];
   let sw;
   for (let i = 0; i < 40 && !sw; i++) {
-    sw = ctx.serviceWorkers().find((w) => w.url().includes('service-worker-loader'));
+    sw = ctx
+      .serviceWorkers()
+      .find((w) =>
+        w.url().startsWith(`chrome-extension://${unpackedId(EXT)}/service-worker-loader`),
+      );
     if (!sw) await sleep(250);
   }
   if (!sw) throw new Error('the extension did not load from ' + EXT);
