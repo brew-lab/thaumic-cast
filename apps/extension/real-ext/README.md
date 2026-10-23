@@ -30,7 +30,9 @@ is emulated: the rig watches the worker's `chrome.action.setIcon` calls, since C
 and the toolbar is not in a screenshot), casting (the band bleeding to the card, no Go
 to tab on the cast's own tab), adding a grouped room whose first event is lost, a second tab, a
 speaker dropping off the network and the Undo Toast, rooms joining slowly beside a room playing
-alone (every row's Slider on one start and end), a cast in every room (no Add a room), and
+alone (every row's Slider on one start and end), a cast in every room (no Add a room), the next-cast Notice in
+Settings › Audio (a cast on Bespoke PCM: Smoothing changed brings it, changed back takes it away,
+Theme never brings it, a reload mid-cast keeps it, the cast stopping takes it away), and
 Settings › Saved sets (rename, Escape, remove, Undo, a long name in Settings and in the popup).
 Then the rooms pass (`rooms.mjs`), with every new subscription's first event lost: rooms leave a
 cast, come back with Undo and are added again, a second tab takes a room of the first cast, a

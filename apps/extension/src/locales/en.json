@@ -206,6 +206,8 @@
   "audio_mode_custom": "Bespoke",
   "audio_mode_custom_desc": "Every choice is yours, and so is what follows from it.",
   "audio_browser_capture_note": "Browser-wide capture is on, and it casts PCM whatever is chosen here. The choice is kept for when browser-wide capture is off.",
+  "next_cast_notice_one": "The cast playing now keeps its settings. Changes apply from the next cast.",
+  "next_cast_notice_other": "The casts playing now keep their settings. Changes apply from the next cast.",
   "audio_combination_unsupported_custom": "This browser will not encode that combination of codec, bitrate, sample rate and channels, so a tab cast set to it will not start. Change one of the four.",
   "audio_combination_unsupported_preset": "This browser will not encode what this Quality asks for, so a tab cast set to it will not start. Choose another.",
   "audio_resolved_settings": "For the next tab cast",

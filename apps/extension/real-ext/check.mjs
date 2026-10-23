@@ -2,6 +2,8 @@
 // popup, against the real companion on the fake household (run.sh starts both). It walks the
 // popup through what reviews of the screenshot harness and the catalogue missed, checks each
 // outcome, and saves a screenshot per step. Exit 1 on any failure. See README.md.
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import * as lib from './lib.mjs';
 import { optionsPass } from './options.mjs';
 import { roomsPass } from './rooms.mjs';
@@ -947,6 +949,132 @@ try {
   await lib.sleep(1500);
   problems.push(...p.problems);
   p.close();
+
+  // ── Settings while a cast plays: the next-cast Notice (DESIGN.md §11 call 103) ──
+  // Bespoke PCM first, so Smoothing is on the page, then a cast. The Notice shows only while
+  // a setting that reaches the stream differs from what the cast started with: Smoothing
+  // changed brings it, changed back takes it away, Theme never brings it, a reload mid-cast
+  // keeps it, and the cast stopping takes it away.
+  const nc = await env.options();
+  await nc.scheme(dark);
+  const ncPage = env.ctx.pages().find((x) => x.url().includes('/src/options/'));
+  // A probe during a reload finds no context; it counts as not ready yet.
+  const ncReady = () =>
+    until(() =>
+      nc
+        .eval(`return !!document.querySelector('input[name=audioMode]:checked')`)
+        .catch(() => false),
+    );
+  await ncReady();
+  const nextCastShown = () =>
+    nc.eval(
+      `return [...document.querySelectorAll('[data-notice]')].some((n) =>
+        n.innerText.includes('Changes apply from the next cast'))`,
+    );
+  const selectValue = (id) =>
+    nc.eval(
+      `const s = document.getElementById(args.id);
+      return s ? { value: s.value, options: [...s.options].map((o) => o.value) } : null`,
+      { id },
+    );
+  const choose = async (id, value) => {
+    await nc.eval(
+      `const s = document.getElementById(args.id);
+      s.value = args.value;
+      s.dispatchEvent(new Event('change', { bubbles: true }));`,
+      { id, value },
+    );
+    await lib.sleep(600);
+  };
+  const modeBefore = await nc.eval(
+    `return document.querySelector('input[name=audioMode]:checked').closest('label').innerText.split('\\n')[0]`,
+  );
+  await nc.click('label', 'Bespoke');
+  await lib.sleep(600);
+  const codecBefore = (await selectValue('audio-codec'))?.value;
+  await choose('audio-codec', 'pcm');
+  if (await nc.eval(`return document.querySelector('details')?.open === false`)) {
+    await nc.click('summary', 'Advanced');
+    await lib.sleep(400);
+  }
+  const smoothing = await selectValue('audio-smoothing');
+  check('the next-cast pass has Smoothing to change', Boolean(smoothing), smoothing);
+  check('no next-cast Notice without a cast', (await nextCastShown()) === false);
+
+  await tab.bringToFront();
+  const pc = await env.popup({ dark });
+  await pc.clickRoom('Kitchen');
+  await pc.click('button', 'Cast to');
+  const ncCasting = await until(async () => (await pc.text()).includes('Casting now'), 8000);
+  check('the next-cast pass starts a cast', Boolean(ncCasting), await pc.text());
+  problems.push(...pc.problems);
+  pc.close();
+  await ncPage?.bringToFront();
+  await lib.sleep(1000);
+  check('no next-cast Notice while the settings match the cast', (await nextCastShown()) === false);
+
+  const otherSmoothing = smoothing?.options.find((v) => v !== smoothing.value);
+  await choose('audio-smoothing', otherSmoothing);
+  const ncShown = await until(nextCastShown, 3000);
+  await nc.eval(
+    `[...document.querySelectorAll('main > section')].find((s) => s.querySelector('h2').innerText === 'Audio')
+      .scrollIntoView({ block: 'start', behavior: 'instant' })`,
+  );
+  await shot(nc, '10d-next-cast-notice');
+  check('changing Smoothing mid-cast shows the next-cast Notice', ncShown === true);
+  // The Audio section with the Notice, in each scheme, for review.
+  for (const scheme of [false, true]) {
+    await nc.scheme(scheme);
+    await lib.sleep(400);
+    const box = await nc.eval(`const s = [...document.querySelectorAll('main > section')]
+        .find((x) => x.querySelector('h2').innerText === 'Audio');
+      const r = s.getBoundingClientRect();
+      return { x: r.x, y: r.y + scrollY, width: r.width, height: Math.min(r.height, 520) }`);
+    const r = await nc.cdp.send('Page.captureScreenshot', {
+      format: 'png',
+      clip: { ...box, scale: 1 },
+      captureBeyondViewport: true,
+    });
+    writeFileSync(
+      join(lib.SHOTS, `10d-next-cast-${scheme ? 'dark' : 'light'}-${tag}.png`),
+      Buffer.from(r.data, 'base64'),
+    );
+  }
+  await nc.scheme(dark);
+
+  await choose('audio-smoothing', smoothing?.value);
+  const ncGone = await until(async () => (await nextCastShown()) === false, 3000);
+  check('changing Smoothing back takes the next-cast Notice away', ncGone === true);
+
+  await nc.click('[role="radiogroup"] label', 'Light');
+  await lib.sleep(800);
+  check('changing Theme mid-cast shows no next-cast Notice', (await nextCastShown()) === false);
+  await nc.click('[role="radiogroup"] label', 'Auto');
+  await lib.sleep(400);
+
+  await choose('audio-smoothing', otherSmoothing);
+  // Reloaded through CDP: a reload from inside the page drops the context its call runs in.
+  await nc.cdp.send('Page.reload');
+  await lib.sleep(1200);
+  await ncReady();
+  const ncReloaded = await until(nextCastShown, 4000);
+  check('an options page opened mid-cast still shows the next-cast Notice', ncReloaded === true);
+
+  // Stopped as the popup's Stop stops it: one STOP_CAST per running cast.
+  await nc.eval(`const { casts } = await chrome.runtime.sendMessage({ type: 'GET_ACTIVE_CASTS' });
+    for (const c of casts) await chrome.runtime.sendMessage({ type: 'STOP_CAST', payload: { tabId: c.tabId } });`);
+  const ncStopped = await until(async () => (await nextCastShown()) === false, 4000);
+  check('the cast stopping takes the next-cast Notice away', ncStopped === true);
+
+  // Back as the rest of the walk expects it.
+  await choose('audio-smoothing', smoothing?.value);
+  if (codecBefore) await choose('audio-codec', codecBefore);
+  await nc.click('label', modeBefore);
+  await lib.sleep(600);
+  problems.push(...nc.problems);
+  nc.close();
+  await ncPage?.close();
+  await tab.bringToFront();
 
   // ── Settings › Saved sets: rename, remove at once, Undo ───────────────
   const o = await env.options();
