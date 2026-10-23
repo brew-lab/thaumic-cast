@@ -88,11 +88,36 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # As in CI's Rust job: apt keeps the Tauri packages in a cached folder, so a slow mirror
+      # cannot hold the Linux build up for long. The key follows the runner image and the list.
+      - name: Keep apt's packages in the cache's folder
+        if: matrix.platform == 'ubuntu-22.04'
+        id: apt
+        env:
+          PACKAGES: libglib2.0-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libappindicator3-dev librsvg2-dev patchelf
+        run: |
+          mkdir -p ~/apt-archives/partial
+          echo "Dir::Cache::Archives \"$HOME/apt-archives\";" |
+            sudo tee /etc/apt/apt.conf.d/99-ci-archives
+          echo "key=tauri-apt-$ImageOS-$ImageVersion-$(echo "$PACKAGES" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "prefix=tauri-apt-$ImageOS-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore apt's packages
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt.outputs.key }}
+          restore-keys: ${{ steps.apt.outputs.prefix }}
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglib2.0-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y ${{ steps.apt.outputs.packages }}
+          sudo apt-get autoclean
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
       - name: Cache Cargo
         uses: actions/cache@v4
