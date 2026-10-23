@@ -158,8 +158,8 @@ function SelectRow({
 }
 
 /**
- * The options page's Audio section in Bespoke: a ChoiceGroup, an info Notice, a subheading
- * over four Select rows, a warning Notice, then Advanced open with its own rows: two narrow
+ * The options page's Audio section in Bespoke while a cast plays: the next-cast Notice first,
+ * a ChoiceGroup, an info Notice, a subheading over four Select rows, a warning Notice, then Advanced open with its own rows: two narrow
  * Selects and the wide one for falling behind, each with help, as Bespoke has them for PCM.
  * @returns The section
  */
@@ -167,6 +167,11 @@ function AudioSection(): JSX.Element {
   const [quality, setQuality] = useState<(typeof QUALITY)[number]['value']>('custom');
   return (
     <SettingsSection title="Audio" headingLevel={3}>
+      <Notice
+        tone="info"
+        text="The cast playing now keeps its settings. Changes apply from the next cast."
+        announce={false}
+      />
       <ChoiceGroup
         legend="Quality"
         value={quality}
@@ -346,7 +351,9 @@ function SetsSection(): JSX.Element {
 export function SettingsSectionSpecimen(): JSX.Element {
   return (
     <div class="stack">
-      <Frames title="Audio, Bespoke, Advanced open">{() => <AudioSection />}</Frames>
+      <Frames title="Audio, Bespoke, Advanced open, while a cast plays">
+        {() => <AudioSection />}
+      </Frames>
       <Frames title="Finer points">{() => <FinerPointsSection />}</Frames>
       <Frames title="Actions (the desktop Server)">{() => <ActionsSection />}</Frames>
       <Frames title="Saved sets, empty">{() => <SetsSection />}</Frames>

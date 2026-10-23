@@ -135,22 +135,27 @@ for (const density of [0, 1] as const) {
             ].map(px),
             glyph: [r1(g.left - r.left), r1(g.top - r.top)],
             gap: px(getComputedStyle(grid).rowGap),
+            // A Notice that is the first item starts the grid, under the heading's own space.
             around: [
-              r1(r.top - n.previousElementSibling!.getBoundingClientRect().bottom),
+              n.previousElementSibling
+                ? r1(r.top - n.previousElementSibling.getBoundingClientRect().bottom)
+                : r1(r.top - gr.top),
               r1(n.nextElementSibling!.getBoundingClientRect().top - r.bottom),
             ],
+            first: !n.previousElementSibling,
             edges: [r1(r.left - gr.left), r1(gr.right - r.right)],
           };
         });
       });
-      expect(notices.length).toBe(2);
+      // The next-cast Notice first, the browser-wide one, the combination warning.
+      expect(notices.length).toBe(3);
       for (const n of notices) {
         const [start, end, blockEnd, inlineStart] = n.pad;
         expect(start, JSON.stringify(n)).toBeGreaterThan(0);
         expect(start, JSON.stringify(n)).toBe(blockEnd);
         expect(end, JSON.stringify(n)).toBe(inlineStart);
         expect(n.glyph, JSON.stringify(n)).toEqual([inlineStart, start]);
-        expect(n.around, JSON.stringify(n)).toEqual([n.gap, n.gap]);
+        expect(n.around, JSON.stringify(n)).toEqual([n.first ? 0 : n.gap, n.gap]);
         expect(n.edges, JSON.stringify(n)).toEqual([0, 0]);
       }
     }

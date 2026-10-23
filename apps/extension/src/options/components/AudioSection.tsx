@@ -36,7 +36,9 @@ import type { ExtensionSettings, AudioMode } from '../../lib/settings';
 import { getDynamicPresets } from '../../lib/presets';
 import { resolveAudio, type CompanionCapability } from '../../lib/audio-resolver';
 import { pcmAudioRows, type PcmRowsContext } from '../../lib/pcm-audio-rows';
+import { showNextCastNotice } from '../../lib/next-cast';
 import { useCombinationSupport } from '../hooks/useCombinationSupport';
+import { useActiveCasts } from '../../popup/hooks/useActiveCasts';
 
 /** The Advanced fold's id, which the popup's smoothing advice opens (`#audio-advanced`). */
 const ADVANCED_ID = 'audio-advanced';
@@ -111,6 +113,18 @@ export function AudioSection({
     codecLoading,
     capability,
   ]);
+
+  // A running cast keeps the settings it started with: say so while they differ from what a
+  // cast started now would send (DESIGN.md §11 call 103).
+  const { casts } = useActiveCasts();
+  const nextCastDiffers = useMemo(
+    () =>
+      showNextCastNotice(
+        casts,
+        resolved && { config: resolved.config, captureMode: settings.captureMode },
+      ),
+    [casts, resolved, settings.captureMode],
+  );
 
   // The summary describes the Quality choice, which is what a tab cast sends.
   const resolvedConfig = resolved?.tabConfig ?? null;
@@ -453,6 +467,11 @@ export function AudioSection({
 
   return (
     <SettingsSection title={t('audio_section_title')}>
+      {/* Changes made while a cast runs wait for the next cast */}
+      {nextCastDiffers && (
+        <Notice tone="info" text={t('next_cast_notice', { count: casts.length })} />
+      )}
+
       {/* Loading state */}
       {codecLoading && <p>{t('audio_detecting_codecs')}</p>}
 
