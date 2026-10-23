@@ -12,6 +12,7 @@ import {
   type SpeakerStreams,
 } from '../lib/speaker-notices';
 import { castsBySpeaker, type CastCodec, type SpeakerCast } from '../lib/listen-url';
+import type { SpeakerSettingDefaults } from '../lib/settings-reset';
 
 const log = createLogger('Store');
 
@@ -423,6 +424,14 @@ export const getDriftCompensation = async (): Promise<DriftCompensationSetting> 
  */
 export const setDriftCompensation = async (mode: DriftMode): Promise<DriftCompensationSetting> => {
   return invoke<DriftCompensationSetting>('set_drift_compensation', { mode });
+};
+
+/**
+ * Gets the speaker settings' defaults, which Settings' "Reset all settings" puts back.
+ * @returns Speaker monitoring, the head start and drift correction at their defaults
+ */
+export const getSpeakerSettingDefaults = async (): Promise<SpeakerSettingDefaults> => {
+  return invoke<SpeakerSettingDefaults>('get_speaker_setting_defaults');
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
