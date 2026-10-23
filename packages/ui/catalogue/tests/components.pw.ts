@@ -605,7 +605,15 @@ async function skipAndSample(
         const next = [...root.querySelectorAll('button')].find(
           (b) => b.textContent === 'Change track',
         )!;
-        const frames: BandFrame[] = [];
+        // The colours before the press are the first frame: on a slow engine (CI's WebKit
+        // draws a few frames a second) the first frame after it is already part way.
+        const frames: BandFrame[] = [
+          {
+            t: 0,
+            bg: rgba(getComputedStyle(band).backgroundColor),
+            title: rgba(getComputedStyle(title).color),
+          },
+        ];
         const pending = [...then];
         next.click();
         const t0 = performance.now();
@@ -649,10 +657,12 @@ test('a new track cross-fades the band over --dur-change; a quick skip turns fro
   await expect(specimen).toHaveAttribute('data-track', '1');
   const [first, last] = [frames[0], frames.at(-1)!];
   expect(apart(first.bg, last.bg)).toBeGreaterThan(20);
-  const mid = frames.find((f) => f.t >= dur * 0.4)!;
-  expect(apart(mid.bg, first.bg)).toBeGreaterThan(4);
-  expect(apart(mid.bg, last.bg)).toBeGreaterThan(4);
-  expect(apart(mid.title, first.title) + apart(mid.title, last.title)).toBeGreaterThan(0);
+  // Some frame inside the fade is neither end (any frame: a slow engine draws few of them).
+  const mid = frames.find(
+    (f) => f.t > 0 && f.t < dur * 0.9 && apart(f.bg, first.bg) > 4 && apart(f.bg, last.bg) > 4,
+  );
+  expect(mid, 'a frame part way through the fade').toBeDefined();
+  expect(apart(mid!.title, first.title) + apart(mid!.title, last.title)).toBeGreaterThan(0);
   const landed = frames.find((f) => apart(f.bg, last.bg) <= 1)!;
   expect(landed.t).toBeLessThanOrEqual(dur + 100);
 
@@ -661,16 +671,23 @@ test('a new track cross-fades the band over --dur-change; a quick skip turns fro
   const quick = await skipAndSample(specimen, dur + 500, [dur / 3]);
   await expect(specimen).toHaveAttribute('data-track', '3');
   const span = Math.max(...quick.map((f) => apart(f.bg, quick[0].bg)));
-  const steps = quick.slice(1).map((f, i) => apart(f.bg, quick[i].bg));
   expect(span).toBeGreaterThan(20);
-  expect(Math.max(...steps)).toBeLessThan(span * 0.6);
+  // A step may move only as far as the time since the last frame allows (with room for
+  // easing), so a slow engine's long frames are not taken for a jump.
+  quick.slice(1).forEach((f, i) => {
+    const dt = f.t - quick[i].t;
+    expect(apart(f.bg, quick[i].bg)).toBeLessThanOrEqual(
+      span * Math.min(1, (dt / dur) * 1.6) + span * 0.15,
+    );
+  });
   expect(quick.at(-1)!.bg[3]).toBe(0);
 
   // Under reduced motion --dur-change is 0: the band arrives in the next frame.
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const instant = await skipAndSample(specimen, 200);
   await expect(specimen).toHaveAttribute('data-track', '0');
-  expect(apart(instant[0].bg, instant.at(-1)!.bg)).toBeLessThanOrEqual(1);
+  // instant[0] is before the press; the first frame after it has already arrived.
+  expect(apart(instant[1].bg, instant.at(-1)!.bg)).toBeLessThanOrEqual(1);
   expect(instant.at(-1)!.bg[3]).toBe(255);
 });
 
