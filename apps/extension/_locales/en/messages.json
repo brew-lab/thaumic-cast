@@ -1,7 +1,11 @@
 {
   "extensionName": {
+    "message": "Thaumic Cast: Play Any Tab on Sonos",
+    "description": "The extension's full name: the Chrome Web Store title, the extensions page and the install prompt"
+  },
+  "extensionShortName": {
     "message": "Thaumic Cast",
-    "description": "The name of the extension displayed in the browser"
+    "description": "The short name, where space is tight: the toolbar button's tooltip and menus"
   },
   "extensionDescription": {
     "message": "Your browser, on your Sonos, over your own network. No account, no ads, no trackers. Needs the free Thaumic Cast app or server.",
