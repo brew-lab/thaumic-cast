@@ -1,7 +1,7 @@
 // The scripted real-app pass: the desktop frontend's production build in Playwright's WebKit
 // (the desktop's engine on macOS and Linux) or Chromium (WebView2 on Windows), its Tauri
 // commands answered by the real core on the fake household (run.sh starts both). It walks
-// onboarding, Speakers (with real casts), Stop all casts, Server, Settings, Not found and the
+// onboarding, Rooms (with real casts), Stop all casts, Server, Settings, Not found and the
 // rail at the default window, a narrow one (under 45rem) and a wide one, checks each outcome,
 // and saves a screenshot per step. A check named in expected-fail.json may fail (XFAIL); if it
 // passes (XPASS) the run fails, so the list only shrinks. Exit 1 on any failure.
@@ -161,7 +161,7 @@ async function checkAxe(app, what) {
 }
 
 /**
- * The room cards on the Speakers view, in order: each card is the largest box round a room's
+ * The room cards on the Rooms view, in order: each card is the largest box round a room's
  * heading that holds no other room's heading.
  * @param {import('./lib.mjs').App} app - The app
  * @returns {Promise<object[]>} Per card: the name, Badge, sub line and their boxes
@@ -229,7 +229,7 @@ const roomCards = (app) =>
 function checkCardHeads(cards, size) {
   const narrowName = cards.filter((c) => c.nameBox.w + 0.5 < c.sixCh);
   check(
-    `Speakers (${size}): every room name box is at least 6ch (or the whole name)`,
+    `Rooms (${size}): every room name box is at least 6ch (or the whole name)`,
     narrowName.length === 0,
     narrowName.map((c) => [c.name, c.nameBox.w, c.sixCh]),
   );
@@ -239,13 +239,13 @@ function checkCardHeads(cards, size) {
     return b && a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
   });
   check(
-    `Speakers (${size}): no Badge overlaps its room name`,
+    `Rooms (${size}): no Badge overlaps its room name`,
     overlap.length === 0,
     overlap.map((c) => c.name),
   );
   const badSub = cards.filter((c) => c.subLines !== 1 || c.subCut);
   check(
-    `Speakers (${size}): every sub line is one line and not cut off`,
+    `Rooms (${size}): every sub line is one line and not cut off`,
     badSub.length === 0,
     badSub.map((c) => [c.name, c.sub, c.subLines, c.subCut]),
   );
@@ -586,13 +586,13 @@ try {
         await next.click();
       }
       const landed = await until(() =>
-        a.page.evaluate(() => document.querySelector('h1')?.innerText.trim() === 'Speakers'),
+        a.page.evaluate(() => document.querySelector('h1')?.innerText.trim() === 'Rooms'),
       );
-      check(`onboarding (${size}): That'll do lands on Speakers`, Boolean(landed));
+      check(`onboarding (${size}): That'll do lands on Rooms`, Boolean(landed));
     }
   });
-  // ── Speakers, with nothing cast and then with casts, at every window ──────
-  await section('Speakers', async () => {
+  // ── Rooms, with nothing cast and then with casts, at every window ──────
+  await section('Rooms', async () => {
     await stopEverything();
     for (const size of ['default', 'narrow', 'wide']) {
       const a = await openApp(size);
@@ -601,12 +601,12 @@ try {
       await a.shot(`02-speakers-idle-${size}-${tag}`);
       let cards = await roomCards(a);
       check(
-        `Speakers (${size}): one card per room`,
+        `Rooms (${size}): one card per room`,
         cards.length === lib.ROOMS.length,
         cards.map((c) => c.name),
       );
       check(
-        `Speakers (${size}): a grouped room says who it is grouped with`,
+        `Rooms (${size}): a grouped room says who it is grouped with`,
         // Office starts grouped with Bathroom; after a cast it may lead Kitchen's group instead.
         cards.some((c) => {
           const other = /^Grouped with (.+)$/.exec(c.sub)?.[1];
@@ -618,10 +618,10 @@ try {
         cards.map((c) => [c.name, c.sub]),
       );
       check(
-        `Speakers (${size}): Stop all casts is hidden while nothing casts`,
+        `Rooms (${size}): Stop all casts is hidden while nothing casts`,
         (await button(a, 'Stop all casts').count()) === 0,
       );
-      await checkShell(a, 'Speakers', size);
+      await checkShell(a, 'Rooms', size);
       checkCardHeads(cards, size);
 
       await cast(a, 'Kitchen,Office');
@@ -629,7 +629,7 @@ try {
       await a.shot(`03-speakers-casting-${size}-${tag}`);
       cards = await roomCards(a);
       check(
-        `Speakers (${size}): casting rooms come first`,
+        `Rooms (${size}): casting rooms come first`,
         cards
           .slice(0, 2)
           .map((c) => c.name)
@@ -637,17 +637,17 @@ try {
         cards.map((c) => [c.name, c.badge]),
       );
       check(
-        `Speakers (${size}): both rooms of the cast say Casting`,
+        `Rooms (${size}): both rooms of the cast say Casting`,
         cards.filter((c) => /casting/i.test(c.badge)).length === 2,
         cards.map((c) => [c.name, c.badge]),
       );
       checkCardHeads(cards, size);
       check(
-        `Speakers (${size}): Stop all casts shows while something casts`,
+        `Rooms (${size}): Stop all casts shows while something casts`,
         (await button(a, 'Stop all casts').count()) === 1,
       );
       if (size === 'default') {
-        await checkAxe(a, 'Speakers while casting');
+        await checkAxe(a, 'Rooms while casting');
 
         // Copy URL: Chromium copies; WebKit's clipboard refuses, and the URL is revealed.
         const [session] = (await sessions()).filter((s) => s.role === 'coordinator');
@@ -841,7 +841,7 @@ try {
         await a.page.waitForTimeout(300);
         const d2 = await dialogFacts(a);
         check(
-          "Server's Stop asks first, as Speakers' does",
+          "Server's Stop asks first, as Rooms' does",
           d2.open && d2.title === 'Stop all casts',
           d2,
         );
@@ -1029,15 +1029,15 @@ try {
         f.h1.join() === 'There is no page here',
         f.h1,
       );
-      const back = a.page.getByRole('link', { name: 'Back to Speakers' });
-      check(`Not found (${size}): Back to Speakers is a link`, (await back.count()) === 1);
+      const back = a.page.getByRole('link', { name: 'Back to Rooms' });
+      check(`Not found (${size}): Back to Rooms is a link`, (await back.count()) === 1);
       if (size === 'default') {
         await checkAxe(a, 'Not found');
         await back.click();
         const home = await until(() =>
-          a.page.evaluate(() => document.querySelector('h1')?.innerText.trim() === 'Speakers'),
+          a.page.evaluate(() => document.querySelector('h1')?.innerText.trim() === 'Rooms'),
         );
-        check('Back to Speakers goes to Speakers', Boolean(home));
+        check('Back to Rooms goes to Rooms', Boolean(home));
       }
     }
   });

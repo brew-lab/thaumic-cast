@@ -24,7 +24,7 @@ export interface RoomCardProps {
 }
 
 /**
- * One room on the desktop's Speakers view (DESIGN.md C-roomcard), read-only: no Stop and no
+ * One room on the desktop's Rooms view (DESIGN.md C-roomcard), read-only: no Stop and no
  * volume. A Card named by the room. The head is the name then the Badge on a wrapping line:
  * the name wraps but is never cut off, and the Badge sits after it, dropping under it only
  * when the name needs the room. The sub line (the model and address,

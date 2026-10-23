@@ -81,7 +81,7 @@ export interface RoomPickerStrings {
   waiting: string;
   /** `no_speakers_found`. */
   empty: string;
-  /** `loading_speakers`: "Asking for speakers…". */
+  /** `loading_speakers`: "Asking for rooms…". */
   loading: string;
   /** The rows' start levels. */
   start: StartLevelStrings;

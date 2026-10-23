@@ -1,4 +1,4 @@
-/* The Speakers view's card grid: one column in a narrow main, as many 18rem tracks as fit. */
+/* The Rooms view's card grid: one column in a narrow main, as many 18rem tracks as fit. */
 @layer app {
   .grid {
     display: grid;

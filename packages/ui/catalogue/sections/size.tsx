@@ -195,7 +195,7 @@ function SettingsMock(): JSX.Element {
 }
 
 /**
- * A mock of the desktop Speakers view: the view's own actions at md (44), a room card whose
+ * A mock of the desktop Rooms view: the view's own actions at md (44), a room card whose
  * Copy URL is a 32 Button hugging its label, and a notice whose action is 32 and X 28.
  * @returns The view
  */
@@ -203,7 +203,7 @@ function SpeakersMock(): JSX.Element {
   return (
     <div class="size-mock stack" data-mock="speakers">
       <PageHeader
-        title="Speakers"
+        title="Rooms"
         summary="4 rooms, 1 casting"
         actions={
           <Cluster>
@@ -270,7 +270,7 @@ function PopupMock(): JSX.Element {
 
 /**
  * F-size, the prototype for the Surface Go 2 tap test: the atoms at 32 with their 44 hit
- * areas, and mock Server, Settings and Speakers views on a window. "Show hit areas" in the
+ * areas, and mock Server, Settings and Rooms views on a window. "Show hit areas" in the
  * page header (or `?hits=1`) tints every hit area.
  * @returns The specimen
  */

@@ -66,7 +66,7 @@ export interface ButtonProps extends DataAttributes {
   resetKey?: unknown;
   /**
    * A destination: renders an `<a>` drawn as the kind (the link kind, or a tonal "Back to
-   * Speakers"). Pressed by Enter alone, as a link is.
+   * Rooms"). Pressed by Enter alone, as a link is.
    */
   href?: string;
   /** Where the link opens, with `href`. */

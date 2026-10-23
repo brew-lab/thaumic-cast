@@ -360,7 +360,7 @@ export function ButtonStatesSpecimen(): JSX.Element {
           </div>
         </div>
         <div class="stack" data-context="row">
-          <p class="token-name">In a row, at the end (the Speakers header)</p>
+          <p class="token-name">In a row, at the end (the Rooms header)</p>
           <Cluster justify="end">
             <Button icon="refresh" size="md" data-neighbour="">
               Ask again

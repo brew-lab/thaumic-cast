@@ -47,7 +47,7 @@ scale and a scheme) starts a fresh companion and walks the app at the default wi
 - onboarding, every step, from a fresh profile: Skip, Back and Carry on on one line, Back from
   step 2, the rule above the footer, Carry on in view without scrolling (the footer is pinned)
   and a tabbed-to control never under it, the full form not a modal, the rooms counted;
-- Speakers with nothing cast and with a real cast (`POST /cast`): one card per room, a grouped
+- Rooms with nothing cast and with a real cast (`POST /cast`): one card per room, a grouped
   room's "Grouped with", casting rooms first, each name at least 6ch and never under its Badge,
   each sub line one line and whole, Stop all casts only while something casts, Copy URL (Chromium
   copies; WebKit's clipboard refuses and the URL is revealed);
@@ -64,7 +64,7 @@ scale and a scheme) starts a fresh companion and walks the app at the default wi
   one here), and Reset all settings: with settings changed it asks first in the Dialog, Cancel
   changes nothing and gives focus back, Reset puts every setting back to its default (read back
   through the commands) and keeps the port and the speakers added by IP address;
-- Not found: its title the page heading, Back to Speakers a link that goes there;
+- Not found: its title the page heading, Back to Rooms a link that goes there;
 - at every view: exactly one scroller, nothing wider than the window, the rail narrow under 45rem
   and wide from it, axe in this run's scheme, and no console errors, failed requests or
   exceptions.

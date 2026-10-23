@@ -153,7 +153,7 @@ function CastUrl({ refuse = false }: { refuse?: boolean }): JSX.Element {
 }
 
 /**
- * The rooms of a household, as the Speakers view draws them, casting first.
+ * The rooms of a household, as the Rooms view draws them, casting first.
  * @param props - Component props
  * @param props.diagnostics - Show diagnostics is on
  * @returns The cards
@@ -256,7 +256,7 @@ export function RoomCardSpecimen(): JSX.Element {
 
 /** The rail's destinations. */
 const RAIL: RailItem[] = [
-  { href: '/', icon: 'speaker', label: 'Speakers' },
+  { href: '/', icon: 'speaker', label: 'Rooms' },
   { href: '/server', icon: 'server', label: 'Server' },
   { href: '/settings', icon: 'settings', label: 'Settings' },
 ];
@@ -336,7 +336,7 @@ function NotFoundView(): JSX.Element {
       title="There is no page here"
       action={
         <Button size="md" href="#" onClick={(event) => event.preventDefault()}>
-          Back to Speakers
+          Back to Rooms
         </Button>
       }
     />
@@ -381,7 +381,7 @@ export function DesktopFrame(): JSX.Element {
         ) : view === 'speakers' ? (
           <>
             <PageHeader
-              title="Speakers"
+              title="Rooms"
               summary="6 rooms, 2 casting"
               actions={
                 <>
@@ -484,13 +484,8 @@ export function WizardFrame(): JSX.Element {
 export function DesktopShellSpecimen(): JSX.Element {
   return (
     <div class="stack">
-      <Window
-        frame="desktop&view=speakers"
-        width={600}
-        height={640}
-        label="Speakers, narrow rail"
-      />
-      <Window frame="desktop&view=speakers" width={1280} height={800} label="Speakers, wide rail" />
+      <Window frame="desktop&view=speakers" width={600} height={640} label="Rooms, narrow rail" />
+      <Window frame="desktop&view=speakers" width={1280} height={800} label="Rooms, wide rail" />
       <Window frame="desktop&view=server" width={600} height={640} label="narrow rail" />
       <Window
         frame="desktop&view=server&toast=1"

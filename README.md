@@ -32,7 +32,7 @@ and visited twice a year.[^1]
 2. Install the **extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm). To load it yourself, download
    `thaumic-cast-extension-vX.Y.Z.zip` from the [latest release](../../releases/latest), unzip it, then load it via
    `chrome://extensions` → Developer mode → **Load unpacked**.
-3. Open a tab that is playing something, click the extension, choose a speaker or a group, and press **Cast**.
+3. Open a tab that is playing something, click the extension, choose a room or several, and press **Cast**.
 
 > [!NOTE]
 > The desktop app listens on `http://localhost:49400`, or on the first free port up to `49410` if that one is taken.
@@ -52,7 +52,7 @@ and visited twice a year.[^1]
 ## What it does
 
 - Casts the audio of a browser tab to Sonos speakers on your own network.
-- Sends different tabs to different speakers or groups: jazz in the kitchen, “focus noise” in the office, and neither
+- Sends different tabs to different rooms: jazz in the kitchen, “focus noise” in the office, and neither
   room need know about the other.
 - Keeps the audio in the house. It goes from your computer to your speakers, and that is the whole of the journey.
 - Runs as the desktop app, or as Thaumic Cast Server on a NAS, in Docker, or on anything else that has no screen.

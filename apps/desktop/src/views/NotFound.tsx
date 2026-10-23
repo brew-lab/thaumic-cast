@@ -4,7 +4,7 @@ import { Button, EmptyState } from '@thaumic-cast/ui';
 
 /**
  * Not found (DESIGN.md L-desktop): an EmptyState whose title is the page's heading, with a
- * link back to Speakers. No PageHeader.
+ * link back to Rooms. No PageHeader.
  * @returns The rendered view
  */
 export function NotFound() {

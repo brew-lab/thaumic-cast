@@ -143,7 +143,7 @@ export function Settings() {
     try {
       await removeManualSpeakerIp(ip);
       setManualIps((prev) => prev.filter((i) => i !== ip));
-      // Backend automatically triggers topology refresh; Speakers view updates via event listener
+      // Backend automatically triggers topology refresh; Rooms view updates via event listener
     } catch (error) {
       log.error('Failed to remove speaker:', error);
       // Refresh from backend to restore consistent state

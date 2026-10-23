@@ -1207,7 +1207,7 @@ export function BrandBlockSpecimen(): JSX.Element {
 export function NavItemSpecimen(): JSX.Element {
   return (
     <div class="on-container nav-demo" data-density="desktop">
-      <NavItem icon="speaker" label="Speakers" href="#speakers" current onNavigate={noop} />
+      <NavItem icon="speaker" label="Rooms" href="#speakers" current onNavigate={noop} />
       <NavItem icon="server" label="Server" href="#server" onNavigate={noop} />
       {FORCED.map((f) => (
         <NavItem

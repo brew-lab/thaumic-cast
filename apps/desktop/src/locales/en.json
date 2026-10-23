@@ -1,7 +1,7 @@
 {
   "app.title": "Thaumic Cast",
 
-  "nav.speakers": "Speakers",
+  "nav.speakers": "Rooms",
   "nav.server": "Server",
   "nav.settings": "Settings",
 
@@ -124,7 +124,7 @@
   "try_again": "Try again",
 
   "error.page_not_found": "There is no page here",
-  "error.go_home": "Back to Speakers",
+  "error.go_home": "Back to Rooms",
 
   "network.speakers_not_responding": "The speakers were found, but nothing is getting back from them. That is nearly always a VPN or a firewall: pause it, then ask again.",
   "network.speakers_unreachable": "No speaker can be reached on this network. Firewalls and VPNs make a habit of this; pause yours.",

@@ -3,7 +3,7 @@ import styles from './PageHeader.module.css';
 
 /** Props for {@link PageHeader}. */
 export interface PageHeaderProps {
-  /** The page's title: "Speakers", "Settings". */
+  /** The page's title: "Rooms", "Settings". */
   title: string;
   /** One line under the title: "4 rooms, 2 casting". */
   summary?: string;
