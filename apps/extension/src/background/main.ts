@@ -32,7 +32,7 @@ import { stopCastForTab } from './sonos-event-handlers';
 import { notifyPopup } from './notification-service';
 
 // Router and routes
-import { dispatch } from './router';
+import { dispatch, registerRoute } from './router';
 import { registerCastRoutes } from './routes/cast-routes';
 import { registerMetadataRoutes } from './routes/metadata-routes';
 import { registerConnectionRoutes } from './routes/connection-routes';
@@ -51,6 +51,7 @@ import { offscreenBroker } from './offscreen-broker';
 // Connection handlers needed for lifecycle events
 import { connectWebSocket, discoverAndCache } from './handlers/connection';
 import { noop } from '../lib/noop';
+import { workerScriptResponse } from '../lib/stale-worker';
 
 // Video sync page scripts
 import { syncVideoSyncScripts } from './video-sync/registration';
@@ -74,6 +75,9 @@ initVideoSyncService();
 registerOffscreenRoutes();
 registerAwayRoutes();
 registerBadgeRoutes();
+// Here, not in a route module: import.meta.url must be this entry module's, the file the
+// worker loader imports, for the popup to tell a worker left over from an earlier build.
+registerRoute('GET_WORKER_SCRIPT', () => workerScriptResponse(import.meta.url));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Initialization

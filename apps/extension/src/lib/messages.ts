@@ -308,7 +308,8 @@ export type PopupToBackgroundType =
   | 'VIDEO_SYNC_REARM'
   | 'WS_CONNECT'
   | 'WS_DISCONNECT'
-  | 'WS_RECONNECT';
+  | 'WS_RECONNECT'
+  | 'GET_WORKER_SCRIPT';
 
 /** Message types: Background → Popup */
 export type BackgroundToPopupType =
@@ -404,7 +405,9 @@ export type PopupToBackgroundMessage =
   | VideoSyncRearmMessage
   | WsConnectMessage
   | WsDisconnectMessage
-  | WsReconnectMessage;
+  | WsReconnectMessage
+  /** Which build the worker runs (lib/stale-worker.ts). */
+  | { type: 'GET_WORKER_SCRIPT' };
 
 /**
  * Messages sent from background to popup.

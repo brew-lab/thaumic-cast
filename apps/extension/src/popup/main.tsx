@@ -14,6 +14,7 @@ import { initTheme } from '../lib/theme';
 import { initLanguage } from '../lib/i18n';
 import { POPUP_PORT_NAME } from '../lib/away-events';
 import { reportToolbarTheme } from '../lib/toolbar-theme';
+import { reloadIfWorkerStale } from '../lib/stale-worker';
 import './styles.css';
 
 // Apply saved theme and language before render to prevent flash
@@ -40,6 +41,9 @@ const POPUP_PORT_RETRY_MS = 250;
 
 holdPopupPort();
 reportToolbarTheme();
+// A build copied over an older one keeps the older worker until the extension is reloaded,
+// and that worker cannot cast for this popup: reload it (which closes the popup).
+void reloadIfWorkerStale();
 
 render(
   <AnnouncerProvider>

@@ -64,7 +64,11 @@ companion quitting and coming back must log no warnings or errors (only Chromium
 reconnect); and reloading the extension in place (CDP `Extensions.loadUnpacked`, as an update
 does) with a tab open must throw nothing when the tab's orphaned content scripts next hear from
 the page; and with a second copy of the extension loaded beside it (as a store install beside an
-unpacked build), one Next must still run the page's handler once. Each step is
+unpacked build), one Next must still run the page's handler once. Last, the upgrade pass
+(`upgrade.mjs`, once, no companion): a build copied over the running unpacked extension, where
+Chrome keeps the earlier service worker until a reload, must be noticed by the next popup, which
+reloads the extension once (`lib/stale-worker.ts`); a popup of the same build must leave it
+alone. Each step is
 checked and screenshotted into `real-ext/shots/` (`REALEXT_SHOTS` moves them). It prints PASS or
 FAIL per check and exits 1 on any failure.
 
