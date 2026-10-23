@@ -23,6 +23,17 @@ export interface NoticeAction {
   labels?: ActionLabels;
 }
 
+/**
+ * A notice's way out to a page: a quiet link with `external`, after the action, as an
+ * EmptyState has its link under its action ("Download the companion").
+ */
+export interface NoticeLink {
+  /** The words. */
+  label: string;
+  /** The page, opened in a new tab. */
+  href: string;
+}
+
 /** A notice's details: a quiet "Details" button that opens more words in place. */
 export interface NoticeDetails {
   /** The button's words: "Details", "{{count}} more". */
@@ -50,6 +61,8 @@ export interface NoticeProps {
   text?: string;
   /** One action. */
   action?: NoticeAction;
+  /** A link to a page, after the action. */
+  link?: NoticeLink;
   /** "Details", opening in place. */
   details?: NoticeDetails;
   /**
@@ -80,13 +93,14 @@ export interface NoticeProps {
  * politely). The tone is never colour alone: the container, the glyph and the lead's words
  * say it together. Its Buttons and X are re-pointed to the on-container ink, and the ring
  * gap to the fill. Under 25rem of its own `notice` container the action goes under the text;
- * from 25rem it sits beside it. Focus order: the action, Details, then X.
+ * from 25rem it sits beside it. Focus order: the action, the link, Details, then X.
  * @param props - Component props
  * @param props.kind - banner or section
  * @param props.tone - danger, warning or info
  * @param props.lead - The lead
  * @param props.text - The text
  * @param props.action - One action
+ * @param props.link - A link to a page, after the action
  * @param props.details - Details, opening in place
  * @param props.onDismiss - Dismisses it
  * @param props.dismissLabel - The X's name
@@ -101,6 +115,7 @@ export function Notice({
   lead,
   text,
   action,
+  link,
   details,
   onDismiss,
   dismissLabel = 'Dismiss',
@@ -152,7 +167,7 @@ export function Notice({
             </p>
           )}
         </div>
-        {(action || details) && (
+        {(action || link || details) && (
           <div class={styles.actions}>
             {action && (
               <Button
@@ -162,6 +177,17 @@ export function Notice({
                 labels={action.labels}
               >
                 {action.label}
+              </Button>
+            )}
+            {link && (
+              <Button
+                kind="quiet"
+                icon="external"
+                href={link.href}
+                target="_blank"
+                data-notice-link=""
+              >
+                {link.label}
               </Button>
             )}
             {details && (

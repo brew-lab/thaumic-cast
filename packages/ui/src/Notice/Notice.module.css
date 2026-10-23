@@ -104,15 +104,25 @@
     --btn-trail: var(--notice-fg);
   }
 
-  /* The action is outline; Details (which has aria-expanded) stays quiet. */
-  .actions > :is(button, a):not([aria-expanded]) {
+  /* The action is outline; the link and Details (which has aria-expanded) stay quiet. */
+  .actions > :is(button, a):not([aria-expanded], [data-notice-link]) {
     --btn-edge: var(--notice-fg);
   }
 
-  /* Under the text, a Details that starts the row lines its words up with the text. */
+  /*
+   * Under the text, a Details that starts the row lines its words up with the text. The link
+   * takes a line of its own under the action, flush with the text, rather than wrapping there
+   * indented by its padding.
+   */
   @container notice (inline-size < 25rem) {
-    .actions > [aria-expanded]:first-child {
+    .actions > [aria-expanded]:first-child,
+    .actions > [data-notice-link] {
       --btn-pull: calc(var(--btn-pad-start) + var(--line-hair));
+    }
+
+    .actions:has(> [data-notice-link]) {
+      flex-direction: column;
+      align-items: flex-start;
     }
   }
 

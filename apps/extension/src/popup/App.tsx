@@ -984,6 +984,12 @@ function MainPopup(): JSX.Element {
           onClick: placed.banner.action.kind === 'retry' ? connection.retry : openReleases,
         }
       }
+      link={
+        placed.banner.link && {
+          label: sayWords(placed.banner.link.label),
+          href: GITHUB_RELEASES_URL,
+        }
+      }
       onDismiss={placed.banner.dismissible ? dismissMismatchWarning : undefined}
       dismissLabel={t('dismiss')}
     />

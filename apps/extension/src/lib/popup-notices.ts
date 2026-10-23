@@ -99,6 +99,8 @@ export interface BannerPlan {
   text: Words;
   /** Its action: try the connection again, or open the releases page. */
   action?: { kind: 'retry' | 'update'; label: Words };
+  /** Nothing answered: a link to the releases page, for whoever has no companion yet. */
+  link?: { kind: 'download'; label: Words };
   /** Only the old companion's warning can be dismissed (P-x). */
   dismissible: boolean;
   /** A second current condition, folded in as its lead (rule 8). */
@@ -249,6 +251,10 @@ function bannerCandidates(inputs: NoticeInputs): BannerPlan[] {
             label: { key: lost ? 'retry_connection' : 'try_again' },
           }
         : undefined,
+      link:
+        error === 'error_desktop_not_found'
+          ? { kind: 'download', label: { key: 'download_companion' } }
+          : undefined,
       dismissible: false,
     });
   }

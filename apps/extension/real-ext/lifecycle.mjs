@@ -2,12 +2,22 @@
 // in its popup. A page that is controlled by a service worker and sends a Connection-Allowlist
 // (as YouTube Music does) must still get the content scripts; the companion quitting and coming
 // back mid-cast must be an ordinary event (no warnings, no errors); and reloading the extension
-// with a tab open must leave the tab's orphaned content scripts quiet. It starts and stops its
+// with a tab open must leave the tab's orphaned content scripts quiet. With nothing answering,
+// About and the popup's banner offer the desktop app's download. It starts and stops its
 // own companion, so run.sh runs it once, after the popup passes, with BIN set to the companion
 // test binary. Exit 1 on any failure. See README.md.
 import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import http from 'node:http';
+import { join } from 'node:path';
 import * as lib from './lib.mjs';
+
+/** Where the download goes (GITHUB_RELEASES_URL in @thaumic-cast/shared). */
+const RELEASES = 'https://github.com/brew-lab/thaumic-cast/releases/latest';
+/** Where it lands: GitHub sends /latest on to the newest release's page. */
+const RELEASES_PAGES = 'https://github.com/brew-lab/thaumic-cast/releases/';
+/** The download's words, in About and on the popup's banner. */
+const DOWNLOAD = 'Download the companion';
 
 /** The port of the page with a service worker and a Connection-Allowlist. */
 const ALLOWLIST_PORT = lib.AUDIO_PORT + 1;
@@ -51,7 +61,7 @@ async function startCompanion() {
  * @returns {Promise<void>} Resolves once it has exited
  */
 async function stopCompanion(c) {
-  if (c.exitCode !== null) return;
+  if (c.exitCode !== null || c.signalCode !== null) return;
   c.kill('SIGKILL');
   await new Promise((r) => c.once('exit', r));
 }
@@ -196,6 +206,175 @@ async function until(probe, ms = 6000) {
   return last;
 }
 
+/**
+ * Waits for a tab that was not open before, on the releases page, and closes it.
+ * @param {object} env - What lib.launch() returned
+ * @param {Set<object>} before - The pages open before the click
+ * @returns {Promise<string|undefined>} The new tab's URL, or undefined when none opened
+ */
+async function releasesTab(env, before) {
+  let opened;
+  for (let i = 0; i < 25 && !opened; i++) {
+    opened = env.ctx.pages().find((x) => !before.has(x));
+    if (!opened) await lib.sleep(200);
+  }
+  // Offline it stays on the releases URL, on an error page.
+  for (let i = 0; i < 25 && opened && !opened.url().startsWith(RELEASES_PAGES); i++)
+    await lib.sleep(200);
+  const url = opened?.url();
+  await opened?.close();
+  return url;
+}
+
+/**
+ * Saves an element alone, in each scheme, for the review sheet.
+ * @param {import('./lib.mjs').Target} t - The page
+ * @param {string} selector - The element
+ * @param {string} name - The file name's start
+ */
+async function elementShots(t, selector, name) {
+  for (const dark of [false, true]) {
+    await t.scheme(dark);
+    await lib.sleep(400);
+    const r = await t.eval(
+      `
+      const e = document.querySelector(args.selector);
+      e.scrollIntoView({ block: 'center', behavior: 'instant' });
+      const r = e.getBoundingClientRect();
+      return { x: r.x + scrollX - 8, y: r.y + scrollY - 8, w: r.width + 16, h: r.height + 16 };`,
+      { selector },
+    );
+    const shot = await t.cdp.send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      clip: { x: Math.max(0, r.x), y: Math.max(0, r.y), width: r.w, height: r.h, scale: 1 },
+    });
+    writeFileSync(
+      join(lib.SHOTS, `${name}-${dark ? 'dark' : 'light'}.png`),
+      Buffer.from(shot.data, 'base64'),
+    );
+  }
+}
+
+/**
+ * About's Companion value, and whether it holds a Button.
+ * @param {import('./lib.mjs').Target} o - The options page
+ * @returns {Promise<{text: string|null, button: boolean}>} The value
+ */
+const companionValue = (o) =>
+  o.eval(`
+    const about = document.getElementById('about');
+    const dd = [...about.querySelectorAll('dt')]
+      .find((dt) => dt.innerText.trim() === 'Companion')?.nextElementSibling;
+    return { text: dd?.innerText.trim() ?? null, button: !!dd?.querySelector('button') };`);
+
+/**
+ * Nothing answers (issue #109): About's readout and the popup's banner offer the desktop app's
+ * download, each opening the releases page in a new tab; connected, About offers none.
+ * @param {object} env - What lib.launch() returned
+ * @param {() => Promise<void>} stop - Stops the companion
+ */
+async function downloadPass(env, stop) {
+  const o = await env.options();
+  await lib.sleep(1500);
+  const connected = await companionValue(o);
+  check(
+    'connected, About offers no download',
+    connected.text !== null && !connected.text.includes(DOWNLOAD),
+    connected,
+  );
+  o.close();
+  await env.ctx
+    .pages()
+    .find((x) => x.url().includes('/src/options/'))
+    ?.close();
+
+  // As in the issue: a fresh install with no companion anywhere, its onboarding skipped.
+  await stop();
+  const fresh = await lib.launch({ profile: 'lifecycle-download' });
+  try {
+    await nothingAnswers(fresh);
+  } finally {
+    await fresh.close();
+  }
+}
+
+/**
+ * The download with nothing answering, in a fresh profile.
+ * @param {object} env - What lib.launch() returned
+ */
+async function nothingAnswers(env) {
+  await env.audioTab();
+  let p = await env.popup();
+  await p.click('button', 'Skip');
+  await lib.sleep(1500);
+  let banner = '';
+  for (let i = 0; i < 10 && !banner.includes('No desktop app or server answered'); i++) {
+    p = await env.popup({ settle: 2000 });
+    banner = await p.eval(`return document.querySelector('[role="region"]')?.innerText ?? ''`);
+  }
+  check(
+    'nothing answering, the banner offers Try again and the download',
+    banner.includes('Try again') && banner.includes(DOWNLOAD),
+    banner,
+  );
+  const link = await p.eval(
+    `
+    const a = [...document.querySelectorAll('[role="region"] a')]
+      .find((a) => a.innerText.includes(args.words));
+    return a ? { href: a.href, target: a.target } : null;`,
+    { words: DOWNLOAD },
+  );
+  check(
+    "the banner's download is a link to the releases page, in a new tab",
+    link?.href === RELEASES && link.target === '_blank',
+    link,
+  );
+  for (const dark of [false, true]) {
+    await p.scheme(dark);
+    await lib.sleep(400);
+    await p.shot(`download-popup-${dark ? 'dark' : 'light'}`);
+  }
+  await p.scheme(false);
+  let before = new Set(env.ctx.pages());
+  await p.click('[role="region"] a', DOWNLOAD);
+  const fromPopup = await releasesTab(env, before);
+  check(
+    "the banner's download opens the releases page",
+    Boolean(fromPopup?.startsWith(RELEASES_PAGES)),
+    fromPopup,
+  );
+  p.close();
+
+  const o = await env.options();
+  let value;
+  for (let i = 0; i < 20; i++) {
+    value = await companionValue(o);
+    if (value.text?.includes(DOWNLOAD)) break;
+    await lib.sleep(300);
+  }
+  check(
+    'nothing connected, About offers the download under its words',
+    Boolean(value.text?.startsWith('Nothing connected.') && value.text.includes(DOWNLOAD)),
+    value,
+  );
+  await elementShots(o, '#about', 'download-about');
+  await o.scheme(false);
+  before = new Set(env.ctx.pages());
+  await o.click('#about dd button', DOWNLOAD);
+  const fromAbout = await releasesTab(env, before);
+  check(
+    "About's download opens the releases page in a new tab",
+    Boolean(fromAbout?.startsWith(RELEASES_PAGES)),
+    fromAbout,
+  );
+  o.close();
+  await env.ctx
+    .pages()
+    .find((x) => x.url().includes('/src/options/'))
+    ?.close();
+}
+
 if (!process.env.BIN) {
   console.error('BIN must name the thaumic-core test binary (run.sh sets it)');
   process.exit(2);
@@ -257,6 +436,11 @@ try {
   p = await env.popup();
   const back = await until(async () => (await p.text()).includes('Cast to'), 10000);
   check('after the companion comes back the popup offers Cast again', Boolean(back));
+  check(
+    'connected, the popup offers no download',
+    !(await p.text()).includes(DOWNLOAD),
+    await p.text(),
+  );
   p.close();
   const restartProblems = problems.take();
   check(
@@ -264,6 +448,13 @@ try {
     restartProblems.length === 0,
     restartProblems,
   );
+
+  // ── Nothing answers: About and the banner offer the download ──────────
+  await downloadPass(env, () => stopCompanion(companion));
+  companion = await startCompanion();
+  await lib.sleep(4000);
+  await problems.sweep();
+  problems.take();
 
   // ── The extension reloads with the tab open ────────────────────────────
   // As an update or a reload of the unpacked extension does: the tab's content scripts are
