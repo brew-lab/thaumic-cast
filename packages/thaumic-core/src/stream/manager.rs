@@ -310,7 +310,7 @@ impl StreamState {
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
     /// * `buffer_frames` - Maximum frames to buffer for late-joining clients
     /// * `channel_capacity` - Capacity of the broadcast channel for audio frames
-    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (0-1000, 0 is smoothing off)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn new(
         id: String,
@@ -579,7 +579,7 @@ impl StreamRegistry {
     /// # Arguments
     /// * `codec` - Output codec for HTTP Content-Type (what Sonos receives)
     /// * `audio_format` - Audio format configuration (sample rate, channels, bit depth)
-    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (100-1000)
+    /// * `jitter_buffer_ms` - Jitter buffer size in milliseconds (0-1000, 0 is smoothing off)
     /// * `frame_duration_ms` - Frame duration in milliseconds for cadence timing
     pub fn create_stream(
         &self,

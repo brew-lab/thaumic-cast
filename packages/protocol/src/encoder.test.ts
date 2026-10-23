@@ -81,7 +81,8 @@ describe('EncoderConfigSchema', () => {
   });
 
   it('should keep the jitter buffer within its documented range', () => {
-    expect(EncoderConfigSchema.safeParse({ ...pcm, jitterBufferMs: 50 }).success).toBe(false);
+    expect(EncoderConfigSchema.safeParse({ ...pcm, jitterBufferMs: -1 }).success).toBe(false);
+    expect(EncoderConfigSchema.safeParse({ ...pcm, jitterBufferMs: 0 }).success).toBe(true);
     expect(EncoderConfigSchema.safeParse({ ...pcm, jitterBufferMs: 1000 }).success).toBe(true);
     expect(EncoderConfigSchema.safeParse({ ...pcm, jitterBufferMs: 1001 }).success).toBe(false);
   });

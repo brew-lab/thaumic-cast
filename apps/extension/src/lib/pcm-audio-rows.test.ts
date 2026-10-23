@@ -39,6 +39,17 @@ describe('pcmAudioRows', () => {
     expect(rows.find((row) => row.key === 'added-delay')?.value.params).toEqual({ value: 300 });
   });
 
+  it('should show smoothing off and count only the head start as added delay', () => {
+    const rows = pcmAudioRows(0, ctx({ companionAudio: { ...AUDIO, headStartMs: 250 } }));
+
+    expect(rows.find((row) => row.key === 'smoothing')?.value).toEqual({
+      key: 'audio_smoothing_off',
+    });
+    expect(rows.find((row) => row.key === 'added-delay')?.value.params).toEqual({ value: 250 });
+    const strings = en as Record<string, string>;
+    expect(strings.audio_smoothing_off).toBe('Off');
+  });
+
   it('should leave out the added delay when the head start is unknown', () => {
     const rows = pcmAudioRows(200, ctx({ companionAudio: null }));
 

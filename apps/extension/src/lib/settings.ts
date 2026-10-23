@@ -300,13 +300,16 @@ export function isWindowsPlatform(): boolean {
 
 /**
  * Snaps a smoothing value to the nearest step the extension offers. Values
- * halfway between two steps go up; values beyond the last step take it.
+ * halfway between two steps go up; values beyond the last step take it. It
+ * never snaps to off: smoothing could not be off before version 2, so a stored
+ * value below the least step is taken as that step.
  * @param ms - Smoothing in milliseconds
- * @returns The nearest offered step
+ * @returns The nearest offered step that smooths
  */
 export function snapToSmoothingOption(ms: number): PcmSmoothingMs {
-  let best: PcmSmoothingMs = PCM_SMOOTHING_OPTIONS[0];
-  for (const option of PCM_SMOOTHING_OPTIONS) {
+  const steps = PCM_SMOOTHING_OPTIONS.filter((option) => option > 0);
+  let best: PcmSmoothingMs = steps[0]!;
+  for (const option of steps) {
     if (Math.abs(option - ms) <= Math.abs(best - ms)) best = option;
   }
   return best;

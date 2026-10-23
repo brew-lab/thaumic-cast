@@ -2,7 +2,8 @@
 //!
 //! A PCM connection's cadence plays silence when its queue, the stream's
 //! smoothing (jitter buffer), runs dry, and holds playback afterwards until
-//! the queue refills. Every connection of the stream draws on the same
+//! the queue refills. With smoothing off there is no hold, and the gap is
+//! the silence alone. Every connection of the stream draws on the same
 //! audio, so a gap in its arrival reaches every speaker at once: that is
 //! the one fault more smoothing fixes, unlike a single speaker cutting out,
 //! which needs a longer speaker head start.
@@ -212,6 +213,24 @@ mod tests {
             None,
             "already at the last step"
         );
+    }
+
+    /// With smoothing off every gap is the silence alone, and the advice is
+    /// always a step that smooths, never off again.
+    #[test]
+    fn smoothing_off_is_never_suggested() {
+        assert_eq!(suggest_smoothing_ms(0, 0), Some(100));
+        assert_eq!(suggest_smoothing_ms(20, 0), Some(100));
+        assert_eq!(suggest_smoothing_ms(120, 0), Some(200));
+        let mut window = IngestGapWindow::new();
+        let t0 = Instant::now();
+        assert_eq!(window.record(t0, 30, 0), None);
+        let report = window
+            .record(t0 + Duration::from_secs(5), 40, 0)
+            .expect("second gap within the minute");
+        assert_eq!(report.smoothing_ms, 0);
+        assert_eq!(report.worst_gap_ms, 40);
+        assert_eq!(report.suggested_smoothing_ms, Some(100));
     }
 
     #[test]
