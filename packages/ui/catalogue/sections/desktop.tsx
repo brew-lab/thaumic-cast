@@ -408,11 +408,13 @@ export function DesktopFrame(): JSX.Element {
 }
 
 /**
- * The desktop's onboarding, as the app draws it: `?frame=wizard&step=0…2`.
+ * The desktop's onboarding, as the app draws it: `?frame=wizard&step=0…2`; `&long=1` makes
+ * the first step taller than a short window, so it scrolls under the pinned footer.
  * @returns The frame
  */
 export function WizardFrame(): JSX.Element {
   const params = new URLSearchParams(location.search);
+  const long = params.get('long') === '1';
   const [step, setStep] = useState(Number(params.get('step') ?? 0));
   const [autostart, setAutostart] = useState(true);
   const steps = [
@@ -426,6 +428,13 @@ export function WizardFrame(): JSX.Element {
         This app finds your Sonos speakers and serves them the audio your browser sends. It lives in
         the system tray and does not need looking at.
       </p>
+      {long &&
+        [1, 2, 3, 4, 5, 6].map((n) => (
+          <p key={n}>
+            It keeps a list of the rooms that answered, and asks again when one goes quiet, so a
+            speaker that was unplugged for the hoovering comes back without anyone saying so.
+          </p>
+        ))}
     </WizardStep>,
     <WizardStep
       key="speakers"
