@@ -53,13 +53,14 @@ pub enum SoapError {
 /// household has UPnP switched off.
 ///
 /// A Sonos speaker with Connection Security > UPnP off answers every SOAP and
-/// GENA request with a bare 403 (a `Sonos/` server header and no body). Either
-/// sign is enough: requests only go to speakers that discovery found or that
-/// answered a probe, so an empty 403 is taken to be theirs whatever the header.
+/// GENA request with a bare 403 (a `Sonos/` server header and no body). Both
+/// signs are required: a VPN or proxy that intercepts LAN traffic can answer
+/// 403 itself, and that is a network problem, not this switch.
 /// The switch is per household, so one such answer speaks for every speaker.
 pub(crate) fn is_upnp_refusal(status: StatusCode, server: Option<&str>, body: &str) -> bool {
     status == StatusCode::FORBIDDEN
-        && (server.is_some_and(|s| s.contains("Sonos/")) || body.trim().is_empty())
+        && server.is_some_and(|s| s.contains("Sonos/"))
+        && body.trim().is_empty()
 }
 
 /// Convenient Result alias for SOAP operations.
@@ -403,11 +404,12 @@ mod tests {
         const SONOS: Option<&str> = Some("Linux UPnP/1.0 Sonos/86.10-80260 (ZPS1)");
         let forbidden = StatusCode::FORBIDDEN;
         assert!(is_upnp_refusal(forbidden, SONOS, ""));
-        assert!(is_upnp_refusal(forbidden, SONOS, "<html>Forbidden</html>"));
-        assert!(is_upnp_refusal(forbidden, None, ""));
-        assert!(is_upnp_refusal(forbidden, None, "  \n"));
-        assert!(is_upnp_refusal(forbidden, Some("nginx/1.25"), ""));
+        assert!(is_upnp_refusal(forbidden, SONOS, "  \n"));
 
+        // Anything else that says 403 is in the way of the speaker, not the speaker.
+        assert!(!is_upnp_refusal(forbidden, SONOS, "<html>Forbidden</html>"));
+        assert!(!is_upnp_refusal(forbidden, None, ""));
+        assert!(!is_upnp_refusal(forbidden, Some("nginx/1.25"), ""));
         assert!(!is_upnp_refusal(
             forbidden,
             Some("nginx/1.25"),
