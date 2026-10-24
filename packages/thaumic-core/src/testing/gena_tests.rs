@@ -9,6 +9,7 @@
 //! the subscription due.
 
 use crate::events::{SonosEvent, SpeakerRemovalReason, StreamEvent};
+use crate::sonos::gena::GenaError;
 use crate::sonos::services::SonosService;
 use crate::sonos::types::TransportState;
 
@@ -496,6 +497,63 @@ async fn nothing_is_read_while_no_event_has_arrived() {
             .iter()
             .any(|call| call.action == "GetTransportInfo"));
         assert!(sys.services.sonos_state.transport_states.is_empty());
+    })
+    .await;
+}
+
+/// Proves: a SUBSCRIBE to a household with Sonos UPnP switched off fails with
+/// `GenaError::UpnpDisabled`, not a bare status.
+#[tokio::test]
+async fn a_subscribe_with_upnp_off_is_refused_as_such() {
+    within("upnp off subscribe", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        let kitchen = sys.ip("Kitchen");
+        let gena = sys.services.discovery_service.gena_manager();
+        gena.unsubscribe_by_ip_and_service(&kitchen, SonosService::RenderingControl)
+            .await;
+        sys.fake.set_upnp_enabled(false);
+
+        let result = gena
+            .subscribe(
+                kitchen,
+                SonosService::RenderingControl,
+                "http://127.0.0.1:1/sonos/gena".to_string(),
+            )
+            .await;
+
+        assert!(matches!(result, Err(GenaError::UpnpDisabled)), "{result:?}");
+    })
+    .await;
+}
+
+/// Proves: when UPnP is switched off mid-session, the next renewal is
+/// refused and the subscription is reported lost, which prompts the refresh
+/// that raises the notice.
+#[tokio::test]
+async fn a_renewal_refused_for_upnp_off_reports_the_subscription_lost() {
+    within("upnp off renewal", async {
+        // Granted 60s: inside the 300s buffer, so the first check renews it.
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen"])
+            .gena_timeout_secs(60)
+            .build()
+            .await;
+        let kitchen = sys.ip("Kitchen");
+        sys.fake.set_upnp_enabled(false);
+
+        sys.services.discovery_service.start_renewal_task();
+
+        let lost = sys
+            .events
+            .wait_for_sonos(|event| {
+                matches!(event, SonosEvent::SubscriptionLost { speaker_ip, .. }
+                    if *speaker_ip == kitchen)
+            })
+            .await;
+        let SonosEvent::SubscriptionLost { reason, .. } = lost else {
+            unreachable!()
+        };
+        assert!(reason.contains("UPnP is switched off"), "{reason}");
     })
     .await;
 }

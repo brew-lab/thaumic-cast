@@ -22,6 +22,7 @@ use crate::capture::{AudioSink, AudioSource, BufferFlags, CaptureHandle};
 use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
+use crate::protocol_constants::SPEAKERS_UPNP_DISABLED;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
@@ -37,7 +38,7 @@ use super::playback_session_store::{
     GroupRole, PlaybackResult, PlaybackSession, PlaybackSessionStore,
 };
 use super::regroup::{plan_regroup, OldGroup, RoomRef};
-use super::sync_group_manager::{JoinRoomRequest, SyncGroupManager};
+use super::sync_group_manager::{GroupsUnread, JoinRoomRequest, SyncGroupManager};
 use super::volume_router::VolumeRouter;
 
 mod continuation;
@@ -1034,12 +1035,19 @@ impl StreamCoordinator {
         self.sync_group.hand_on_taken(stream_id, room_ips).await;
         // A plan made from a stale cache could tell a room that now leads
         // others to join, so with no fresh grouping nothing moves.
-        let Some(groups) = self.sync_group.read_groups(room_ips).await else {
-            log::warn!("[Regroup] No speaker reported the grouping; not casting {stream_id}");
-            return rooms
-                .iter()
-                .map(|uuid| failed(&named(uuid), "Could not read the Sonos grouping"))
-                .collect();
+        let groups = match self.sync_group.read_groups(room_ips).await {
+            Ok(groups) => groups,
+            Err(unread) => {
+                log::warn!("[Regroup] No speaker reported the grouping; not casting {stream_id}");
+                let error = match unread {
+                    GroupsUnread::UpnpDisabled => SPEAKERS_UPNP_DISABLED,
+                    GroupsUnread::NoAnswer => "Could not read the Sonos grouping",
+                };
+                return rooms
+                    .iter()
+                    .map(|uuid| failed(&named(uuid), error))
+                    .collect();
+            }
         };
         let cast = self.cast_coordinator_uuid(stream_id);
         // A running cast whose coordinator no longer leads a group has been

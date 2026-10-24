@@ -95,6 +95,9 @@ async fn handle_soap(
     let args = xml::parse_soap_args(&String::from_utf8_lossy(&bytes), &action);
 
     system.record(speaker, service, &action, args.clone());
+    if !system.upnp_enabled() {
+        return upnp_refusal();
+    }
 
     match system.failure_for(&speaker.ip_string(), &action) {
         Some(Failure::Fault(code) | Failure::FaultOnce(code)) => {
@@ -144,6 +147,9 @@ fn handle_subscribe(
             }
         }
         system.record(speaker, service, "RENEW", args);
+        if !system.upnp_enabled() {
+            return upnp_refusal();
+        }
         if malformed {
             return StatusCode::BAD_REQUEST.into_response();
         }
@@ -169,6 +175,9 @@ fn handle_subscribe(
             ("TIMEOUT".to_string(), requested_timeout),
         ],
     );
+    if !system.upnp_enabled() {
+        return upnp_refusal();
+    }
     if let Some(failure) = system.failure_for(&speaker.ip_string(), "SUBSCRIBE") {
         return gena_failure(failure);
     }
@@ -196,6 +205,9 @@ fn handle_unsubscribe(
         "UNSUBSCRIBE",
         vec![("SID".to_string(), sid.clone())],
     );
+    if !system.upnp_enabled() {
+        return upnp_refusal();
+    }
     if let Some(failure) = system.failure_for(&speaker.ip_string(), "UNSUBSCRIBE") {
         return gena_failure(failure);
     }
@@ -214,6 +226,19 @@ fn gena_failure(failure: Failure) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// What firmware 86.10 answers to every control and event request while
+/// Connection Security > UPnP is off: a 403 with no body and no content type.
+fn upnp_refusal() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        [
+            (header::SERVER, "Linux UPnP/1.0 Sonos/86.10-80260 (ZPS1)"),
+            (header::CONNECTION, "close"),
+        ],
+    )
+        .into_response()
 }
 
 fn gena_ok(sid: &str, timeout: &str) -> Response {

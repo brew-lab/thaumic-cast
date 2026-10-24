@@ -116,6 +116,12 @@ pub const PROTOCOL_VERSION: &str = "0.6.0";
 /// desktop app and standalone server.
 pub const SERVICE_ID: &str = "thaumic-cast";
 
+/// The `error` of a room's `PlaybackResult` when the speakers refused control
+/// because the household has Sonos UPnP switched off. The same word is the
+/// network health reason, so clients name the setting either way. Kept in
+/// sync with `SPEAKERS_UPNP_DISABLED` in `@thaumic-cast/protocol`.
+pub const SPEAKERS_UPNP_DISABLED: &str = "speakers_upnp_disabled";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Streaming Configuration Constants
 // ─────────────────────────────────────────────────────────────────────────────

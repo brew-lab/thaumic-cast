@@ -75,7 +75,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -624,6 +624,9 @@ pub(crate) struct FakeSonosSystem {
     next_sid: AtomicUsize,
     notify_seq: AtomicUsize,
     gena_timeout_secs: AtomicU64,
+    /// The household's Connection Security > UPnP switch; while off every
+    /// control and event request is refused with a bare 403.
+    upnp_enabled: AtomicBool,
     fetch_observer: Mutex<Option<FetchObserver>>,
     /// Satellite UUID to the UUID of the primary it is bonded to.
     satellites: Mutex<HashMap<String, String>>,
@@ -726,6 +729,7 @@ impl FakeSonosSystem {
             next_sid: AtomicUsize::new(1),
             notify_seq: AtomicUsize::new(0),
             gena_timeout_secs: AtomicU64::new(DEFAULT_GENA_TIMEOUT_SECS),
+            upnp_enabled: AtomicBool::new(true),
             fetch_observer: Mutex::new(None),
             satellites: Mutex::new(HashMap::new()),
             joins: Mutex::new(Vec::new()),
@@ -1184,6 +1188,17 @@ impl FakeSonosSystem {
     }
 
     // ── GENA ────────────────────────────────────────────────────────────────
+
+    /// Flips the household's Connection Security > UPnP switch in the Sonos
+    /// app. Off, every SOAP and GENA request is refused with a bare 403 as
+    /// on real hardware; the device description is still served.
+    pub fn set_upnp_enabled(&self, enabled: bool) {
+        self.upnp_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    pub(super) fn upnp_enabled(&self) -> bool {
+        self.upnp_enabled.load(Ordering::SeqCst)
+    }
 
     /// Sets the subscription lifetime granted to SUBSCRIBE and renewals.
     pub fn set_gena_timeout_secs(&self, secs: u64) {

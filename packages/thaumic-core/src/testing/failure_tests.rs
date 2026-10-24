@@ -14,8 +14,10 @@
 use std::time::Duration;
 
 use crate::events::StreamEvent;
+use crate::sonos::retry::with_retry;
 use crate::sonos::services::SonosService;
 use crate::sonos::soap::{soap_request, SoapError};
+use crate::sonos::zone_groups::get_zone_group_state;
 
 use super::fake_sonos::Failure;
 use super::harness::{within, TestSystem};
@@ -326,6 +328,61 @@ async fn the_fake_faults_on_actions_it_does_not_model() {
             .find(|call| call.action == "Seek")
             .expect("the attempt is logged");
         assert_eq!(seek.arg("Target"), Some("0:00:10"));
+    })
+    .await;
+}
+
+/// Proves: a speaker whose household has Sonos UPnP switched off refuses a
+/// zone group read with `SoapError::UpnpDisabled`, asked once.
+#[tokio::test]
+async fn a_household_with_upnp_off_refuses_control() {
+    within("upnp off read", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        let kitchen = sys.ip("Kitchen");
+        sys.fake.set_upnp_enabled(false);
+        let seq = sys.fake.next_seq();
+
+        let result =
+            get_zone_group_state(sys.services.http_client(), &kitchen, sys.fake.port()).await;
+
+        assert!(matches!(result, Err(SoapError::UpnpDisabled)), "{result:?}");
+        assert_eq!(sys.fake.calls_since(seq).len(), 1);
+    })
+    .await;
+}
+
+/// Proves: a refusal for UPnP being off is not retried, unlike a transient
+/// fault: one `SetAVTransportURI` reaches the speaker.
+#[tokio::test]
+async fn a_refusal_for_upnp_off_is_not_retried() {
+    within("upnp off no retry", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        let kitchen = sys.ip("Kitchen");
+        sys.fake.set_upnp_enabled(false);
+        let seq = sys.fake.next_seq();
+
+        let result = with_retry("SetAVTransportURI", || {
+            soap_request(
+                sys.services.http_client(),
+                &kitchen,
+                sys.fake.port(),
+                SonosService::AVTransport,
+                "SetAVTransportURI",
+                &[
+                    ("InstanceID", "0"),
+                    ("CurrentURI", "http://example.invalid/stream"),
+                    ("CurrentURIMetaData", ""),
+                ],
+            )
+        })
+        .await;
+
+        assert!(matches!(result, Err(SoapError::UpnpDisabled)), "{result:?}");
+        assert_eq!(
+            av_actions_since(&sys, &kitchen, seq),
+            ["SetAVTransportURI"],
+            "a refusal is not retried"
+        );
     })
     .await;
 }

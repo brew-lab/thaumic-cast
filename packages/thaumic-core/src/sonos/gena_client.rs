@@ -8,6 +8,7 @@ use crate::protocol_constants::GENA_SUBSCRIPTION_TIMEOUT_SECS;
 use crate::sonos::utils::SONOS_PORT;
 
 use super::gena::GenaError;
+use super::soap::is_upnp_refusal;
 
 /// Convenient Result alias for GENA operations.
 type GenaResult<T> = Result<T, GenaError>;
@@ -61,6 +62,23 @@ impl GenaClient {
         Method::from_bytes(b"UNSUBSCRIBE").expect("UNSUBSCRIBE is a valid method")
     }
 
+    /// The error for a SUBSCRIBE the speaker refused: [`GenaError::UpnpDisabled`]
+    /// for a Sonos speaker with UPnP switched off, `otherwise(status)` for the rest.
+    async fn refusal(response: reqwest::Response, otherwise: fn(u16) -> GenaError) -> GenaError {
+        let status = response.status();
+        let server = response
+            .headers()
+            .get(reqwest::header::SERVER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let body = response.text().await.unwrap_or_default();
+        if is_upnp_refusal(status, server.as_deref(), &body) {
+            GenaError::UpnpDisabled
+        } else {
+            otherwise(status.as_u16())
+        }
+    }
+
     /// Extracts timeout value in seconds from a GENA response.
     ///
     /// Parses the "TIMEOUT" header which has format "Second-N" where N is seconds.
@@ -103,7 +121,7 @@ impl GenaClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(GenaError::SubscriptionFailed(response.status().as_u16()));
+            return Err(Self::refusal(response, GenaError::SubscriptionFailed).await);
         }
 
         let sid = response
@@ -140,7 +158,7 @@ impl GenaClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(GenaError::RenewalFailed(response.status().as_u16()));
+            return Err(Self::refusal(response, GenaError::RenewalFailed).await);
         }
 
         Ok(Self::extract_timeout_secs(&response))
