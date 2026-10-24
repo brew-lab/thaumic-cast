@@ -1,5 +1,12 @@
 # @thaumic-cast/ui
 
+## 4.0.1
+
+### Patch Changes
+
+- Updated dependencies [[`fc333a1`](https://github.com/brew-lab/thaumic-cast/commit/fc333a101af92d4dd89bd9ded6827cf79ac9f9eb)]:
+  - @thaumic-cast/protocol@0.6.1
+
 ## 4.0.0
 
 ### Minor Changes

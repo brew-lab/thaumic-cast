@@ -1,5 +1,21 @@
 # @thaumic-cast/extension
 
+## 0.13.2
+
+### Patch Changes
+
+- [#276](https://github.com/brew-lab/thaumic-cast/pull/276) [`aa843e6`](https://github.com/brew-lab/thaumic-cast/commit/aa843e697cd533dbdbdef7604e8b41256e90a9d2) Thanks [@skezo](https://github.com/skezo)! - Browser-wide capture's help now says it needs Windows 11 or later, where it said Windows 10 21H2. The capture needs Windows build 20348, which no Windows 10 release reaches.
+
+- [#277](https://github.com/brew-lab/thaumic-cast/pull/277) [`fc333a1`](https://github.com/brew-lab/thaumic-cast/commit/fc333a101af92d4dd89bd9ded6827cf79ac9f9eb) Thanks [@skezo](https://github.com/skezo)! - feat(extension,desktop): tell the user to switch Sonos UPnP back on
+
+  When the Sonos app's UPnP switch is off, the popup's banner, the toolbar badge and the desktop app now say so and name
+  the setting (Account > Privacy & Security > Connection Security > UPnP), instead of blaming a VPN or a firewall. A cast
+  the speakers turn away for the same reason says the same.
+
+- Updated dependencies [[`fc333a1`](https://github.com/brew-lab/thaumic-cast/commit/fc333a101af92d4dd89bd9ded6827cf79ac9f9eb)]:
+  - @thaumic-cast/protocol@0.6.1
+  - @thaumic-cast/ui@4.0.1
+
 ## 0.13.1
 
 ### Patch Changes
