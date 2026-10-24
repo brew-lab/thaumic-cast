@@ -1,5 +1,15 @@
 # @thaumic-cast/protocol
 
+## 0.6.1
+
+### Patch Changes
+
+- [#277](https://github.com/brew-lab/thaumic-cast/pull/277) [`fc333a1`](https://github.com/brew-lab/thaumic-cast/commit/fc333a101af92d4dd89bd9ded6827cf79ac9f9eb) Thanks [@skezo](https://github.com/skezo)! - feat(extension,desktop): tell the user to switch Sonos UPnP back on
+
+  When the Sonos app's UPnP switch is off, the popup's banner, the toolbar badge and the desktop app now say so and name
+  the setting (Account > Privacy & Security > Connection Security > UPnP), instead of blaming a VPN or a firewall. A cast
+  the speakers turn away for the same reason says the same.
+
 ## 0.6.0
 
 ### Minor Changes
