@@ -447,6 +447,7 @@ export const CASTBAR_LEADS: Readonly<Record<string, string>> = {
   error_codec_detection_failed: 'castbar_lead_codec_detection_failed',
   error_unsupported_sample_rate: 'castbar_lead_rate',
   error_pcm_rate_unsupported: 'castbar_lead_rate',
+  error_upnp_disabled: 'notice_lead_upnp_disabled',
 };
 
 /**

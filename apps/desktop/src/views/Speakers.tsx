@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Link } from 'wouter-preact';
+import { SPEAKERS_UPNP_DISABLED } from '@thaumic-cast/protocol';
 import { Trans, useTranslation } from 'react-i18next';
 import {
   groups,
@@ -77,6 +78,8 @@ export function Speakers() {
 
   const cards = roomCards(groups.value, castingSpeakers.value, transportStates.value);
   const readings = currentReadings(speakerNoticeReadings.value, castingStreams.value);
+  // The speakers refused: the Notice says why, and "returned none" would contradict it.
+  const upnpOff = networkHealth.value.reason === SPEAKERS_UPNP_DISABLED;
 
   return (
     <>
@@ -125,17 +128,19 @@ export function Speakers() {
       <SpeakerNotices />
 
       {cards.length === 0 ? (
-        <Card>
-          <EmptyState
-            body={`${t('speakers.none')} ${t('speakers.scan_hint')}`}
-            link={
-              <Trans
-                i18nKey="speakers.manual_add_hint"
-                components={[<Link key={0} href="/settings#speakers" />]}
-              />
-            }
-          />
-        </Card>
+        !upnpOff && (
+          <Card>
+            <EmptyState
+              body={`${t('speakers.none')} ${t('speakers.scan_hint')}`}
+              link={
+                <Trans
+                  i18nKey="speakers.manual_add_hint"
+                  components={[<Link key={0} href="/settings#speakers" />]}
+                />
+              }
+            />
+          </Card>
+        )
       ) : (
         <div className={styles.grid}>
           {cards.map(({ room, model, casting, badge }) => {
