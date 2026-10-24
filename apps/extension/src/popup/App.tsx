@@ -1081,7 +1081,11 @@ function MainPopup(): JSX.Element {
               error: choice.save.error ? t(choice.save.error) : undefined,
             },
             state: pickerState,
-            strings: words.picker,
+            // The speakers answered with a refusal, so "no speaker answered" would be wrong.
+            strings:
+              placed.banner?.id === 'upnp_disabled'
+                ? { ...words.picker, empty: t('notice_lead_upnp_disabled') }
+                : words.picker,
           }}
         />
       )}

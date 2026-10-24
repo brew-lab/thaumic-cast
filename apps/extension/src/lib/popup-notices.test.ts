@@ -365,6 +365,7 @@ describe('castBarFailure', () => {
     expect(castBarFailure('error_pcm_rate_unsupported', { rate: 96000 }).lead.key).toBe(
       'castbar_lead_rate',
     );
+    expect(castBarFailure('error_upnp_disabled').lead.key).toBe('notice_lead_upnp_disabled');
   });
 
   it('should call anything else a cast that did not start', () => {

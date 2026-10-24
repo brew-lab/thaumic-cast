@@ -14,7 +14,7 @@ import {
   RoomRow,
   type AddressResult,
 } from '@thaumic-cast/ui';
-import { roomsOf } from '@thaumic-cast/protocol';
+import { SPEAKERS_UPNP_DISABLED, roomsOf } from '@thaumic-cast/protocol';
 import { createLogger } from '@thaumic-cast/shared';
 import { useTranslation } from 'react-i18next';
 import {
@@ -155,6 +155,10 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
     setIsSearching(false);
   };
 
+  // The speakers refused: the Notice says why, so "no speaker answered" and a manual
+  // address (which they would refuse too) are left out.
+  const upnpOff = networkHealth.value.reason === SPEAKERS_UPNP_DISABLED;
+
   return (
     <WizardStep
       title={t('onboarding.speakers.title')}
@@ -208,14 +212,16 @@ export function SpeakerStep({ onSpeakersFound }: SpeakerStepProps): preact.JSX.E
           </Card>
         </>
       ) : (
-        <EmptyState
-          title={t('onboarding.speakers.none_found')}
-          body={t('onboarding.speakers.none_found_hint')}
-        />
+        !upnpOff && (
+          <EmptyState
+            title={t('onboarding.speakers.none_found')}
+            body={t('onboarding.speakers.none_found_hint')}
+          />
+        )
       )}
 
       {/* Manual IP entry - shown when no speakers found */}
-      {speakerCount === 0 && !isSearching && (
+      {speakerCount === 0 && !isSearching && !upnpOff && (
         <Disclosure label={t('onboarding.speakers.manual_toggle')}>
           <AddressField
             size="md"
