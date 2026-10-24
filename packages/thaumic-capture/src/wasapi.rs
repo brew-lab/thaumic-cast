@@ -1,7 +1,9 @@
 //! WASAPI process-specific loopback capture source.
 //!
 //! Captures audio from a specific process via WASAPI loopback on Windows.
-//! Requires Windows 10 build 20348 or later.
+//! Requires Windows build 20348 or later: Windows 11 or Windows Server 2022.
+//! Microsoft's docs call it "Windows 10 Build 20348", but no Windows 10 release
+//! reaches that build (the last is 19045).
 
 use std::mem::ManuallyDrop;
 use std::pin::Pin;

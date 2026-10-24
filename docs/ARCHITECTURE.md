@@ -85,7 +85,8 @@ its own sessions in full and other clients' only as busy speakers.
 On Windows the desktop app can also capture the whole browser itself (`START_BROWSER_CAPTURE`). The
 extension then sends no audio: a WASAPI source from `thaumic-capture`, reached through the traits in
 `capture/`, pushes PCM into the stream (`StreamCoordinator::start_capture_stream`). It is offered
-only to clients on the companion's own machine.
+only to clients on the companion's own machine, and needs Windows build 20348 or later (Windows 11, or
+Windows Server 2022) for process loopback; no Windows 10 release reaches that build.
 
 ## Core's modules
 
