@@ -200,6 +200,30 @@ describe('placeNotices: the speakers (rules 3 and 4)', () => {
     expect(placed.section).toBeNull();
   });
 
+  it('should name the UPnP switch in a banner with no X, and hide the rest the same way', () => {
+    const placed = placeNotices(
+      inputs({
+        connection: {
+          ...inputs().connection,
+          networkHealth: 'degraded',
+          networkHealthReason: 'speakers_upnp_disabled',
+        },
+        speakers: [speaker(KITCHEN, { kind: 'running_low' })],
+        capture: { tabId: 7, key: 'capture_health_frame_drops_message', hasAction: true },
+      }),
+    );
+    expect(placed.banner).toMatchObject({
+      id: 'upnp_disabled',
+      tone: 'danger',
+      lead: { key: 'notice_lead_upnp_disabled' },
+      text: { key: 'network.speakers_upnp_disabled' },
+      dismissible: false,
+    });
+    expect(placed.slots[7]).toEqual([]);
+    expect(placed.conditions).toEqual({});
+    expect(placed.section).toBeNull();
+  });
+
   it('should put no reply under the heading, keep its Badge after X, and keep the slots', () => {
     const degraded = {
       ...inputs().connection,
@@ -365,6 +389,9 @@ describe('the words the rules choose', () => {
     const keys = [
       'notice_lead_unreachable',
       'network.speakers_unreachable',
+      'notice_lead_upnp_disabled',
+      'network.speakers_upnp_disabled',
+      'error_upnp_disabled',
       'notice_lead_no_reply',
       'network.speakers_not_responding',
       'badge_no_reply',

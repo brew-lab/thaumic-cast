@@ -48,7 +48,11 @@ describe('desktop en.json', () => {
 
   it('should have a message for every network health reason the core reports', () => {
     const reasons = networkHealthReasons(REPO);
-    expect(reasons.sort()).toEqual(['speakers_not_responding', 'speakers_unreachable']);
+    expect(reasons.sort()).toEqual([
+      'speakers_not_responding',
+      'speakers_unreachable',
+      'speakers_upnp_disabled',
+    ]);
     for (const reason of reasons) {
       expect(strings[`network.${reason}`]).toBeString();
     }

@@ -171,6 +171,8 @@ export function badgeItems(sources: BadgeSources): BadgeItem[] {
   if (casts.length > 0 && sources.networkHealth === 'degraded') {
     if (sources.networkHealthReason === 'speakers_unreachable') {
       items.push({ sev: 'danger', lead: { key: 'notice_lead_unreachable' }, at: now });
+    } else if (sources.networkHealthReason === 'speakers_upnp_disabled') {
+      items.push({ sev: 'danger', lead: { key: 'notice_lead_upnp_disabled' }, at: now });
     } else if (
       sources.networkHealthReason === 'speakers_not_responding' &&
       !sources.noReplyDismissed

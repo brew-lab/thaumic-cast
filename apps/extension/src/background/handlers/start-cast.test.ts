@@ -138,6 +138,20 @@ describe('handleStartCast with a companion that regroups', () => {
     expect(brokerCalls.stoppedTabs).toEqual([1]);
     expect(getSession(1)).toBeUndefined();
   });
+
+  it('should name the Sonos UPnP switch when the speakers refuse control', async () => {
+    brokerReplies.playbackResult = (speakerIp) => ({
+      speakerIp,
+      success: false,
+      error: 'speakers_upnp_disabled',
+    });
+
+    const response = await cast(['RINCON_STUDY', 'RINCON_PATIO']);
+
+    expect(response).toMatchObject({ success: false, error: 'error_upnp_disabled' });
+    expect(brokerCalls.stoppedTabs).toEqual([1]);
+    expect(getSession(1)).toBeUndefined();
+  });
 });
 
 describe('handleStartCast with an older companion', () => {
