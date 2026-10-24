@@ -23,6 +23,7 @@ use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
 use crate::protocol_constants::SPEAKERS_UPNP_DISABLED;
+use crate::sonos::soap::SoapError;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
@@ -1675,7 +1676,11 @@ impl StreamCoordinator {
             }
             Err(e) => {
                 log::warn!("Failed to start playback on {}: {}", speaker_ip, e);
-                outcome(failed(speaker_ip, e.to_string()), left_group)
+                let error = match e {
+                    SoapError::UpnpDisabled => SPEAKERS_UPNP_DISABLED.to_string(),
+                    e => e.to_string(),
+                };
+                outcome(failed(speaker_ip, error), left_group)
             }
         }
     }

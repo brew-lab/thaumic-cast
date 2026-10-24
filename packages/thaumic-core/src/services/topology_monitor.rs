@@ -28,6 +28,7 @@ use crate::context::{NetworkContext, NetworkError};
 use crate::error::{ThaumicError, ThaumicResult};
 use crate::events::{EventEmitter, NetworkEvent, NetworkHealth, SonosEvent, TopologyEvent};
 use crate::mdns_advertise::{self, MdnsAdvertiserHandle};
+use crate::protocol_constants::SPEAKERS_UPNP_DISABLED;
 use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::monitor::MemberChangeSink;
 use crate::services::speaker_monitor::topology_diff::summarize;
@@ -373,6 +374,12 @@ impl TopologyMonitor {
         self.network_health.read().clone()
     }
 
+    /// Whether the speakers last refused control because the household has
+    /// Sonos UPnP switched off.
+    fn upnp_is_off(&self) -> bool {
+        self.network_health.read().reason.as_deref() == Some(SPEAKERS_UPNP_DISABLED)
+    }
+
     /// Updates network health and emits an event if it or its reason changed.
     fn set_network_health(&self, health: NetworkHealth, reason: Option<String>) {
         let mut state = self.network_health.write();
@@ -503,6 +510,11 @@ impl TopologyMonitor {
                         ThaumicError::SpeakerNotFound(_) => {
                             log::debug!("[TopologyMonitor] No speakers discovered");
                         }
+                        // Said once, with the setting, when the speakers first
+                        // refused; every refresh after would only repeat it.
+                        _ if self.upnp_is_off() => {
+                            log::debug!("[TopologyMonitor] {}", e);
+                        }
                         _ => {
                             log::error!("[TopologyMonitor] {}", e);
                         }
@@ -550,6 +562,10 @@ impl TopologyMonitor {
             "[TopologyMonitor] Quick refresh: {} groups found",
             groups.len()
         );
+        // A speaker answering means the household's UPnP switch is back on.
+        if self.upnp_is_off() {
+            self.set_network_health(NetworkHealth::Ok, None);
+        }
 
         // A reachable coordinator that reports no groups at all is anomalous: without
         // SSDP this path cannot tell "network is empty" from "bad response", and the
@@ -707,8 +723,7 @@ impl TopologyMonitor {
         // A speaker that refused control last time answering now means the
         // UPnP switch is back on; health is decided here, not by the event
         // check below, which would read the empty transport states as no reply.
-        let upnp_was_off =
-            self.network_health.read().reason.as_deref() == Some("speakers_upnp_disabled");
+        let upnp_was_off = self.upnp_is_off();
         let snapshot = match self.sonos.get_zone_group_state(&query_speaker.ip).await {
             Ok(snapshot) => {
                 log::info!(
@@ -732,7 +747,7 @@ impl TopologyMonitor {
                 }
                 self.set_network_health(
                     NetworkHealth::Degraded,
-                    Some("speakers_upnp_disabled".to_string()),
+                    Some(SPEAKERS_UPNP_DISABLED.to_string()),
                 );
                 return Err(SoapError::UpnpDisabled.into());
             }
@@ -2117,7 +2132,7 @@ mod tests {
     fn upnp_disabled() -> (NetworkHealth, Option<String>) {
         (
             NetworkHealth::Degraded,
-            Some("speakers_upnp_disabled".to_string()),
+            Some(SPEAKERS_UPNP_DISABLED.to_string()),
         )
     }
 
@@ -2178,5 +2193,21 @@ mod tests {
             emitter.health_changes(),
             vec![upnp_disabled(), (NetworkHealth::Ok, None)]
         );
+    }
+
+    #[tokio::test]
+    async fn asking_again_after_upnp_is_back_on_clears_the_notice() {
+        let emitter = Arc::new(CollectingEmitter::new());
+        let (monitor, upnp_off) = upnp_switchable_monitor(Arc::clone(&emitter));
+        // The groups are known from before the switch went off.
+        monitor.refresh_topology().await.unwrap();
+        upnp_off.store(true, Ordering::Relaxed);
+        assert!(monitor.refresh_topology().await.is_err());
+
+        upnp_off.store(false, Ordering::Relaxed);
+        monitor.quick_refresh_zone_groups().await.unwrap();
+
+        let health = monitor.get_network_health();
+        assert_eq!((health.health, health.reason), (NetworkHealth::Ok, None));
     }
 }
