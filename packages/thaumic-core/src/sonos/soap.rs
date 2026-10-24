@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use thiserror::Error;
 
 use super::utils::{build_sonos_url_with_port, escape_xml, extract_xml_text};
@@ -42,6 +42,22 @@ pub enum SoapError {
     /// Failed to parse SOAP response XML.
     #[error("Failed to parse SOAP response")]
     Parse,
+
+    /// The speaker refused control with a bare 403: the household has the
+    /// Sonos app's Connection Security > UPnP switch turned off. Never retried.
+    #[error("speaker refused control (HTTP 403): Sonos UPnP is switched off")]
+    UpnpDisabled,
+}
+
+/// Whether a response is a Sonos speaker refusing control because the
+/// household has UPnP switched off.
+///
+/// A Sonos speaker with Connection Security > UPnP off answers every SOAP and
+/// GENA request with a bare 403 (a `Sonos/` server header and no body). The
+/// switch is per household, so one such answer speaks for every speaker.
+pub(crate) fn is_upnp_refusal(status: StatusCode, server: Option<&str>, body: &str) -> bool {
+    status == StatusCode::FORBIDDEN
+        && (server.is_some_and(|s| s.contains("Sonos/")) || body.trim().is_empty())
 }
 
 /// Convenient Result alias for SOAP operations.
@@ -219,11 +235,20 @@ pub async fn send_soap_request_with(
     let res = res?;
 
     let status = res.status();
+    let server = res
+        .headers()
+        .get(reqwest::header::SERVER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     let response_text = res.text().await?;
 
     // Check for SOAP fault in response (can occur even on 500 status)
     if response_text.contains("<s:Fault>") || response_text.contains("<soap:Fault>") {
         return Err(parse_soap_fault(&response_text));
+    }
+
+    if is_upnp_refusal(status, server.as_deref(), &response_text) {
+        return Err(SoapError::UpnpDisabled);
     }
 
     // Check HTTP status after SOAP fault check (SOAP faults may come with 500 status)
@@ -369,5 +394,33 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_bare_403_from_a_speaker_is_a_upnp_refusal() {
+        const SONOS: Option<&str> = Some("Linux UPnP/1.0 Sonos/86.10-80260 (ZPS1)");
+        let forbidden = StatusCode::FORBIDDEN;
+        assert!(is_upnp_refusal(forbidden, SONOS, ""));
+        assert!(is_upnp_refusal(forbidden, SONOS, "<html>Forbidden</html>"));
+        assert!(is_upnp_refusal(forbidden, None, ""));
+        assert!(is_upnp_refusal(forbidden, None, "  \n"));
+
+        assert!(!is_upnp_refusal(
+            forbidden,
+            Some("nginx/1.25"),
+            "<html>403 Forbidden</html>"
+        ));
+        assert!(!is_upnp_refusal(StatusCode::UNAUTHORIZED, SONOS, ""));
+        assert!(!is_upnp_refusal(StatusCode::NOT_FOUND, SONOS, ""));
+        assert!(!is_upnp_refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+            ""
+        ));
+    }
+
+    #[test]
+    fn a_upnp_refusal_is_never_retried() {
+        assert!(!SoapError::UpnpDisabled.is_transient());
     }
 }

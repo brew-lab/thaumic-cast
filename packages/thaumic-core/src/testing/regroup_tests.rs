@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::events::SonosEvent;
+use crate::protocol_constants::SPEAKERS_UPNP_DISABLED;
 use crate::services::start_volume::StartVolumeRequest;
 use crate::services::GroupRole;
 use crate::sonos::services::SonosService;
@@ -1102,6 +1103,49 @@ async fn a_cast_with_no_fresh_grouping_moves_nothing() {
             assert!(actions(&sys, &sys.fake.calls_since(seq), room).is_empty());
         }
         assert!(sys.sessions().is_empty());
+    })
+    .await;
+}
+
+/// Proves: with Sonos UPnP switched off a cast moves nothing and every room
+/// says why, in the one word clients turn into the setting's name; switched
+/// back on, the same cast plays.
+#[tokio::test]
+async fn a_cast_with_upnp_off_moves_nothing_and_says_why() {
+    within("upnp off cast", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen", "Patio", "Den"])
+            .groups(&[&["Den", "Patio"]])
+            .build()
+            .await;
+        sys.fake.set_upnp_enabled(false);
+        let stream = sys.new_stream();
+        let seq = sys.fake.next_seq();
+
+        let results = sys.start_rooms(&stream, &["Kitchen", "Patio"], None).await;
+
+        assert_eq!(results.len(), 2, "{results:?}");
+        for result in &results {
+            assert!(!result.success, "{results:?}");
+            assert_eq!(result.error.as_deref(), Some(SPEAKERS_UPNP_DISABLED));
+        }
+        let calls = sys.fake.calls_since(seq);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.action == "GetZoneGroupState")
+                .count(),
+            1,
+            "one refusal speaks for the household"
+        );
+        for room in ["Kitchen", "Patio", "Den"] {
+            assert!(actions(&sys, &calls, room).is_empty());
+        }
+        assert!(sys.sessions().is_empty());
+
+        sys.fake.set_upnp_enabled(true);
+        let results = sys.start_rooms(&stream, &["Kitchen", "Patio"], None).await;
+        assert!(results.iter().all(|r| r.success), "{results:?}");
     })
     .await;
 }

@@ -15,6 +15,7 @@ use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard, Notify};
 
 use crate::context::NetworkContext;
 use crate::events::{EventEmitter, SonosEvent, SpeakerRemovalReason, StreamEvent};
+use crate::sonos::soap::SoapError;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
 use crate::sonos::types::ZoneGroup;
@@ -28,6 +29,15 @@ use super::playback_session_store::{
 };
 use super::regroup::{plan_restore, Leaving, OldGroup};
 use super::stream_coordinator::StartLevels;
+
+/// Why [`SyncGroupManager::read_groups`] has no fresh grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GroupsUnread {
+    /// No speaker asked reported the groups.
+    NoAnswer,
+    /// A speaker refused control: the household has Sonos UPnP switched off.
+    UpnpDisabled,
+}
 
 /// A failed [`PlaybackResult`] for `speaker_ip`.
 fn failed(speaker_ip: &str, error: String) -> PlaybackResult {
@@ -174,13 +184,17 @@ impl SyncGroupManager {
     /// The household's grouping, read from a speaker now rather than from
     /// the GENA cache, which can trail a change made a moment ago. Asks the
     /// rooms in `ask_first` (the rooms at hand), then the cached
-    /// coordinators, a few at most; `None` when none of them answers. With
+    /// coordinators, a few at most; an error when none of them answers, or
+    /// at once when one refuses control (UPnP off is per household). With
     /// no topology source set, the cache. The cache itself is left to the
     /// topology monitor, so clients still hear of every change.
-    pub(crate) async fn read_groups(&self, ask_first: &[String]) -> Option<Vec<ZoneGroup>> {
+    pub(crate) async fn read_groups(
+        &self,
+        ask_first: &[String],
+    ) -> Result<Vec<ZoneGroup>, GroupsUnread> {
         let cached = self.sonos_state.groups.read().clone();
         let Some(topology) = &self.topology else {
-            return Some(cached);
+            return Ok(cached);
         };
         let mut ips: Vec<String> = Vec::new();
         for ip in ask_first
@@ -196,13 +210,17 @@ impl SyncGroupManager {
             match tokio::time::timeout(FRESH_TOPOLOGY_TIMEOUT, topology.get_zone_group_state(ip))
                 .await
             {
-                Ok(Ok(snapshot)) if !snapshot.groups.is_empty() => return Some(snapshot.groups),
+                Ok(Ok(snapshot)) if !snapshot.groups.is_empty() => return Ok(snapshot.groups),
                 Ok(Ok(_)) => log::debug!("[Regroup] {ip} reported no groups"),
+                Ok(Err(SoapError::UpnpDisabled)) => {
+                    log::warn!("[Regroup] {ip} refused control: Sonos UPnP is switched off");
+                    return Err(GroupsUnread::UpnpDisabled);
+                }
                 Ok(Err(e)) => log::debug!("[Regroup] {ip} could not report the groups: {e}"),
                 Err(_) => log::debug!("[Regroup] {ip} did not report the groups in time"),
             }
         }
-        None
+        Err(GroupsUnread::NoAnswer)
     }
 
     /// [`Self::read_groups`], falling back to the cache when no speaker
@@ -211,8 +229,8 @@ impl SyncGroupManager {
     /// tell a room that now leads others to join.
     async fn fresh_groups(&self, ask_first: &[String]) -> Vec<ZoneGroup> {
         match self.read_groups(ask_first).await {
-            Some(groups) => groups,
-            None => {
+            Ok(groups) => groups,
+            Err(_) => {
                 log::warn!("[Regroup] No speaker reported the grouping; using the cached one");
                 self.sonos_state.groups.read().clone()
             }

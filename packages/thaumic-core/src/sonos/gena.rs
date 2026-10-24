@@ -41,6 +41,11 @@ pub enum GenaError {
     /// The speaker's response was missing the required SID header.
     #[error("Missing SID in subscription response")]
     MissingSid,
+
+    /// The speaker refused with a bare 403: the household has Sonos UPnP
+    /// switched off (see [`super::soap::SoapError::UpnpDisabled`]).
+    #[error("speaker refused control (HTTP 403): Sonos UPnP is switched off")]
+    UpnpDisabled,
 }
 
 /// Convenient Result alias for GENA subscription operations.

@@ -34,6 +34,7 @@ use crate::services::speaker_monitor::topology_diff::summarize;
 use crate::services::speaker_monitor::{MemberChange, TopologyDiff};
 use crate::sonos::discovery::{probe_speaker_by_ip, Speaker};
 use crate::sonos::gena::{GenaError, GenaResult, GenaSubscriptionManager};
+use crate::sonos::soap::SoapError;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::types::{HouseholdTopology, ZoneGroup};
 use crate::sonos::SonosService;
@@ -372,12 +373,12 @@ impl TopologyMonitor {
         self.network_health.read().clone()
     }
 
-    /// Updates network health and emits an event if it changed.
+    /// Updates network health and emits an event if it or its reason changed.
     fn set_network_health(&self, health: NetworkHealth, reason: Option<String>) {
         let mut state = self.network_health.write();
         let old_health = state.health;
 
-        if old_health != health {
+        if old_health != health || state.reason != reason {
             log::info!(
                 "[TopologyMonitor] Network health changed: {:?} -> {:?}{}",
                 old_health,
@@ -703,13 +704,37 @@ impl TopologyMonitor {
             query_speaker.ip,
             query_speaker.name
         );
+        // A speaker that refused control last time answering now means the
+        // UPnP switch is back on; health is decided here, not by the event
+        // check below, which would read the empty transport states as no reply.
+        let upnp_was_off =
+            self.network_health.read().reason.as_deref() == Some("speakers_upnp_disabled");
         let snapshot = match self.sonos.get_zone_group_state(&query_speaker.ip).await {
             Ok(snapshot) => {
                 log::info!(
                     "[TopologyMonitor] SOAP succeeded: {} groups found",
                     snapshot.groups.len()
                 );
+                if upnp_was_off {
+                    self.set_network_health(NetworkHealth::Ok, None);
+                }
                 snapshot
+            }
+            Err(SoapError::UpnpDisabled) => {
+                // The switch is per household, so one refusal speaks for all.
+                if !upnp_was_off {
+                    log::warn!(
+                        "[TopologyMonitor] {} refused control: UPnP is switched off for this \
+                         Sonos household. Switch it on in the Sonos app: Account > Privacy & \
+                         Security > Connection Security > UPnP",
+                        query_speaker.ip
+                    );
+                }
+                self.set_network_health(
+                    NetworkHealth::Degraded,
+                    Some("speakers_upnp_disabled".to_string()),
+                );
+                return Err(SoapError::UpnpDisabled.into());
             }
             Err(e) => {
                 log::error!(
@@ -784,7 +809,7 @@ impl TopologyMonitor {
         let has_groups = !groups.is_empty();
 
         if refresh_looks_degraded(
-            was_first_discovery,
+            was_first_discovery || upnp_was_off,
             has_groups,
             has_subscriptions,
             transport_states_empty,
@@ -1470,6 +1495,9 @@ mod tests {
         speakers: Vec<Speaker>,
         network: Option<NetworkContext>,
         ip_at_soap: Arc<Mutex<Option<String>>>,
+        /// While set, zone group reads are refused as by a household with
+        /// Sonos UPnP switched off.
+        upnp_off: Arc<AtomicBool>,
     }
 
     impl StubTopologyClient {
@@ -1480,6 +1508,7 @@ mod tests {
                 speakers: Vec::new(),
                 network: None,
                 ip_at_soap: Arc::new(Mutex::new(None)),
+                upnp_off: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -1489,6 +1518,9 @@ mod tests {
         async fn get_zone_group_state(&self, _ip: &str) -> SoapResult<ZoneGroupSnapshot> {
             if let Some(network) = &self.network {
                 *self.ip_at_soap.lock().unwrap() = Some(network.get_local_ip());
+            }
+            if self.upnp_off.load(Ordering::Relaxed) {
+                return Err(SoapError::UpnpDisabled);
             }
             Ok(ZoneGroupSnapshot {
                 groups: self.groups.clone(),
@@ -1504,23 +1536,42 @@ mod tests {
         }
     }
 
-    /// Event emitter that records the topology events it is handed.
+    /// Event emitter that records the topology and network events it is handed.
     struct CollectingEmitter {
         topology: Mutex<Vec<TopologyEvent>>,
+        network: Mutex<Vec<NetworkEvent>>,
     }
 
     impl CollectingEmitter {
         fn new() -> Self {
             Self {
                 topology: Mutex::new(Vec::new()),
+                network: Mutex::new(Vec::new()),
             }
+        }
+
+        /// The `(health, reason)` of every `HealthChanged` emitted, in order.
+        fn health_changes(&self) -> Vec<(NetworkHealth, Option<String>)> {
+            self.network
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|event| match event {
+                    NetworkEvent::HealthChanged { health, reason, .. } => {
+                        Some((*health, reason.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
         }
     }
 
     impl EventEmitter for CollectingEmitter {
         fn emit_stream(&self, _event: StreamEvent) {}
         fn emit_sonos(&self, _event: SonosEvent) {}
-        fn emit_network(&self, _event: NetworkEvent) {}
+        fn emit_network(&self, event: NetworkEvent) {
+            self.network.lock().unwrap().push(event);
+        }
         fn emit_topology(&self, event: TopologyEvent) {
             self.topology.lock().unwrap().push(event);
         }
@@ -2040,6 +2091,92 @@ mod tests {
                 "http://100.96.0.12:0/sonos/gena"
             ),
             None
+        );
+    }
+
+    /// A monitor that discovers one speaker whose zone group reads are
+    /// refused while the returned flag is set.
+    fn upnp_switchable_monitor(
+        emitter: Arc<CollectingEmitter>,
+    ) -> (TopologyMonitor, Arc<AtomicBool>) {
+        let mut client = StubTopologyClient::new(
+            vec![group("192.168.2.204", "RINCON_A")],
+            Arc::new(Mutex::new(HouseholdTopology::default())),
+        );
+        client.speakers = vec![speaker("192.168.2.204", "RINCON_A")];
+        let upnp_off = Arc::clone(&client.upnp_off);
+        let monitor = create_monitor_with_client(
+            client,
+            NetworkContext::for_test(),
+            Arc::new(SonosState::default()),
+            emitter as Arc<dyn EventEmitter>,
+        );
+        (monitor, upnp_off)
+    }
+
+    fn upnp_disabled() -> (NetworkHealth, Option<String>) {
+        (
+            NetworkHealth::Degraded,
+            Some("speakers_upnp_disabled".to_string()),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_speaker_refusing_control_reports_upnp_switched_off() {
+        let emitter = Arc::new(CollectingEmitter::new());
+        let (monitor, upnp_off) = upnp_switchable_monitor(Arc::clone(&emitter));
+        upnp_off.store(true, Ordering::Relaxed);
+
+        assert!(monitor.refresh_topology().await.is_err());
+
+        let health = monitor.get_network_health();
+        assert_eq!((health.health, health.reason), upnp_disabled());
+        assert_eq!(emitter.health_changes(), vec![upnp_disabled()]);
+    }
+
+    #[tokio::test]
+    async fn a_new_reason_for_the_same_health_is_sent() {
+        let emitter = Arc::new(CollectingEmitter::new());
+        let (monitor, upnp_off) = upnp_switchable_monitor(Arc::clone(&emitter));
+        monitor.set_network_health(
+            NetworkHealth::Degraded,
+            Some("speakers_unreachable".to_string()),
+        );
+        upnp_off.store(true, Ordering::Relaxed);
+
+        assert!(monitor.refresh_topology().await.is_err());
+
+        assert_eq!(
+            emitter.health_changes(),
+            vec![
+                (
+                    NetworkHealth::Degraded,
+                    Some("speakers_unreachable".to_string())
+                ),
+                upnp_disabled(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn switching_upnp_back_on_clears_the_notice_without_blaming_the_network() {
+        let emitter = Arc::new(CollectingEmitter::new());
+        let (monitor, upnp_off) = upnp_switchable_monitor(Arc::clone(&emitter));
+        upnp_off.store(true, Ordering::Relaxed);
+        assert!(monitor.refresh_topology().await.is_err());
+        // A second refusal changes nothing, so nothing more is sent.
+        assert!(monitor.refresh_topology().await.is_err());
+
+        upnp_off.store(false, Ordering::Relaxed);
+        // No speaker has reported a transport state yet; that is no reason to
+        // say the speakers are not answering.
+        monitor.refresh_topology().await.unwrap();
+
+        let health = monitor.get_network_health();
+        assert_eq!((health.health, health.reason), (NetworkHealth::Ok, None));
+        assert_eq!(
+            emitter.health_changes(),
+            vec![upnp_disabled(), (NetworkHealth::Ok, None)]
         );
     }
 }
