@@ -3,7 +3,7 @@
 //! Diagnostic tool that uses `thaumic-capture` to capture audio from a specific
 //! process and writes Float32 WAV output compatible with `tools/capture-analysis/`.
 //!
-//! Requires Windows 10 build 20348 or later.
+//! Requires Windows build 20348 or later: Windows 11 or Windows Server 2022.
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
@@ -135,7 +135,7 @@ mod cli {
         let cli = Cli::parse();
 
         if !thaumic_capture::wasapi_available() {
-            eprintln!("Error: WASAPI process loopback requires Windows 10 build 20348+.");
+            eprintln!("Error: WASAPI process loopback requires Windows 11 or Windows Server 2022 (build 20348 or later).");
             std::process::exit(1);
         }
 

@@ -16,7 +16,10 @@ pub use wasapi::WasapiSource;
 
 /// Runtime check for WASAPI process loopback availability.
 ///
-/// Checks that the Windows build number is at least 20348. The build is read
+/// Checks that the Windows build number is at least 20348, Microsoft's documented
+/// minimum for `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`. That is Windows
+/// Server 2022, so in practice Windows 11 (22000 and up): no Windows 10 release
+/// reaches it, whatever the docs' "Windows 10 Build 20348" suggests. The build is read
 /// in-process with `RtlGetVersion`, which manifests cannot make lie, rather than
 /// by starting a program: a console program started from the desktop app
 /// flashes a window, and this is asked on every `/health` request.
