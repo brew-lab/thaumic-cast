@@ -90,7 +90,7 @@ export interface NoticeInputs {
 /** The one banner (S2). */
 export interface BannerPlan {
   /** Its identity: it is said once. */
-  id: 'connection_lost' | 'connection_error' | 'unreachable' | 'old_companion';
+  id: 'connection_lost' | 'connection_error' | 'unreachable' | 'upnp_disabled' | 'old_companion';
   /** danger blocks and has no X; the old companion's warning has one. */
   tone: 'danger' | 'warning';
   /** The lead. */
@@ -272,6 +272,19 @@ function bannerCandidates(inputs: NoticeInputs): BannerPlan[] {
       dismissible: false,
     });
   }
+  if (
+    knowsSpeakers &&
+    connection.networkHealth === 'degraded' &&
+    connection.networkHealthReason === 'speakers_upnp_disabled'
+  ) {
+    out.push({
+      id: 'upnp_disabled',
+      tone: 'danger',
+      lead: { key: 'notice_lead_upnp_disabled' },
+      text: { key: 'network.speakers_upnp_disabled' },
+      dismissible: false,
+    });
+  }
   if (oldCompanion && connection.phase === 'connected') {
     out.push({
       id: 'old_companion',
@@ -298,7 +311,8 @@ export function placeNotices(inputs: NoticeInputs): PopupNotices {
   const [first, second] = candidates;
   const banner = first ? { ...first, ...(second ? { also: second.lead } : {}) } : null;
   const disconnected = connection.phase === 'error';
-  const unreachable = candidates.some((c) => c.id === 'unreachable');
+  // UPnP switched off refuses every speaker, so it hides the same as nothing reached.
+  const unreachable = candidates.some((c) => c.id === 'unreachable' || c.id === 'upnp_disabled');
   const noReply =
     !disconnected &&
     !unreachable &&

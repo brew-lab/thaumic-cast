@@ -114,6 +114,12 @@ describe('badgeItems', () => {
     ]);
     expect(leads(badgeItems(sources(noReply)))).toEqual([['warning', 'notice_lead_no_reply']]);
     expect(badgeItems(sources({ ...unreachable, casts: [] }))).toEqual([]);
+    const upnpOff = {
+      networkHealth: 'degraded' as const,
+      networkHealthReason: 'speakers_upnp_disabled',
+    };
+    expect(leads(badgeItems(sources(upnpOff)))).toEqual([['danger', 'notice_lead_upnp_disabled']]);
+    expect(badgeItems(sources({ ...upnpOff, casts: [] }))).toEqual([]);
   });
 
   it('should drop "No reply" once the popup dismissed it', () => {

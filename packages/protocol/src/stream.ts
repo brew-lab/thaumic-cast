@@ -106,6 +106,14 @@ export const PlaybackResultSchema = z.object({
 export type PlaybackResult = z.infer<typeof PlaybackResultSchema>;
 
 /**
+ * A room's `PlaybackResult.error` when the speakers refused control because
+ * the household has Sonos UPnP switched off. The same word is the network
+ * health reason. Kept in sync with `SPEAKERS_UPNP_DISABLED` in the core's
+ * `protocol_constants.rs`.
+ */
+export const SPEAKERS_UPNP_DISABLED = 'speakers_upnp_disabled';
+
+/**
  * An active cast session with its current state.
  * Used for displaying in the popup's active casts list.
  * Supports multi-group casting (one stream to multiple speaker groups).

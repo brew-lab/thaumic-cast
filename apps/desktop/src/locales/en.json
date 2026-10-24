@@ -131,6 +131,7 @@
 
   "network.speakers_not_responding": "The speakers were found, but nothing is getting back from them. That is nearly always a VPN or a firewall: pause it, then ask again.",
   "network.speakers_unreachable": "No speaker can be reached on this network. Firewalls and VPNs make a habit of this; pause yours.",
+  "network.speakers_upnp_disabled": "The speakers answered, and the answer was no: UPnP is switched off for them. Switch it on in the Sonos app, under Account > Privacy & Security > Connection Security > UPnP, then ask again.",
 
   "onboarding.skip": "Skip the formalities",
   "onboarding.next": "Carry on",
