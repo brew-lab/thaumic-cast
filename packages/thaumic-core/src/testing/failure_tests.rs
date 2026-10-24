@@ -386,3 +386,25 @@ async fn a_refusal_for_upnp_off_is_not_retried() {
     })
     .await;
 }
+
+/// Proves: a cast started on one speaker, without reading the grouping,
+/// says the speakers refused for UPnP being off in the same word as a
+/// grouped cast, so the client names the setting either way.
+#[tokio::test]
+async fn a_direct_start_with_upnp_off_says_why() {
+    within("upnp off direct start", async {
+        let sys = TestSystem::builder().speakers(["Kitchen"]).build().await;
+        sys.fake.set_upnp_enabled(false);
+        let stream = sys.new_stream();
+
+        let results = sys.start(&stream, &["Kitchen"], false).await;
+
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert!(!results[0].success);
+        assert_eq!(
+            results[0].error.as_deref(),
+            Some(crate::protocol_constants::SPEAKERS_UPNP_DISABLED)
+        );
+    })
+    .await;
+}

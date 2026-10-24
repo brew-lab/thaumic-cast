@@ -116,10 +116,25 @@ export function networkHealthReasons(repoRoot: string): string[] {
     join(repoRoot, 'packages/thaumic-core/src/services/topology_monitor.rs'),
     'utf8',
   );
+  // A reason may be written as a protocol constant instead of a literal.
+  const constants = readFileSync(
+    join(repoRoot, 'packages/thaumic-core/src/protocol_constants.rs'),
+    'utf8',
+  );
+  const valueOf = new Map(
+    [...constants.matchAll(/pub const ([A-Z_]+): &str = "(speakers_[a-z_]+)";/g)].map((m) => [
+      m[1],
+      m[2],
+    ]),
+  );
+  const named = [...source.matchAll(/Some\(([A-Z_]+)\.to_string\(\)\)/g)]
+    .map((m) => valueOf.get(m[1]))
+    .filter((reason): reason is string => reason !== undefined);
   return [
-    ...new Set(
-      [...source.matchAll(/Some\("(speakers_[a-z_]+)"\.to_string\(\)\)/g)].map((m) => m[1]),
-    ),
+    ...new Set([
+      ...[...source.matchAll(/Some\("(speakers_[a-z_]+)"\.to_string\(\)\)/g)].map((m) => m[1]),
+      ...named,
+    ]),
   ];
 }
 

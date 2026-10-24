@@ -53,8 +53,10 @@ pub enum SoapError {
 /// household has UPnP switched off.
 ///
 /// A Sonos speaker with Connection Security > UPnP off answers every SOAP and
-/// GENA request with a bare 403 (a `Sonos/` server header and no body). The
-/// switch is per household, so one such answer speaks for every speaker.
+/// GENA request with a bare 403 (a `Sonos/` server header and no body). Either
+/// sign is enough: requests only go to speakers that discovery found or that
+/// answered a probe, so an empty 403 is taken to be theirs whatever the header.
+/// The switch is per household, so one such answer speaks for every speaker.
 pub(crate) fn is_upnp_refusal(status: StatusCode, server: Option<&str>, body: &str) -> bool {
     status == StatusCode::FORBIDDEN
         && (server.is_some_and(|s| s.contains("Sonos/")) || body.trim().is_empty())
@@ -404,6 +406,7 @@ mod tests {
         assert!(is_upnp_refusal(forbidden, SONOS, "<html>Forbidden</html>"));
         assert!(is_upnp_refusal(forbidden, None, ""));
         assert!(is_upnp_refusal(forbidden, None, "  \n"));
+        assert!(is_upnp_refusal(forbidden, Some("nginx/1.25"), ""));
 
         assert!(!is_upnp_refusal(
             forbidden,
