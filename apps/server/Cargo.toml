@@ -23,7 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 
 # Concurrency
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # Logging
 log = "0.4"
