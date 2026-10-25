@@ -36,7 +36,7 @@ mdns-sd = "0.21"
 
 # Concurrency
 dashmap = "6"
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # Error handling
 thiserror = "2"
