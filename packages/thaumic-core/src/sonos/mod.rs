@@ -20,6 +20,7 @@
 //! - `gena_store` - GENA subscription state management
 //! - `gena_parser` - GENA notification parsing and event construction
 //! - `soap` - Low-level SOAP protocol implementation
+//! - `lan` - The local Control API (wss on port 1443), for households with UPnP off
 //! - `utils` - Shared utility functions
 
 pub mod client;
@@ -30,6 +31,7 @@ pub mod gena_client;
 pub mod gena_parser;
 pub mod gena_store;
 pub(crate) mod grouping;
+pub mod lan;
 pub(crate) mod playback;
 pub(crate) mod retry;
 pub mod services;

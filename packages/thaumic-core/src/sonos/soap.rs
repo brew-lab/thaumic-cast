@@ -47,6 +47,17 @@ pub enum SoapError {
     /// Sonos app's Connection Security > UPnP switch turned off. Never retried.
     #[error("speaker refused control (HTTP 403): Sonos UPnP is switched off")]
     UpnpDisabled,
+
+    /// A call over the local Control API (port 1443) failed: the speaker
+    /// answered with an error, or the socket timed out, closed or could not
+    /// be opened. See [`crate::sonos::lan::protocol::code`] for codes.
+    #[error("port 1443 {code}: {message}")]
+    Lan {
+        /// The speaker's `errorCode`, or one of the transport codes.
+        code: String,
+        /// The speaker's reason, or what the transport saw.
+        message: String,
+    },
 }
 
 /// Whether a response is a Sonos speaker refusing control because the
@@ -82,6 +93,7 @@ impl SoapError {
             }
             // Network timeouts can also be transient
             SoapError::Http(e) => e.is_timeout(),
+            SoapError::Lan { code, .. } => super::lan::protocol::is_transient_code(code),
             _ => false,
         }
     }
