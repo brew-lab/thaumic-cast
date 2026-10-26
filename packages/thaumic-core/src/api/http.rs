@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use axum::{
     body::Body,
     extract::{connect_info::ConnectInfo, Path, State},
-    http::{header, HeaderMap, Request, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Request, StatusCode},
+    middleware::map_response,
     response::{IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
@@ -128,6 +129,20 @@ const LISTEN_ROUTES: [&str; 3] = [
 /// a canonical `{n}.wav`.
 const STREAM_SEGMENT_ROUTE: &str = "/stream/{id}/live/{file}";
 
+/// The `X-Clacks-Overhead` header's value, after the clacks towers of Terry
+/// Pratchett's *Going Postal*: G sends the message on, N doesn't log it, U
+/// turns it around at the end of the line. A man is not dead while his name
+/// is still spoken.
+const CLACKS_OVERHEAD: HeaderValue = HeaderValue::from_static("GNU Terry Pratchett");
+
+/// Adds the `X-Clacks-Overhead` header to a response.
+async fn add_clacks_overhead(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert("x-clacks-overhead", CLACKS_OVERHEAD);
+    response
+}
+
 /// Creates the Axum router with all routes.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -162,6 +177,7 @@ pub fn create_router(state: AppState) -> Router {
         .route(LISTEN_ROUTES[2], get(listen_audio))
         .route("/artwork.jpg", get(serve_artwork))
         .route("/ws", get(ws_handler))
+        .layer(map_response(add_clacks_overhead))
         .with_state(state)
 }
 
@@ -648,6 +664,30 @@ mod tests {
                 ip("127.0.0.1")
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn responses_carry_the_clacks_overhead() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let app = Router::new()
+            .route("/", get(|| async { "ok" }))
+            .layer(map_response(add_clacks_overhead));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let mut conn = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        conn.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("send");
+        let mut response = String::new();
+        conn.read_to_string(&mut response).await.expect("read");
+        assert!(
+            response.contains("x-clacks-overhead: GNU Terry Pratchett\r\n"),
+            "{response}"
+        );
     }
 
     mod stream_routes {
