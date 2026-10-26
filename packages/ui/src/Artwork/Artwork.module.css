@@ -43,6 +43,12 @@
     grid-area: 1 / 1;
     display: inline-grid;
     place-items: center;
+    transition: opacity var(--dur-effects) var(--ease-effects);
+  }
+
+  /* Hidden once the image is in, so a transparent image doesn't show it through. */
+  .glyph[data-covered] {
+    opacity: 0;
   }
 
   .glyph > svg {

@@ -22,8 +22,9 @@ export interface ArtworkProps {
 
 /**
  * The picture beside a title (DESIGN.md A-art): cover art, a favicon, a placeholder or an
- * icon disc. The placeholder stays under the image, which fades in, so nothing shifts; if
- * the image fails, the placeholder stays. Always decorative: the title beside it names it.
+ * icon disc. The placeholder holds the space while the image loads, so nothing shifts, and
+ * fades out as the image fades in (a transparent image must not show it through); if the
+ * image fails, the placeholder stays. Always decorative: the title beside it names it.
  * @param props - Component props
  * @param props.kind - The kind
  * @param props.size - sm, md or lg
@@ -44,7 +45,7 @@ export function Artwork({ kind, size, src, glyph }: ArtworkProps): JSX.Element {
   return (
     <span class={cx(styles.artwork, styles[size], styles[kind])} aria-hidden="true">
       {showGlyph && (
-        <span class={styles.glyph}>
+        <span class={styles.glyph} data-covered={picture && loaded ? '' : undefined}>
           <Icon glyph={glyph ?? (kind === 'disc' ? 'speaker' : 'music')} />
         </span>
       )}
