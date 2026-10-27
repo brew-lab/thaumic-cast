@@ -1,5 +1,17 @@
 # @thaumic-cast/core
 
+## 0.12.1
+
+### Patch Changes
+
+- [#277](https://github.com/brew-lab/thaumic-cast/pull/277) [`8fe23cd`](https://github.com/brew-lab/thaumic-cast/commit/8fe23cd0e9568dae7eb08448134647ea39c697d7) Thanks [@skezo](https://github.com/skezo)! - fix(core): recognise a Sonos household with UPnP switched off
+
+  With the Sonos app's Account > Privacy & Security > Connection Security > UPnP switch off, every speaker answers
+  control and event requests with a bare 403. That was reported as speakers not responding, which blames a VPN or a
+  firewall. The refusal is now its own error, never retried, and sets the network health reason
+  `speakers_upnp_disabled`; a cast started meanwhile fails each room with the same word. A change of reason alone is
+  now sent to clients too, and the notice clears on the first refresh after the switch goes back on.
+
 ## 0.12.0
 
 ### Minor Changes

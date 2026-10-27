@@ -1,5 +1,29 @@
 # @thaumic-cast/extension
 
+## 0.13.2
+
+### Patch Changes
+
+- [#280](https://github.com/brew-lab/thaumic-cast/pull/280) [`9d33db5`](https://github.com/brew-lab/thaumic-cast/commit/9d33db56f1ec42072583fce9cf14a83d6f5ac224) Thanks [@skezo](https://github.com/skezo)! - Artwork with transparent areas no longer shows the default music glyph through it. The glyph holds the space while the
+  image loads, then fades out as the image fades in; if the image fails, it stays.
+
+- [#276](https://github.com/brew-lab/thaumic-cast/pull/276) [`aa843e6`](https://github.com/brew-lab/thaumic-cast/commit/aa843e697cd533dbdbdef7604e8b41256e90a9d2) Thanks [@skezo](https://github.com/skezo)! - Browser-wide capture's help now says it needs Windows 11 or later, where it said Windows 10 21H2. The capture needs Windows build 20348, which no Windows 10 release reaches.
+
+- [#283](https://github.com/brew-lab/thaumic-cast/pull/283) [`46aa05f`](https://github.com/brew-lab/thaumic-cast/commit/46aa05f5fa096c0e34bfa8c5abe489fe3192408d) Thanks [@skezo](https://github.com/skezo)! - Download and Check for updates now open the download page on thaumiccast.com, which picks the right file for your
+  computer, instead of the GitHub releases page.
+
+- [#282](https://github.com/brew-lab/thaumic-cast/pull/282) [`432be3a`](https://github.com/brew-lab/thaumic-cast/commit/432be3a02a3f3be95748f2cf8ea3f796ddf77e11) Thanks [@skezo](https://github.com/skezo)! - Preact is now 10.28.4, which fixes a security advisory (GHSA-36hm-qxxp-pg3m) in 10.28.0.
+
+- [#277](https://github.com/brew-lab/thaumic-cast/pull/277) [`fc333a1`](https://github.com/brew-lab/thaumic-cast/commit/fc333a101af92d4dd89bd9ded6827cf79ac9f9eb) Thanks [@skezo](https://github.com/skezo)! - feat(extension,desktop): tell the user to switch Sonos UPnP back on
+
+  When the Sonos app's UPnP switch is off, the popup's banner, the toolbar badge and the desktop app now say so and name
+  the setting (Account > Privacy & Security > Connection Security > UPnP), instead of blaming a VPN or a firewall. A cast
+  the speakers turn away for the same reason says the same.
+
+- Updated dependencies [[`fc333a1`](https://github.com/brew-lab/thaumic-cast/commit/fc333a101af92d4dd89bd9ded6827cf79ac9f9eb)]:
+  - @thaumic-cast/protocol@0.6.1
+  - @thaumic-cast/ui@4.0.1
+
 ## 0.13.1
 
 ### Patch Changes
