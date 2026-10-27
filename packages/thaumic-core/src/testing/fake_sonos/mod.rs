@@ -243,6 +243,10 @@ pub(super) struct LanPlay {
     pub previous_item_id: Option<String>,
     /// Its declared length.
     pub duration_ms: Option<u64>,
+    /// The queue's base URL, to ask it again when the items run out.
+    pub queue_base: String,
+    /// The item listed after it: id, media URL and declared length.
+    pub next: Option<(String, String, Option<u64>)>,
     /// The position reported: a fixed 5 s while playing, as RelTime is,
     /// and the declared length once the item has played out.
     pub position_ms: u64,
@@ -437,21 +441,27 @@ impl FakeSpeaker {
                 }
             }
 
-            let Some(next) = self.advance_to_queued() else {
-                if let Some(system) = system.upgrade() {
-                    system.lan_item_ended(&self);
-                }
+            let Some(system) = system.upgrade() else {
                 return;
+            };
+            let next = match self.advance_to_queued() {
+                Some(next) => next,
+                None => match system.lan_advance(&self).await {
+                    Some(next) => next,
+                    None => return,
+                },
             };
             let Some(url) = stream_fetch_url(&next) else {
                 return;
             };
-            let Some(system) = system.upgrade() else {
-                return;
-            };
             match self.fetch_once(&system, url).await {
-                Some(next_response) => response = next_response,
-                None => return,
+                Some(next_response) if next_response.status().is_success() => {
+                    response = next_response;
+                }
+                _ => {
+                    system.lan_item_failed(&self);
+                    return;
+                }
             }
         }
     }

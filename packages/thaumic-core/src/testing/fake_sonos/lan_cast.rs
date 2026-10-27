@@ -9,8 +9,12 @@
 //! * `loadCloudQueue` reads the queue as a speaker does, from the speaker's
 //!   own address: `context`, then `itemWindow?reason=load&itemId=…`. It plays
 //!   the item named, fetching its `mediaUrl` the way `Play` fetches a URI, and
-//!   answers once that fetch has its response headers. When the item's body
-//!   ends on its own the group is PAUSED at the item's declared length.
+//!   answers once that fetch has its response headers.
+//! * When the item's body ends on its own the speaker moves on to the item
+//!   listed after it, staying PLAYING, and fetches it; with none listed it
+//!   asks the queue again (`reason=queueCompleted`), and with still none the
+//!   group is PAUSED at the item's declared length. A next item it cannot
+//!   fetch gets a `playbackError` and leaves the group PAUSED on that item.
 //! * `playback:1 getPlaybackStatus` reports the state, the item and the item
 //!   before it; the position is a fixed 5 s while playing, as RelTime is.
 //!   `pause` pauses; with nothing loaded it is refused
@@ -230,8 +234,11 @@ async fn load(
         .as_str()
         .unwrap_or_default()
         .to_string();
+    let next = next_after(&window, item_id);
     {
         let mut state = speaker.state.lock();
+        state.lan.queue_base = base.to_string();
+        state.lan.next = next;
         let played = state.lan.item_id.replace(item_id.to_string());
         if played.as_deref() != Some(item_id) {
             state.lan.previous_item_id = played.or(state.lan.previous_item_id.take());
@@ -245,6 +252,18 @@ async fn load(
     speaker.start_fetch(system, media_url).await;
     system.push_status(speaker);
     Ok(json!({}))
+}
+
+/// The item an `itemWindow` answer lists after `item_id`.
+fn next_after(window: &Value, item_id: &str) -> Option<(String, String, Option<u64>)> {
+    let items = window["items"].as_array()?;
+    let at = items.iter().position(|i| i["id"] == item_id)?;
+    let next = items.get(at + 1)?;
+    Some((
+        next["id"].as_str()?.to_string(),
+        next["track"]["mediaUrl"].as_str()?.to_string(),
+        next["track"]["durationMillis"].as_u64(),
+    ))
 }
 
 /// GETs a queue URL from the speaker's own address and records it; the JSON
@@ -300,9 +319,77 @@ impl FakeSonosSystem {
         self.push_lan_text(PLAYBACK, &group_id(speaker), &status_event(speaker));
     }
 
-    /// A loaded item's body ended on its own: the group pauses at the item's
-    /// declared length, as hardware does at the end of a queue.
-    pub(super) fn lan_item_ended(&self, speaker: &FakeSpeaker) {
+    /// A loaded item's body ended on its own: the speaker moves on to the
+    /// item listed after it, asking the queue again if none is, and returns
+    /// its media URL; or, with none, the group pauses at the item's declared
+    /// length.
+    pub(super) async fn lan_advance(&self, speaker: &FakeSpeaker) -> Option<String> {
+        let (current, base, next) = {
+            let state = speaker.state.lock();
+            if state.transport != TransportState::Playing {
+                return None;
+            }
+            let current = state.lan.item_id.clone()?;
+            (
+                current,
+                state.lan.queue_base.clone(),
+                state.lan.next.clone(),
+            )
+        };
+        let next = match next {
+            Some(next) => Some(next),
+            None => {
+                let url = format!("{base}itemWindow?reason=queueCompleted&itemId={current}");
+                read_queue(self, speaker, &url)
+                    .await
+                    .and_then(|window| next_after(&window, &current))
+            }
+        };
+        let Some((id, url, duration_ms)) = next else {
+            self.lan_item_ended(speaker);
+            return None;
+        };
+        {
+            let mut state = speaker.state.lock();
+            state.lan.previous_item_id = Some(current);
+            state.lan.item_id = Some(id);
+            state.lan.duration_ms = duration_ms;
+            state.lan.position_ms = 5_000;
+            state.lan.next = None;
+            state.current_uri = url.clone();
+        }
+        self.push_status(speaker);
+        Some(url)
+    }
+
+    /// The item moved on to could not be fetched: a `playbackError`, and the
+    /// group PAUSED on it, as hardware does.
+    pub(super) fn lan_item_failed(&self, speaker: &FakeSpeaker) {
+        let item = {
+            let mut state = speaker.state.lock();
+            let Some(item) = state.lan.item_id.clone() else {
+                return;
+            };
+            state.transport = TransportState::Paused;
+            state.lan.position_ms = 0;
+            item
+        };
+        let text = event_as(
+            PLAYBACK,
+            "playbackError",
+            "groupId",
+            &group_id(speaker),
+            json!({ "_objectType": "playbackError", "errorCode": "ERROR_PLAYBACK_FAILED",
+                    "reason": "ERROR_CANT_REACH_SERVER", "itemId": item }),
+        );
+        self.push_lan_text(PLAYBACK, &group_id(speaker), &text);
+        self.push_status(speaker);
+    }
+
+    /// A loaded item's body ended on its own with nothing after it: the
+    /// group pauses at the item's declared length, as hardware does at the
+    /// end of a queue.
+    fn lan_item_ended(&self, speaker: &FakeSpeaker) {
         {
             let mut state = speaker.state.lock();
             if state.lan.item_id.is_none() || state.transport != TransportState::Playing {

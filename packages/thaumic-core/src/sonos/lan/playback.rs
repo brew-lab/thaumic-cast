@@ -13,6 +13,12 @@
 //!   path takes over; a pause before the end stays PAUSED.
 //! - **The track URI** is the item's own segment URL, or, while the speaker
 //!   is idle, the item it last played.
+//! - **The next segment** is listed in the queue behind the current one
+//!   when the cast continues (`PcmContinuation` `auto` or `next`), so the
+//!   speaker fetches and plays it itself with no gap, and `set_next_uri`
+//!   has nothing left to send. A next segment the speaker could not play
+//!   leaves it PAUSED on that segment, never having played it: that reads as
+//!   STOPPED on the segment before, so the restart path loads the next one.
 //! - **Resume** loads the current item again: after a pause, `play` makes the
 //!   speaker fetch once and end the item.
 //! - **Stop** ends the queue first, so a speaker that asks again gets nothing,
@@ -27,6 +33,7 @@
 //!   carries on over the same audio request, and the speaker returns the same
 //!   session.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -35,7 +42,7 @@ use serde_json::{json, Value};
 
 use super::client::LanClient;
 use super::protocol::{code, transport_error, Command, Frame, Target};
-use super::queue::{CloudQueue, CloudQueues, QueueItem, API_VERSION, PATH_PREFIX};
+use super::queue::{CloudQueue, CloudQueues, QueueItem, TrackInfo, API_VERSION, PATH_PREFIX};
 use crate::error::SoapResult;
 use crate::sonos::gena::SonosEvent;
 use crate::sonos::routed::LanHold;
@@ -43,7 +50,8 @@ use crate::sonos::traits::{NextItem, SonosPlayback};
 use crate::sonos::types::{PositionInfo, TransportState};
 use crate::sonos::utils::build_sonos_stream_uri;
 use crate::stream::{
-    parse_stream_uri, AudioCodec, AudioFormat, PcmHttpSwitches, SegmentLayout, StreamMetadata,
+    parse_stream_uri, AudioCodec, AudioFormat, PcmContinuation, PcmHttpSwitches, SegmentLayout,
+    StreamMetadata,
 };
 use crate::utils::now_millis;
 
@@ -91,8 +99,10 @@ pub struct Cast {
     pub session_id: String,
     /// The queue loaded now.
     pub gen: String,
-    /// The item loaded now.
+    /// The item loaded, or the last seen playing since.
     pub item: QueueItem,
+    /// The segments seen playing since the load.
+    pub played: HashSet<u32>,
     /// The queue's base URL.
     pub queue_url: String,
     /// When it was last loaded.
@@ -105,22 +115,33 @@ pub struct Cast {
     _hold: LanHold,
 }
 
-/// The state and track URI a status means for the services.
-fn read_status(queues: &CloudQueues, status: &PlaybackStatus) -> (TransportState, String) {
+/// The state and track URI a status means for the services, given the
+/// segments seen playing since the load.
+fn read_status(
+    queues: &CloudQueues,
+    status: &PlaybackStatus,
+    played: &HashSet<u32>,
+) -> (TransportState, String) {
     let ours = |id: &Option<String>| {
         id.as_deref()
             .filter(|id| !id.is_empty())
             .and_then(|id| queues.item(id))
     };
     let item = ours(&status.item_id);
+    // A segment after the first that the speaker moved onto and never
+    // played: it could not fetch it.
+    let stuck = item
+        .as_ref()
+        .filter(|(item, first)| item.segment != *first && !played.contains(&item.segment));
     let state = match status.playback_state.as_str() {
         "PLAYBACK_STATE_PLAYING" => TransportState::Playing,
         "PLAYBACK_STATE_BUFFERING" => TransportState::Transitioning,
         "PLAYBACK_STATE_IDLE" => TransportState::Stopped,
+        "PLAYBACK_STATE_PAUSED" if stuck.is_some() => TransportState::Stopped,
         "PLAYBACK_STATE_PAUSED" => {
             let at_end = item
                 .as_ref()
-                .and_then(|i| i.duration_ms)
+                .and_then(|(i, _)| i.track.duration_ms)
                 .is_some_and(|ms| status.position_millis + END_TOLERANCE_MS >= ms);
             if at_end {
                 TransportState::Stopped
@@ -131,9 +152,19 @@ fn read_status(queues: &CloudQueues, status: &PlaybackStatus) -> (TransportState
         _ => TransportState::Transitioning,
     };
     let track = match (&item, state) {
-        (Some(item), _) => item.media_url.clone(),
+        (Some((item, _)), TransportState::Stopped) if stuck.is_some() => {
+            let before = CloudQueues::item_id(
+                item.id.rsplit_once('-').map_or("", |(g, _)| g),
+                item.segment - 1,
+            );
+            queues
+                .item(&before)
+                .map(|(i, _)| i.media_url)
+                .unwrap_or_default()
+        }
+        (Some((item, _)), _) => item.media_url.clone(),
         (None, TransportState::Stopped) => ours(&status.previous_item_id)
-            .map(|i| i.media_url)
+            .map(|(i, _)| i.media_url)
             .unwrap_or_default(),
         (None, _) => status
             .item_id
@@ -143,6 +174,24 @@ fn read_status(queues: &CloudQueues, status: &PlaybackStatus) -> (TransportState
             .unwrap_or_default(),
     };
     (state, track)
+}
+
+/// Whether a cast lists the next segment behind each one: when the services
+/// move a speaker on with a queued next item.
+fn continues() -> bool {
+    matches!(
+        PcmHttpSwitches::from_env().settings.continuation,
+        PcmContinuation::Auto | PcmContinuation::Next
+    )
+}
+
+/// The stream's base URL (`…/stream/{id}/live`) from the URL of any of its
+/// segments, as the services pass it (`…/live` or `…/live/{n}`).
+fn stream_base(uri: &str) -> &str {
+    match uri.rsplit_once('/') {
+        Some((head, tail)) if head.ends_with("/live") && tail.parse::<u32>().is_ok() => head,
+        _ => uri,
+    }
 }
 
 /// The declared length of a PCM segment of `format`, as served now.
@@ -241,24 +290,30 @@ impl LanClient {
             "http://{}{PATH_PREFIX}/{stream_id}/{gen}/{API_VERSION}/",
             parsed.authority
         );
-        let item = QueueItem {
-            id: CloudQueues::item_id(&gen, segment),
-            segment,
-            media_url,
-            content_type: "audio/wav".into(),
-            duration_ms: segment_duration_ms(audio_format),
-            title: metadata
-                .and_then(|m| m.title.clone())
-                .unwrap_or_else(|| "Thaumic".into()),
-            artist: metadata.and_then(|m| m.artist.clone()),
-            image_url: (!artwork_url.is_empty()).then(|| artwork_url.to_string()),
-        };
-        self.queues.insert(CloudQueue {
+        let queue = CloudQueue {
             stream_id: stream_id.clone(),
             gen: gen.clone(),
-            items: vec![item.clone()],
+            stream_url: build_sonos_stream_uri(stream_base(uri), codec)
+                .trim_end_matches(".wav")
+                .to_string(),
+            first: segment,
+            continues: continues(),
+            track: TrackInfo {
+                content_type: "audio/wav".into(),
+                duration_ms: segment_duration_ms(audio_format),
+                title: metadata
+                    .and_then(|m| m.title.clone())
+                    .unwrap_or_else(|| "Thaumic".into()),
+                artist: metadata.and_then(|m| m.artist.clone()),
+                image_url: (!artwork_url.is_empty()).then(|| artwork_url.to_string()),
+            },
             ended: false,
-        });
+        };
+        let item = queue
+            .item(segment)
+            .expect("a queue holds the segment it is loaded at");
+        debug_assert_eq!(item.media_url, media_url);
+        self.queues.insert(queue);
 
         let existing = self
             .casts
@@ -306,6 +361,7 @@ impl LanClient {
                     session_id: session_id.clone(),
                     gen: gen.clone(),
                     item: item.clone(),
+                    played: HashSet::new(),
                     queue_url: queue_url.clone(),
                     loaded_at: Instant::now(),
                     status: None,
@@ -394,13 +450,30 @@ impl LanClient {
             .await?;
         let status = PlaybackStatus::deserialize(&body)
             .map_err(|e| transport_error(code::BAD_REPLY, format!("playback status: {e}")))?;
-        let (state, track_uri) = read_status(&self.queues, &status);
+        let played = self
+            .casts
+            .lock()
+            .get(ip)
+            .map(|c| c.played.clone())
+            .unwrap_or_default();
+        let (state, track_uri) = read_status(&self.queues, &status, &played);
         let position = PositionInfo {
             track_uri,
             rel_time_ms: status.position_millis / 1000 * 1000,
         };
         if let Some(cast) = self.casts.lock().get_mut(ip) {
             cast.status = Some((Instant::now(), state, position.clone()));
+            let playing = status
+                .item_id
+                .as_deref()
+                .and_then(|id| CloudQueues::segment_of(&cast.gen, id))
+                .filter(|_| state == TransportState::Playing);
+            if let Some(segment) = playing {
+                cast.played.insert(segment);
+                if let Some(item) = self.queues.get(&cast.gen).and_then(|q| q.item(segment)) {
+                    cast.item = item;
+                }
+            }
         }
         Ok((state, position))
     }
@@ -559,11 +632,22 @@ impl SonosPlayback for LanClient {
             .await
     }
 
-    async fn set_next_uri(&self, _ip: &str, _item: &NextItem<'_>) -> SoapResult<()> {
-        Err(transport_error(
-            code::UNSUPPORTED,
-            "a next item is not queued on port 1443",
-        ))
+    async fn set_next_uri(&self, ip: &str, _item: &NextItem<'_>) -> SoapResult<()> {
+        // The queue already lists every next segment behind the current one.
+        let listed = self
+            .casts
+            .lock()
+            .get(ip)
+            .and_then(|c| self.queues.get(&c.gen))
+            .is_some_and(|q| q.continues);
+        if listed {
+            Ok(())
+        } else {
+            Err(transport_error(
+                code::UNSUPPORTED,
+                format!("no continuing cast on {ip} to queue a next item for"),
+            ))
+        }
     }
 
     async fn play(&self, ip: &str) -> SoapResult<()> {
@@ -620,19 +704,23 @@ mod tests {
         queues.insert(CloudQueue {
             stream_id: "s1".into(),
             gen: gen.clone(),
-            items: vec![QueueItem {
-                id: CloudQueues::item_id(&gen, 3),
-                segment: 3,
-                media_url: "http://10.0.0.2:1/stream/s1/live/3.wav".into(),
+            stream_url: "http://10.0.0.2:1/stream/s1/live".into(),
+            first: 3,
+            continues: true,
+            track: TrackInfo {
                 content_type: "audio/wav".into(),
                 duration_ms,
                 title: "Tab".into(),
                 artist: None,
                 image_url: None,
-            }],
+            },
             ended: false,
         });
         (queues, gen)
+    }
+
+    fn none() -> HashSet<u32> {
+        HashSet::new()
     }
 
     fn status(
@@ -649,6 +737,59 @@ mod tests {
         }
     }
 
+    fn read_status_(queues: &CloudQueues, status: &PlaybackStatus) -> (TransportState, String) {
+        read_status(queues, status, &none())
+    }
+
+    #[test]
+    fn a_next_segment_never_played_reads_as_stopped_on_the_one_before() {
+        let (queues, gen) = queues_with(Some(60_000));
+        let next = CloudQueues::item_id(&gen, 4);
+        let first_url = "http://10.0.0.2:1/stream/s1/live/3.wav".to_string();
+        let next_url = "http://10.0.0.2:1/stream/s1/live/4.wav".to_string();
+        let played: HashSet<u32> = [3].into();
+
+        assert_eq!(
+            read_status(
+                &queues,
+                &status("PAUSED", 0, Some(&next), Some("x")),
+                &played
+            ),
+            (TransportState::Stopped, first_url)
+        );
+        // Moving onto it, and playing it: it is the current one.
+        assert_eq!(
+            read_status(&queues, &status("BUFFERING", 0, Some(&next), None), &played),
+            (TransportState::Transitioning, next_url.clone())
+        );
+        assert_eq!(
+            read_status(&queues, &status("PLAYING", 0, Some(&next), None), &played),
+            (TransportState::Playing, next_url.clone())
+        );
+        // Once played, a pause on it is a pause.
+        let both: HashSet<u32> = [3, 4].into();
+        assert_eq!(
+            read_status(&queues, &status("PAUSED", 9_000, Some(&next), None), &both),
+            (TransportState::Paused, next_url)
+        );
+    }
+
+    #[test]
+    fn segment_urls_have_one_base() {
+        assert_eq!(
+            stream_base("http://h:1/stream/s/live"),
+            "http://h:1/stream/s/live"
+        );
+        assert_eq!(
+            stream_base("http://h:1/stream/s/live/7"),
+            "http://h:1/stream/s/live"
+        );
+        assert_eq!(
+            stream_base("http://h:1/stream/s/other/7"),
+            "http://h:1/stream/s/other/7"
+        );
+    }
+
     #[test]
     fn our_item_reads_as_its_segment_url_in_each_state() {
         let (queues, gen) = queues_with(Some(60_000));
@@ -660,7 +801,7 @@ mod tests {
             ("PAUSED", TransportState::Paused),
         ] {
             assert_eq!(
-                read_status(&queues, &status(state, 10_000, Some(&id), None)),
+                read_status_(&queues, &status(state, 10_000, Some(&id), None)),
                 (expected, url.clone())
             );
         }
@@ -671,22 +812,22 @@ mod tests {
         let (queues, gen) = queues_with(Some(60_000));
         let id = CloudQueues::item_id(&gen, 3);
         assert_eq!(
-            read_status(&queues, &status("PAUSED", 60_000, Some(&id), None)).0,
+            read_status_(&queues, &status("PAUSED", 60_000, Some(&id), None)).0,
             TransportState::Stopped
         );
         assert_eq!(
-            read_status(&queues, &status("PAUSED", 58_500, Some(&id), None)).0,
+            read_status_(&queues, &status("PAUSED", 58_500, Some(&id), None)).0,
             TransportState::Stopped
         );
         assert_eq!(
-            read_status(&queues, &status("PAUSED", 50_000, Some(&id), None)).0,
+            read_status_(&queues, &status("PAUSED", 50_000, Some(&id), None)).0,
             TransportState::Paused
         );
         // With no declared length there is no end to reach.
         let (queues, gen) = queues_with(None);
         let id = CloudQueues::item_id(&gen, 3);
         assert_eq!(
-            read_status(&queues, &status("PAUSED", 86_400_000, Some(&id), None)).0,
+            read_status_(&queues, &status("PAUSED", 86_400_000, Some(&id), None)).0,
             TransportState::Paused
         );
     }
@@ -696,18 +837,18 @@ mod tests {
         let (queues, gen) = queues_with(Some(60_000));
         let id = CloudQueues::item_id(&gen, 3);
         assert_eq!(
-            read_status(&queues, &status("IDLE", 0, Some("0"), Some(&id))),
+            read_status_(&queues, &status("IDLE", 0, Some("0"), Some(&id))),
             (
                 TransportState::Stopped,
                 "http://10.0.0.2:1/stream/s1/live/3.wav".to_string()
             )
         );
         assert_eq!(
-            read_status(&queues, &status("IDLE", 0, None, Some("other"))),
+            read_status_(&queues, &status("IDLE", 0, None, Some("other"))),
             (TransportState::Stopped, String::new())
         );
         assert_eq!(
-            read_status(&queues, &status("PLAYING", 0, Some("spotify:1"), None)),
+            read_status_(&queues, &status("PLAYING", 0, Some("spotify:1"), None)),
             (TransportState::Playing, "x-sonos-lan-item:spotify:1".into())
         );
     }

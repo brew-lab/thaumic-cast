@@ -11,18 +11,30 @@
 //! Recorded from firmware 86.10:
 //! - the speaker asks for `context`, then `itemWindow?reason=load&itemId=…`
 //!   (asking for up to 10 items each side), then fetches the item;
+//! - it fetches the next item listed the moment the current one's response
+//!   ends, and plays it with no gap; an item it cannot fetch leaves it
+//!   PAUSED on that item, never having played it;
 //! - it asks again only when the queue runs out
-//!   (`reason=queueCompleted`), so anything it is to play must be listed
-//!   from the start;
+//!   (`reason=queueCompleted`), so anything it is to play next must be
+//!   listed by then;
 //! - each item is played for its declared `durationMillis`; with the exact
 //!   length the queue's end reads as PAUSED at that position;
 //! - an ended queue (no items) ends the cast the next time it asks.
+//!
+//! A queue whose cast continues lists, for an item asked about, that item and
+//! the segment after it: the next segment is there from the load, and again
+//! whenever the speaker asks at the end of what it has. Whether it plays on
+//! from an item listed only at `queueCompleted` is not measured yet; if it
+//! does not, the cast ends PAUSED and the services' restart path loads the
+//! next segment.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+
+use crate::stream::pcm_segment_uri;
 
 /// The Cloud Queue API version in every queue URL.
 pub const API_VERSION: &str = "v2.3";
@@ -39,11 +51,18 @@ pub struct QueueItem {
     pub segment: u32,
     /// Where the speaker fetches it: the segment's own stream URL.
     pub media_url: String,
-    /// Its MIME type.
+    /// How it is described.
+    pub track: TrackInfo,
+}
+
+/// What every item of a queue shares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackInfo {
+    /// The MIME type.
     pub content_type: String,
-    /// Its length, when it has one.
+    /// Each item's length, when it has one.
     pub duration_ms: Option<u64>,
-    /// What the Sonos app shows for it.
+    /// What the Sonos app shows.
     pub title: String,
     /// The artist line, if any.
     pub artist: Option<String>,
@@ -54,20 +73,21 @@ pub struct QueueItem {
 impl QueueItem {
     /// The item as `itemWindow` lists it.
     fn to_json(&self) -> Value {
+        let info = &self.track;
         let mut track = json!({
             "type": "track",
             "mediaUrl": self.media_url,
-            "contentType": self.content_type,
-            "name": self.title,
+            "contentType": info.content_type,
+            "name": info.title,
             "service": { "name": "Thaumic", "id": "thaumic" },
         });
-        if let Some(ms) = self.duration_ms {
+        if let Some(ms) = info.duration_ms {
             track["durationMillis"] = ms.into();
         }
-        if let Some(artist) = &self.artist {
+        if let Some(artist) = &info.artist {
             track["artist"] = json!({ "name": artist });
         }
-        if let Some(url) = &self.image_url {
+        if let Some(url) = &info.image_url {
             track["imageUrl"] = url.clone().into();
         }
         json!({
@@ -79,17 +99,58 @@ impl QueueItem {
     }
 }
 
-/// One loaded queue.
+/// One loaded queue: the segments of a stream from the one it was loaded
+/// at.
 #[derive(Debug, Clone)]
 pub struct CloudQueue {
     /// The stream it plays.
     pub stream_id: String,
     /// Its id, and its version.
     pub gen: String,
-    /// The items listed, in play order.
-    pub items: Vec<QueueItem>,
+    /// The stream's base URL (`…/stream/{id}/live`), each segment's URL
+    /// built from it as a UPnP cast's is.
+    pub stream_url: String,
+    /// The segment it was loaded at, its first item.
+    pub first: u32,
+    /// Whether each item is followed by the next segment.
+    pub continues: bool,
+    /// What every item shares.
+    pub track: TrackInfo,
     /// Whether the cast ended: from then on the queue lists nothing.
     pub ended: bool,
+}
+
+impl CloudQueue {
+    /// Segment `segment`'s item, if the queue holds it: the first, and with
+    /// `continues` every one after it.
+    #[must_use]
+    pub fn item(&self, segment: u32) -> Option<QueueItem> {
+        let held = segment == self.first || (self.continues && segment > self.first);
+        held.then(|| QueueItem {
+            id: CloudQueues::item_id(&self.gen, segment),
+            segment,
+            media_url: pcm_segment_uri(&self.stream_url, segment),
+            track: self.track.clone(),
+        })
+    }
+
+    /// The items an `itemWindow` request for `item_id` gets: that item and,
+    /// with `continues`, the next; none once the queue ended. An unknown or
+    /// missing id is taken for the first item.
+    fn window(&self, item_id: Option<&str>) -> Vec<QueueItem> {
+        if self.ended {
+            return Vec::new();
+        }
+        let asked = item_id
+            .and_then(|id| CloudQueues::segment_of(&self.gen, id))
+            .filter(|segment| self.item(*segment).is_some())
+            .unwrap_or(self.first);
+        let next = self.continues.then_some(asked + 1);
+        std::iter::once(asked)
+            .chain(next)
+            .filter_map(|segment| self.item(segment))
+            .collect()
+    }
 }
 
 /// What a queue request was answered with.
@@ -126,6 +187,12 @@ impl CloudQueues {
         format!("{gen}-{segment}")
     }
 
+    /// The segment an item id of queue `gen` names.
+    #[must_use]
+    pub fn segment_of(gen: &str, item_id: &str) -> Option<u32> {
+        item_id.strip_prefix(gen)?.strip_prefix('-')?.parse().ok()
+    }
+
     /// Adds a queue.
     pub fn insert(&self, queue: CloudQueue) {
         self.queues.lock().insert(queue.gen.clone(), queue);
@@ -149,17 +216,15 @@ impl CloudQueues {
         self.queues.lock().remove(gen);
     }
 
-    /// The item `item_id`, from whichever queue holds it.
+    /// The item `item_id`, from whichever queue holds it, with that queue's
+    /// first segment.
     #[must_use]
-    pub fn item(&self, item_id: &str) -> Option<QueueItem> {
+    pub fn item(&self, item_id: &str) -> Option<(QueueItem, u32)> {
         let (gen, _) = item_id.rsplit_once('-')?;
         let queues = self.queues.lock();
-        queues
-            .get(gen)?
-            .items
-            .iter()
-            .find(|i| i.id == item_id)
-            .cloned()
+        let queue = queues.get(gen)?;
+        let item = queue.item(Self::segment_of(gen, item_id)?)?;
+        Some((item, queue.first))
     }
 
     /// The answer to `method` on `endpoint` of queue `gen` for `stream_id`,
@@ -196,9 +261,9 @@ impl CloudQueues {
                 },
             })),
             ("GET", "itemWindow") => {
-                let items = window(&queue, query.get("itemId").map(String::as_str));
+                let items = queue.window(query.get("itemId").map(String::as_str));
                 QueueAnswer::Json(json!({
-                    "includesBeginningOfQueue": items.first().map_or(true, |i| Some(i) == queue.items.first()),
+                    "includesBeginningOfQueue": items.first().map_or(true, |i| i.segment == queue.first),
                     "includesEndOfQueue": true,
                     "contextVersion": "1",
                     "queueVersion": queue.gen,
@@ -211,41 +276,27 @@ impl CloudQueues {
     }
 }
 
-/// The items an `itemWindow` request for `item_id` gets: that item and
-/// every one after it, or none once the queue ended. An unknown or missing
-/// id gets the whole queue.
-fn window<'a>(queue: &'a CloudQueue, item_id: Option<&str>) -> &'a [QueueItem] {
-    if queue.ended {
-        return &[];
-    }
-    let from = item_id
-        .and_then(|id| queue.items.iter().position(|i| i.id == id))
-        .unwrap_or(0);
-    &queue.items[from..]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn queue(queues: &CloudQueues, segments: &[u32]) -> String {
+    const STREAM: &str = "http://10.0.0.2:1234/stream/s1/live";
+
+    fn queue(queues: &CloudQueues, first: u32, continues: bool) -> String {
         let gen = queues.next_gen();
         queues.insert(CloudQueue {
             stream_id: "s1".into(),
             gen: gen.clone(),
-            items: segments
-                .iter()
-                .map(|&segment| QueueItem {
-                    id: CloudQueues::item_id(&gen, segment),
-                    segment,
-                    media_url: format!("http://10.0.0.2:1234/stream/s1/live/{segment}.wav"),
-                    content_type: "audio/wav".into(),
-                    duration_ms: Some(60_000),
-                    title: "Tab".into(),
-                    artist: Some("Thaumic".into()),
-                    image_url: None,
-                })
-                .collect(),
+            stream_url: STREAM.into(),
+            first,
+            continues,
+            track: TrackInfo {
+                content_type: "audio/wav".into(),
+                duration_ms: Some(60_000),
+                title: "Tab".into(),
+                artist: Some("Thaumic".into()),
+                image_url: None,
+            },
             ended: false,
         });
         gen
@@ -262,48 +313,88 @@ mod tests {
         }
     }
 
+    fn ids(window: &Value) -> Vec<String> {
+        window["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
     #[test]
     fn every_load_gets_a_new_queue_id_and_items_name_their_segment() {
         let queues = CloudQueues::default();
         let (a, b) = (queues.next_gen(), queues.next_gen());
         assert_ne!(a, b);
         assert_eq!(CloudQueues::item_id(&a, 3), format!("{a}-3"));
+        assert_eq!(CloudQueues::segment_of(&a, &format!("{a}-3")), Some(3));
+        assert_eq!(CloudQueues::segment_of(&a, &format!("{b}-3")), None);
+        assert_eq!(CloudQueues::segment_of(&a, &format!("{a}-x")), None);
     }
 
     #[test]
-    fn the_window_lists_the_asked_for_item_and_those_after_it_with_their_length() {
+    fn items_are_the_stream_s_segments_at_their_upnp_urls_with_their_length() {
         let queues = CloudQueues::default();
-        let gen = queue(&queues, &[4, 5]);
-        let first = CloudQueues::item_id(&gen, 4);
-        let second = CloudQueues::item_id(&gen, 5);
-
-        let all = get(&queues, &gen, "itemWindow", Some(&first));
-        assert_eq!(all["queueVersion"], gen.as_str());
-        assert_eq!(all["includesBeginningOfQueue"], true);
-        assert_eq!(all["includesEndOfQueue"], true);
-        let items = all["items"].as_array().unwrap();
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0]["id"], first.as_str());
-        assert_eq!(items[0]["track"]["durationMillis"], 60_000);
-        assert_eq!(
-            items[0]["track"]["mediaUrl"],
-            "http://10.0.0.2:1234/stream/s1/live/4.wav"
+        let gen = queue(&queues, 0, false);
+        let window = get(
+            &queues,
+            &gen,
+            "itemWindow",
+            Some(&CloudQueues::item_id(&gen, 0)),
         );
-        assert_eq!(items[0]["track"]["contentType"], "audio/wav");
-        assert!(items[0]["track"].get("imageUrl").is_none());
+        assert_eq!(window["queueVersion"], gen.as_str());
+        assert_eq!(window["includesBeginningOfQueue"], true);
+        assert_eq!(window["includesEndOfQueue"], true);
+        let item = &window["items"][0];
+        assert_eq!(item["track"]["mediaUrl"], format!("{STREAM}.wav"));
+        assert_eq!(item["track"]["durationMillis"], 60_000);
+        assert_eq!(item["track"]["contentType"], "audio/wav");
+        assert_eq!(item["track"]["artist"]["name"], "Thaumic");
+        assert!(item["track"].get("imageUrl").is_none());
+        assert_eq!(ids(&window), [CloudQueues::item_id(&gen, 0)]);
 
-        let later = get(&queues, &gen, "itemWindow", Some(&second));
-        assert_eq!(later["items"].as_array().unwrap().len(), 1);
-        assert_eq!(later["includesBeginningOfQueue"], false);
-
-        assert_eq!(queues.item(&second).unwrap().segment, 5);
+        let (held, first) = queues.item(&CloudQueues::item_id(&gen, 0)).unwrap();
+        assert_eq!((held.segment, first), (0, 0));
+        assert_eq!(queues.item(&CloudQueues::item_id(&gen, 1)), None);
         assert_eq!(queues.item("nope-1"), None);
+    }
+
+    #[test]
+    fn a_continuing_queue_lists_the_next_segment_behind_each_item_asked_about() {
+        let queues = CloudQueues::default();
+        let gen = queue(&queues, 3, true);
+        let item = |segment| CloudQueues::item_id(&gen, segment);
+
+        let load = get(&queues, &gen, "itemWindow", Some(&item(3)));
+        assert_eq!(ids(&load), [item(3), item(4)]);
+        assert_eq!(
+            load["items"][1]["track"]["mediaUrl"],
+            format!("{STREAM}/4.wav")
+        );
+        assert_eq!(load["includesBeginningOfQueue"], true);
+
+        let completed = get(&queues, &gen, "itemWindow", Some(&item(4)));
+        assert_eq!(ids(&completed), [item(4), item(5)]);
+        assert_eq!(completed["includesBeginningOfQueue"], false);
+
+        // Before the first, or not ours: from the first.
+        assert_eq!(
+            ids(&get(&queues, &gen, "itemWindow", Some(&item(2)))),
+            [item(3), item(4)]
+        );
+        assert_eq!(
+            ids(&get(&queues, &gen, "itemWindow", None)),
+            [item(3), item(4)]
+        );
+        assert_eq!(queues.item(&item(9)).unwrap().0.segment, 9);
+        assert_eq!(queues.item(&item(2)), None);
     }
 
     #[test]
     fn an_ended_queue_lists_nothing_and_a_dropped_one_is_not_found() {
         let queues = CloudQueues::default();
-        let gen = queue(&queues, &[0]);
+        let gen = queue(&queues, 0, true);
         assert_eq!(
             get(&queues, &gen, "version", None)["queueVersion"],
             gen.as_str()

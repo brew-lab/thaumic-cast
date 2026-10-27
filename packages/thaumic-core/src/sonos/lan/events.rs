@@ -130,7 +130,7 @@ pub fn start(
             };
             match event {
                 Ok(LanEvent::Frame { ip, frame, .. }) => match frame.name() {
-                    "playbackStatus" if lan.has_cast(&ip) => {
+                    "playbackStatus" | "playbackError" if lan.has_cast(&ip) => {
                         poll_now(&lan, &sink, &tasks, ip);
                     }
                     "sessionError" => {
