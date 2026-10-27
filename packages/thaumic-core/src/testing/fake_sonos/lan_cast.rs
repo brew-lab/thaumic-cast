@@ -15,6 +15,8 @@
 //!   asks the queue again (`reason=queueCompleted`), and with still none the
 //!   group is PAUSED at the item's declared length. A next item it cannot
 //!   fetch gets a `playbackError` and leaves the group PAUSED on that item.
+//! * `loadStreamUrl` plays a stream URL, fetched as `loadCloudQueue`'s item
+//!   is, under an item id the speaker makes up.
 //! * `playback:1 getPlaybackStatus` reports the state, the item and the item
 //!   before it; the position is a fixed 5 s while playing, as RelTime is.
 //!   `pause` pauses; with nothing loaded it is refused
@@ -116,6 +118,7 @@ pub(super) async fn answer(
             return None;
         }
         (SESSION, "loadCloudQueue") => load(system, speaker, &frame.body).await,
+        (SESSION, "loadStreamUrl") => load_stream(system, speaker, &frame.body).await,
         (SESSION, "refreshCloudQueue") => Ok(json!({})),
         (SESSION, "leaveSession") => {
             let group = group_id(speaker);
@@ -383,6 +386,31 @@ fn next_after(window: &Value, item_id: &str) -> Option<(String, String, Option<u
         next["track"]["mediaUrl"].as_str()?.to_string(),
         next["track"]["durationMillis"].as_u64(),
     ))
+}
+
+/// Plays the stream URL in a `loadStreamUrl` body, fetching it from the
+/// speaker's own address. The speaker names the item itself.
+async fn load_stream(
+    system: &Arc<FakeSonosSystem>,
+    speaker: &Arc<FakeSpeaker>,
+    body: &Value,
+) -> Result<Value, Value> {
+    let url = body["streamUrl"].as_str().unwrap_or_default().to_string();
+    let n = system.lan.next_session.fetch_add(1, Ordering::Relaxed);
+    {
+        let mut state = speaker.state.lock();
+        let played = state.lan.item_id.replace(format!("stream-{n}"));
+        state.lan.previous_item_id = played.or(state.lan.previous_item_id.take());
+        state.lan.duration_ms = None;
+        state.lan.position_ms = 5_000;
+        state.lan.next = None;
+        state.current_uri = url.clone();
+        state.next_uri.clear();
+        state.transport = TransportState::Playing;
+    }
+    speaker.start_fetch(system, url).await;
+    system.push_status(speaker);
+    Ok(json!({}))
 }
 
 /// GETs a queue URL from the speaker's own address and records it; the JSON

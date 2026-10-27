@@ -97,6 +97,19 @@ impl SoapError {
             _ => false,
         }
     }
+
+    /// The word a client shows the user for this error, when it has one:
+    /// UPnP switched off, or FLAC asked of a household that has it off.
+    #[must_use]
+    pub fn user_reason(&self) -> Option<&'static str> {
+        match self {
+            SoapError::UpnpDisabled => Some(crate::protocol_constants::SPEAKERS_UPNP_DISABLED),
+            SoapError::Lan { code, .. } if code == super::lan::protocol::code::FLAC_NEEDS_UPNP => {
+                Some(crate::protocol_constants::FLAC_NEEDS_UPNP)
+            }
+            _ => None,
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

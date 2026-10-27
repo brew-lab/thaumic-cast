@@ -19,6 +19,14 @@
 //!   has nothing left to send. A next segment the speaker could not play
 //!   leaves it PAUSED on that segment, never having played it: that reads as
 //!   STOPPED on the segment before, so the restart path loads the next one.
+//! - **MP3 and AAC** are not queued: they are loaded with `loadStreamUrl`,
+//!   which the speaker fetches as it does an `x-rincon-mp3radio` cast (a
+//!   plain GET, then a Winamp GET with `icy-metadata: 1`), so ICY titles work
+//!   as on port 1400. The speaker names the item itself; while the session is
+//!   ours, whatever item it plays is the stream.
+//! - **FLAC** is refused: neither a queued FLAC item (finite or live) nor a
+//!   FLAC stream URL ever played on firmware 86.10. The services tell the user
+//!   to cast PCM or AAC, or switch UPnP on (owner decision, 2026-10-27).
 //! - **Resume** loads the current item again: after a pause, `play` makes the
 //!   speaker fetch once and end the item.
 //! - **Stop** ends the queue first, so a speaker that asks again gets nothing,
@@ -102,8 +110,10 @@ pub struct Cast {
     pub stream_id: String,
     /// The playback session.
     pub session_id: String,
-    /// The queue loaded now.
+    /// The queue loaded now; empty for a stream URL.
     pub gen: String,
+    /// The stream URL loaded instead of a queue, and the name shown for it.
+    pub stream: Option<(String, String)>,
     /// The item loaded, or the last seen playing since.
     pub item: QueueItem,
     /// The segments seen playing since the load.
@@ -246,6 +256,146 @@ impl LanClient {
         }
     }
 
+    /// Loads what the cast on `ip` plays into its session again: its queue
+    /// at its current item, or its stream URL.
+    async fn reload(&self, ip: &str) -> SoapResult<()> {
+        let Some((session_id, queue_url, item, gen, stream)) = self.casts.lock().get(ip).map(|c| {
+            (
+                c.session_id.clone(),
+                c.queue_url.clone(),
+                c.item.clone(),
+                c.gen.clone(),
+                c.stream.clone(),
+            )
+        }) else {
+            return Err(transport_error(
+                code::UNSUPPORTED,
+                format!("no cast on {ip} to load"),
+            ));
+        };
+        match stream {
+            Some((url, title)) => self.load_stream(ip, &session_id, &url, &title).await,
+            None => self.load(ip, &session_id, &queue_url, &item, &gen).await,
+        }
+    }
+
+    /// Loads the stream at `url` into session `session_id`.
+    async fn load_stream(
+        &self,
+        ip: &str,
+        session_id: &str,
+        url: &str,
+        title: &str,
+    ) -> SoapResult<()> {
+        let body = json!({
+            "streamUrl": url,
+            "playOnCompletion": true,
+            "stationMetadata": { "name": title },
+        });
+        self.on_session(ip, session_id, "loadStreamUrl", body)
+            .await
+            .map(drop)
+    }
+
+    /// The session of the cast on `ip`, or a new one on its group for
+    /// `stream_id`, and the queue id of the cast it replaces, if any.
+    async fn session_for(&self, ip: &str, stream_id: &str) -> SoapResult<(String, Option<String>)> {
+        let existing = self
+            .casts
+            .lock()
+            .get(ip)
+            .map(|c| (c.session_id.clone(), c.gen.clone()));
+        if let Some((session_id, gen)) = existing {
+            return Ok((session_id, Some(gen)));
+        }
+        let body = self
+            .on_group(
+                ip,
+                SESSION,
+                "createSession",
+                json!({ "appId": APP_ID, "appContext": stream_id }),
+            )
+            .await?;
+        let session_id = body["sessionId"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| transport_error(code::BAD_REPLY, "createSession named no session"))?;
+        Ok((session_id, None))
+    }
+
+    /// Records the cast on `ip` before it is loaded, so the session's own
+    /// events are known as ours from the start.
+    fn record_cast(&self, ip: &str, cast: impl FnOnce(LanHold) -> Cast) {
+        let hold = self.route.hold();
+        let mut casts = self.casts.lock();
+        let reported = casts.get(ip).and_then(|c| c.reported.clone());
+        let mut cast = cast(hold);
+        cast.reported = reported;
+        casts.insert(ip.to_string(), cast);
+    }
+
+    /// Casts an MP3 or AAC stream on `ip` with `loadStreamUrl`.
+    async fn cast_stream(
+        &self,
+        ip: &str,
+        uri: &str,
+        codec: AudioCodec,
+        metadata: Option<&StreamMetadata>,
+    ) -> SoapResult<()> {
+        let media_url = build_sonos_stream_uri(uri, codec);
+        let parsed = parse_stream_uri(&media_url)
+            .ok_or_else(|| transport_error(code::BAD_REPLY, format!("not a stream URL: {uri}")))?;
+        let stream_id = parsed.stream_id.to_string();
+        let title = metadata
+            .and_then(|m| m.title.clone())
+            .unwrap_or_else(|| "Thaumic".into());
+        let (session_id, existing) = self.session_for(ip, &stream_id).await?;
+        let item = QueueItem {
+            id: String::new(),
+            segment: 0,
+            media_url,
+            track: TrackInfo {
+                content_type: codec.mime_type().into(),
+                duration_ms: None,
+                title: title.clone(),
+                artist: metadata.and_then(|m| m.artist.clone()),
+                image_url: None,
+            },
+        };
+        self.record_cast(ip, |hold| Cast {
+            stream_id: stream_id.clone(),
+            session_id: session_id.clone(),
+            gen: String::new(),
+            stream: Some((uri.to_string(), title.clone())),
+            item,
+            played: HashSet::new(),
+            moved_to: None,
+            queue_url: String::new(),
+            loaded_at: Instant::now(),
+            status: None,
+            reported: None,
+            _hold: hold,
+        });
+        if existing.is_none() {
+            self.follow(ip, &session_id).await;
+        }
+        if let Err(e) = self.load_stream(ip, &session_id, uri, &title).await {
+            log::warn!("[Lan] {ip}: loadStreamUrl of {stream_id}: {e}");
+            if existing.is_none() {
+                self.casts.lock().remove(ip);
+                let _ = self
+                    .on_session(ip, &session_id, "leaveSession", json!({}))
+                    .await;
+            }
+            return Err(e);
+        }
+        if let Some(old) = existing.filter(|gen| !gen.is_empty()) {
+            self.queues.remove(&old);
+        }
+        log::info!("[Lan] {ip}: casting {stream_id} as a {codec:?} stream (session {session_id})");
+        Ok(())
+    }
+
     /// Loads `item` of queue `gen` at `queue_url` into session `session_id`.
     async fn load(
         &self,
@@ -278,11 +428,17 @@ impl LanClient {
         metadata: Option<&StreamMetadata>,
         artwork_url: &str,
     ) -> SoapResult<()> {
-        if codec != AudioCodec::Pcm {
-            return Err(transport_error(
-                code::UNSUPPORTED,
-                format!("{codec:?} is not cast on port 1443"),
-            ));
+        match codec {
+            AudioCodec::Pcm => {}
+            AudioCodec::Aac | AudioCodec::Mp3 => {
+                return self.cast_stream(ip, uri, codec, metadata).await;
+            }
+            AudioCodec::Flac => {
+                return Err(transport_error(
+                    code::FLAC_NEEDS_UPNP,
+                    "FLAC never plays when cast over port 1443",
+                ));
+            }
         }
         let media_url = build_sonos_stream_uri(uri, codec);
         let parsed = parse_stream_uri(&media_url)
@@ -322,62 +478,27 @@ impl LanClient {
         debug_assert_eq!(item.media_url, media_url);
         self.queues.insert(queue);
 
-        let existing = self
-            .casts
-            .lock()
-            .get(ip)
-            .map(|c| (c.session_id.clone(), c.gen.clone()));
-        let session_id = match &existing {
-            Some((session_id, _)) => session_id.clone(),
-            None => {
-                let created = self
-                    .on_group(
-                        ip,
-                        SESSION,
-                        "createSession",
-                        json!({ "appId": APP_ID, "appContext": stream_id }),
-                    )
-                    .await;
-                let session_id = created.and_then(|body| {
-                    body["sessionId"]
-                        .as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| {
-                            transport_error(code::BAD_REPLY, "createSession named no session")
-                        })
-                });
-                match session_id {
-                    Ok(id) => id,
-                    Err(e) => {
-                        self.queues.remove(&gen);
-                        return Err(e);
-                    }
-                }
+        let (session_id, existing) = match self.session_for(ip, &stream_id).await {
+            Ok(session) => session,
+            Err(e) => {
+                self.queues.remove(&gen);
+                return Err(e);
             }
         };
-        // Recorded before the load, so the session's own events are known
-        // as ours from the start.
-        let hold = self.route.hold();
-        {
-            let mut casts = self.casts.lock();
-            let reported = casts.get(ip).and_then(|c| c.reported.clone());
-            casts.insert(
-                ip.to_string(),
-                Cast {
-                    stream_id: stream_id.clone(),
-                    session_id: session_id.clone(),
-                    gen: gen.clone(),
-                    item: item.clone(),
-                    played: HashSet::new(),
-                    moved_to: None,
-                    queue_url: queue_url.clone(),
-                    loaded_at: Instant::now(),
-                    status: None,
-                    reported,
-                    _hold: hold,
-                },
-            );
-        }
+        self.record_cast(ip, |hold| Cast {
+            stream_id: stream_id.clone(),
+            session_id: session_id.clone(),
+            gen: gen.clone(),
+            stream: None,
+            item: item.clone(),
+            played: HashSet::new(),
+            moved_to: None,
+            queue_url: queue_url.clone(),
+            loaded_at: Instant::now(),
+            status: None,
+            reported: None,
+            _hold: hold,
+        });
         if existing.is_none() {
             self.follow(ip, &session_id).await;
         }
@@ -392,7 +513,7 @@ impl LanClient {
             self.queues.remove(&gen);
             return Err(e);
         }
-        if let Some((_, old)) = existing {
+        if let Some(old) = existing.filter(|old| !old.is_empty()) {
             self.queues.remove(&old);
         }
         log::info!("[Lan] {ip}: casting {stream_id} segment {segment} (session {session_id})");
@@ -402,19 +523,7 @@ impl LanClient {
     /// Plays the cast on `ip` again by loading its current item: the way to
     /// resume on this route.
     async fn resume(&self, ip: &str) -> SoapResult<()> {
-        let cast = {
-            let casts = self.casts.lock();
-            casts.get(ip).map(|c| {
-                (
-                    c.session_id.clone(),
-                    c.queue_url.clone(),
-                    c.item.clone(),
-                    c.gen.clone(),
-                    c.loaded_at,
-                )
-            })
-        };
-        let Some((session_id, queue_url, item, gen, loaded_at)) = cast else {
+        let Some(loaded_at) = self.casts.lock().get(ip).map(|c| c.loaded_at) else {
             return Err(transport_error(
                 code::UNSUPPORTED,
                 format!("no cast on {ip} to resume"),
@@ -423,7 +532,7 @@ impl LanClient {
         if loaded_at.elapsed() < RELOAD_GUARD {
             return Ok(());
         }
-        self.load(ip, &session_id, &queue_url, &item, &gen).await?;
+        self.reload(ip).await?;
         if let Some(cast) = self.casts.lock().get_mut(ip) {
             cast.loaded_at = Instant::now();
         }
@@ -469,7 +578,19 @@ impl LanClient {
             .get(ip)
             .map(|c| c.played.clone())
             .unwrap_or_default();
-        let (state, track_uri) = read_status(&self.queues, &status, &played);
+        let (state, mut track_uri) = read_status(&self.queues, &status, &played);
+        let stream_item = self
+            .casts
+            .lock()
+            .get(ip)
+            .filter(|c| c.stream.is_some())
+            .map(|c| c.item.media_url.clone());
+        if let Some(url) = stream_item {
+            let named = status.item_id.as_deref().is_some_and(|id| !id.is_empty());
+            if named {
+                track_uri = url;
+            }
+        }
         let position = PositionInfo {
             track_uri,
             rel_time_ms: status.position_millis / 1000 * 1000,

@@ -448,6 +448,7 @@ export const CASTBAR_LEADS: Readonly<Record<string, string>> = {
   error_unsupported_sample_rate: 'castbar_lead_rate',
   error_pcm_rate_unsupported: 'castbar_lead_rate',
   error_upnp_disabled: 'notice_lead_upnp_disabled',
+  error_flac_needs_upnp: 'castbar_lead_flac_needs_upnp',
 };
 
 /**

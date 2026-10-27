@@ -416,3 +416,108 @@ async fn on_port_1443_a_coordinator_moved_by_the_household_ends_the_cast() {
     })
     .await;
 }
+
+both_routes! {
+/// Proves: on either route an AAC cast has the speaker fetch the stream's
+/// own `live` URL from its address, the way an `x-rincon-mp3radio` cast is
+/// fetched, and removing the stream stops it.
+async fn an_aac_cast_is_fetched_as_a_radio_stream_on_either_route(route) {
+    within("aac", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen"])
+            .codec(AudioCodec::Aac)
+            .route(route)
+            .build()
+            .await;
+        let stream = sys.new_stream();
+
+        let results = sys.start(&stream, &["Kitchen"], false).await;
+        assert!(results[0].success, "{results:?}");
+        let speaker = sys.fake.speaker_named("Kitchen");
+        let fetches = speaker.fetches();
+        assert_eq!(fetches.len(), 1, "{fetches:?}");
+        assert_eq!(fetches[0].url, sys.stream_url(&stream));
+        assert_eq!(fetches[0].status, 200);
+        assert!(speaker.is_fetching());
+
+        sys.coordinator().remove_stream_async(&stream).await;
+        until(|| !speaker.is_fetching()).await;
+        assert!(sys.sessions().is_empty());
+    })
+    .await;
+}
+}
+
+/// Proves: on port 1443 an AAC cast is loaded as a stream URL, not a queue,
+/// and reads as UPnP gives it: the radio URI, whatever item id the speaker
+/// made up for it.
+#[tokio::test]
+async fn on_port_1443_an_aac_cast_is_a_stream_url_that_reads_as_its_radio_uri() {
+    within("lan aac", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen"])
+            .codec(AudioCodec::Aac)
+            .route(Route::Lan)
+            .build()
+            .await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        let commands = lan_commands(&sys, &kitchen);
+        assert!(
+            commands.iter().any(|(_, c)| c == "loadStreamUrl"),
+            "{commands:?}"
+        );
+        assert!(
+            !commands.iter().any(|(_, c)| c == "loadCloudQueue"),
+            "{commands:?}"
+        );
+        assert!(sys.fake.queue_reads().is_empty());
+
+        let position = sys
+            .services
+            .sonos
+            .get_position_info(&kitchen)
+            .await
+            .unwrap();
+        assert_eq!(position.track_uri, sys.speaker_uri(&stream));
+        assert_eq!(
+            sys.coordinator().get_expected_stream(&kitchen).as_deref(),
+            Some(sys.speaker_uri(&stream).as_str())
+        );
+    })
+    .await;
+}
+
+/// Proves: on port 1443 a FLAC cast is refused with the word clients turn
+/// into "cast PCM or AAC, or switch UPnP on", before anything is created on
+/// the speaker, and the route is not held.
+#[tokio::test]
+async fn on_port_1443_a_flac_cast_is_refused_with_its_reason() {
+    within("lan flac", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen"])
+            .codec(AudioCodec::Flac)
+            .route(Route::Lan)
+            .build()
+            .await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        let seq = sys.fake.next_seq();
+
+        let results = sys.start(&stream, &["Kitchen"], false).await;
+        assert!(!results[0].success);
+        assert_eq!(
+            results[0].error.as_deref(),
+            Some(crate::protocol_constants::FLAC_NEEDS_UPNP)
+        );
+        assert!(!lan_commands(&sys, &kitchen)
+            .iter()
+            .any(|(_, c)| c == "createSession"));
+        assert!(sys.fake.calls_since(seq).is_empty());
+        assert!(!sys.services.route.is_held());
+        assert!(!sys.fake.speaker_named("Kitchen").is_fetching());
+    })
+    .await;
+}

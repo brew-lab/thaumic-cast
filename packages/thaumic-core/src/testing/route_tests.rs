@@ -3,8 +3,6 @@
 //! on, holds while a cast is live on port 1443, and is lost when
 //! Authentication is on.
 
-use crate::sonos::lan::protocol::code;
-use crate::sonos::soap::SoapError;
 use crate::sonos::Route;
 
 use super::fake_sonos::FAKE_HOUSEHOLD_ID;
@@ -156,41 +154,6 @@ async fn authentication_on_leaves_no_route_until_it_is_off() {
             .filter(|(_, e)| e.household_id.is_none())
             .count();
         assert_eq!(descriptions, 2, "the household is asked for again");
-    })
-    .await;
-}
-
-/// Proves: on port 1443 a call that route does not carry out yet is refused
-/// there, never sent to port 1400 to be refused again.
-#[tokio::test]
-async fn on_port_1443_a_call_not_carried_out_is_refused_without_upnp() {
-    within("unsupported", async {
-        let sys = TestSystem::builder()
-            .speakers(["Kitchen"])
-            .route(Route::Lan)
-            .build()
-            .await;
-        let seq = sys.fake.next_seq();
-        let stream = sys.new_stream();
-
-        // The builder's codec is AAC, which is not cast over port 1443 yet.
-        match sys
-            .services
-            .sonos
-            .play_uri(
-                &sys.ip("Kitchen"),
-                &sys.stream_url(&stream),
-                crate::stream::AudioCodec::Aac,
-                &crate::stream::AudioFormat::default(),
-                None,
-                "",
-            )
-            .await
-        {
-            Err(SoapError::Lan { code: c, .. }) => assert_eq!(c, code::UNSUPPORTED),
-            other => panic!("unexpected {other:?}"),
-        }
-        assert!(sys.fake.calls_since(seq).is_empty());
     })
     .await;
 }

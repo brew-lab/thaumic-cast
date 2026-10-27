@@ -56,6 +56,8 @@ pub mod code {
     pub const BAD_REPLY: &str = "LAN_BAD_REPLY";
     /// An operation this route does not carry out.
     pub const UNSUPPORTED: &str = "LAN_UNSUPPORTED";
+    /// A FLAC cast, which never plays over port 1443.
+    pub const FLAC_NEEDS_UPNP: &str = "LAN_FLAC_NEEDS_UPNP";
     /// The command went to a player that no longer leads the group.
     pub const GROUP_MOVED: &str = "GROUP_STATUS_MOVED";
     /// The household has Authentication on: every command is refused.

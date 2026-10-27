@@ -16,7 +16,12 @@
 
 import { createLogger } from '@thaumic-cast/shared';
 import type { Room, StreamMetadata } from '@thaumic-cast/protocol';
-import { SPEAKERS_UPNP_DISABLED, countRemoteStreams, roomsOf } from '@thaumic-cast/protocol';
+import {
+  FLAC_NEEDS_UPNP,
+  SPEAKERS_UPNP_DISABLED,
+  countRemoteStreams,
+  roomsOf,
+} from '@thaumic-cast/protocol';
 import type {
   StartCastMessage,
   StopCastMessage,
@@ -279,6 +284,10 @@ export async function handleStartCast(msg: StartCastMessage): Promise<ExtensionR
         // prints (a PCM rate stop); anything else is the general failure.
         if (playbackResponse.error && playbackResponse.errorParams) {
           throw new KeyedError(playbackResponse.error, playbackResponse.errorParams);
+        }
+        // FLAC asked of a household with UPnP off, where it never plays.
+        if (playbackResponse.results.some((r) => r.error === FLAC_NEEDS_UPNP)) {
+          throw new Error('error_flac_needs_upnp');
         }
         // The speakers refused control: the Sonos app's UPnP switch is off.
         if (playbackResponse.results.some((r) => r.error === SPEAKERS_UPNP_DISABLED)) {

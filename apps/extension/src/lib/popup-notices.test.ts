@@ -366,6 +366,10 @@ describe('castBarFailure', () => {
       'castbar_lead_rate',
     );
     expect(castBarFailure('error_upnp_disabled').lead.key).toBe('notice_lead_upnp_disabled');
+    expect(castBarFailure('error_flac_needs_upnp')).toEqual({
+      lead: { key: 'castbar_lead_flac_needs_upnp', params: {} },
+      text: { key: 'error_flac_needs_upnp', params: {} },
+    });
   });
 
   it('should call anything else a cast that did not start', () => {
