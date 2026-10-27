@@ -290,8 +290,9 @@ async function updatesPass(env, o, { check, dark }) {
     opened = env.ctx.pages().find((p) => !before.has(p));
     if (!opened) await lib.sleep(200);
   }
-  // The tab opens on the releases URL; offline it stays there on an error page.
-  for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++) await lib.sleep(200);
+  // The tab opens on the download page; offline it stays there on an error page.
+  for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++)
+    await lib.sleep(200);
   check(
     'options: Check for updates opens the download page in a new tab',
     Boolean(opened?.url().startsWith(DOWNLOAD_PAGE)),
