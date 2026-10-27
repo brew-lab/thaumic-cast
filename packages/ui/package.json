@@ -34,7 +34,7 @@
   "peerDependencies": {
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",
-    "preact": "^10.0.0"
+    "preact": "~10.28.4"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -42,7 +42,7 @@
     "@preact/preset-vite": "^2.10.5",
     "@thaumic-cast/protocol": "workspace:*",
     "@thaumic-cast/shared": "workspace:*",
-    "preact": "^10.0.0",
+    "preact": "~10.28.4",
     "prettier": "^3.7.4",
     "typescript": "^7.0.2",
     "vite": "^8.0.8"

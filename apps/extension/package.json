@@ -19,7 +19,7 @@
     "@thaumic-cast/shared": "workspace:*",
     "@thaumic-cast/ui": "workspace:*",
     "i18next": "^26.0.6",
-    "preact": "^10.0.0",
+    "preact": "~10.28.4",
     "react-i18next": "^17.0.4",
     "zod": "^4.2.1"
   },
