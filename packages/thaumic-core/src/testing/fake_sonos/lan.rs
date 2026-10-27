@@ -11,9 +11,21 @@
 //!   `GetZoneGroupState` describes, with a player for each room and none for
 //!   a satellite: how hardware lists a home theatre's satellites has not
 //!   been recorded yet.
+//! * `playerVolume:1` reads and sets the speaker's own level and mute, the
+//!   ones RenderingControl reads and sets; `groupVolume:1` the group level and
+//!   mute GroupRenderingControl does, on the group's coordinator only. Each
+//!   group's id is `<coordinator>:1`, as in `GetZoneGroupState`. A fixed
+//!   output refuses `setVolume` (the error code is assumed; none has been
+//!   recorded).
+//! * `subscribe` to either namespace pushes the current level at once and
+//!   every change after it to that socket, as hardware does; a write that
+//!   changes nothing pushes nothing.
 //! * With Authentication on ([`FakeSonosSystem::set_lan_authentication`])
 //!   every command is refused with `ERROR_NO_PERMISSION`, the reply recorded
 //!   from hardware; the description still answers.
+//! * A failure injected with [`FakeSonosSystem::fail`] for the action
+//!   `"<namespace> <command>"` (e.g. `"playerVolume:1 getVolume"`) is
+//!   applied: a fault is a refusal, a hang no reply, a delay a late one.
 //! * Any other command is refused with `ERROR_UNSUPPORTED_COMMAND`, so a
 //!   test fails loudly instead of silently succeeding.
 //!
@@ -26,12 +38,15 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use futures::{SinkExt, StreamExt};
 use serde_json::{json, Map, Value};
+use tokio::sync::mpsc;
 
 use crate::sonos::lan::protocol::{Frame, API_KEY, SUBPROTOCOL, WS_PATH};
+use crate::sonos::lan::volume::{GROUP_VOLUME, PLAYER_VOLUME};
 
 use super::server::Ctx;
-use super::{FakeSonosSystem, FakeSpeaker};
+use super::{Failure, FakeSonosSystem, FakeSpeaker};
 
 /// The household id every fake speaker reports. Hardware's has a dot, and
 /// certificates carry only the part before it.
@@ -46,8 +61,19 @@ pub(crate) struct LanCall {
     pub namespace: String,
     /// The command, e.g. `getGroups`.
     pub command: String,
+    /// The player, group or session it named.
+    pub target: Option<String>,
     /// The household id the command carried.
     pub household_id: Option<String>,
+    /// Its body.
+    pub body: Value,
+}
+
+/// A socket subscribed to one namespace for one player or group.
+pub(super) struct Subscriber {
+    namespace: String,
+    target: String,
+    out: mpsc::UnboundedSender<String>,
 }
 
 fn has_key(headers: &HeaderMap) -> bool {
@@ -90,8 +116,19 @@ pub(super) async fn socket(
         .on_upgrade(move |socket| serve(ctx, socket))
 }
 
-async fn serve(ctx: Ctx, mut socket: WebSocket) {
-    while let Some(Ok(message)) = socket.recv().await {
+/// Answers each command in its own task, so a hang or a delay holds up
+/// nothing else; replies and pushes share one writer.
+async fn serve(ctx: Ctx, socket: WebSocket) {
+    let (mut sink, mut stream) = socket.split();
+    let (out, mut outgoing) = mpsc::unbounded_channel::<String>();
+    let writer = tokio::spawn(async move {
+        while let Some(text) = outgoing.recv().await {
+            if sink.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+    while let Some(Ok(message)) = stream.next().await {
         let Message::Text(text) = message else {
             continue;
         };
@@ -101,58 +138,254 @@ async fn serve(ctx: Ctx, mut socket: WebSocket) {
         let Some(system) = ctx.system.upgrade() else {
             break;
         };
-        let reply = answer(&system, &ctx.speaker, &frame);
-        if socket.send(Message::Text(reply.into())).await.is_err() {
-            break;
-        }
+        let speaker = Arc::clone(&ctx.speaker);
+        let out = out.clone();
+        tokio::spawn(async move { answer(&system, &speaker, &frame, out).await });
     }
+    writer.abort();
 }
 
-/// The reply to `frame`, as text.
-fn answer(system: &FakeSonosSystem, speaker: &FakeSpeaker, frame: &Frame) -> String {
+/// The player, group or session a frame names.
+fn target_of(frame: &Frame) -> Option<String> {
+    frame
+        .player_id()
+        .or(frame.group_id())
+        .or(frame.session_id())
+        .map(str::to_string)
+}
+
+/// Answers `frame` on `out`.
+async fn answer(
+    system: &FakeSonosSystem,
+    speaker: &FakeSpeaker,
+    frame: &Frame,
+    out: mpsc::UnboundedSender<String>,
+) {
     let command = frame
         .header
         .get("command")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let target = target_of(frame);
     system.record_lan(LanCall {
         speaker_ip: speaker.ip.to_string(),
         namespace: frame.namespace().to_string(),
         command: command.clone(),
+        target: target.clone(),
         household_id: frame.household_id().map(str::to_string),
+        body: frame.body.clone(),
     });
 
     if system.lan_authentication() {
-        return reply(
+        let _ = out.send(reply(
             frame,
             &command,
-            false,
-            refusal("ERROR_NO_PERMISSION", "Unauthorized"),
-        );
+            Err(refusal("ERROR_NO_PERMISSION", "Unauthorized")),
+        ));
+        return;
     }
-    match (frame.namespace(), command.as_str()) {
-        ("groups:1", "getGroups") => reply(frame, &command, true, groups(system)),
-        _ => reply(
-            frame,
-            &command,
-            false,
-            refusal("ERROR_UNSUPPORTED_COMMAND", "Not modelled by the fake"),
-        ),
+    let action = format!("{} {command}", frame.namespace());
+    match system.failure_for(&speaker.ip.to_string(), &action) {
+        Some(Failure::Fault(_) | Failure::FaultOnce(_)) => {
+            let _ = out.send(reply(
+                frame,
+                &command,
+                Err(refusal("ERROR_COMMAND_FAILED", "Injected")),
+            ));
+            return;
+        }
+        Some(Failure::Hang) => return,
+        Some(Failure::Delay(delay)) => tokio::time::sleep(delay).await,
+        None => {}
     }
+
+    let target = target.unwrap_or_default();
+    let result = match (frame.namespace(), command.as_str()) {
+        ("groups:1", "getGroups") => Ok(groups(system)),
+        (PLAYER_VOLUME, _) if target != speaker.uuid => Err(not_here(&target)),
+        (PLAYER_VOLUME, "getVolume") => Ok(player_volume(speaker)),
+        (PLAYER_VOLUME, "setVolume") => set_player_volume(system, speaker, &frame.body),
+        (PLAYER_VOLUME, "setMute") => {
+            set_player_mute(system, speaker, &frame.body);
+            Ok(json!({}))
+        }
+        (GROUP_VOLUME, _) if target != group_id(speaker) || !leads(speaker) => {
+            Err(not_here(&target))
+        }
+        (GROUP_VOLUME, "getVolume") => Ok(group_volume(speaker)),
+        (GROUP_VOLUME, "setVolume") => {
+            set_group(system, speaker, &frame.body, "volume");
+            Ok(json!({}))
+        }
+        (GROUP_VOLUME, "setMute") => {
+            set_group(system, speaker, &frame.body, "muted");
+            Ok(json!({}))
+        }
+        (PLAYER_VOLUME | GROUP_VOLUME, "subscribe") => {
+            let _ = out.send(reply(frame, &command, Ok(json!({}))));
+            let first = if frame.namespace() == PLAYER_VOLUME {
+                player_volume(speaker)
+            } else {
+                group_volume(speaker)
+            };
+            let _ = out.send(event(frame.namespace(), &target, first));
+            system.lan_subscribers.lock().push(Subscriber {
+                namespace: frame.namespace().to_string(),
+                target,
+                out,
+            });
+            return;
+        }
+        _ => Err(refusal(
+            "ERROR_UNSUPPORTED_COMMAND",
+            "Not modelled by the fake",
+        )),
+    };
+    let _ = out.send(reply(frame, &command, result));
 }
 
-/// A reply to `frame`: its header with `response` for `command`, then `body`.
-fn reply(frame: &Frame, command: &str, success: bool, body: Value) -> String {
+/// A reply to `frame`: its header with `response` for `command`, then the
+/// body, or the refusal's.
+fn reply(frame: &Frame, command: &str, result: Result<Value, Value>) -> String {
     let mut header: Map<String, Value> = frame.header.clone();
     header.remove("command");
     header.insert("response".into(), command.into());
-    header.insert("success".into(), success.into());
+    header.insert("success".into(), result.is_ok().into());
+    let body = result.unwrap_or_else(|refused| refused);
     json!([header, body]).to_string()
+}
+
+/// An event in `namespace` for the player or group `target`.
+fn event(namespace: &str, target: &str, body: Value) -> String {
+    let name = namespace.trim_end_matches(":1");
+    let id_field = if namespace == GROUP_VOLUME {
+        "groupId"
+    } else {
+        "playerId"
+    };
+    json!([
+        {
+            "namespace": namespace,
+            "householdId": FAKE_HOUSEHOLD_ID,
+            id_field: target,
+            "name": name,
+            "type": name,
+        },
+        body
+    ])
+    .to_string()
 }
 
 fn refusal(code: &str, reason: &str) -> Value {
     json!({ "_objectType": "globalError", "errorCode": code, "reason": reason })
+}
+
+fn not_here(target: &str) -> Value {
+    refusal(
+        "ERROR_INVALID_OBJECT_ID",
+        &format!("{target} is not on this player"),
+    )
+}
+
+/// The id of the group `speaker` is in.
+fn group_id(speaker: &FakeSpeaker) -> String {
+    format!("{}:1", speaker.coordinator_uuid())
+}
+
+fn leads(speaker: &FakeSpeaker) -> bool {
+    speaker.coordinator_uuid() == speaker.uuid
+}
+
+fn player_volume(speaker: &FakeSpeaker) -> Value {
+    let state = speaker.state.lock();
+    json!({
+        "_objectType": "playerVolume",
+        "volume": state.volume,
+        "muted": state.mute,
+        "fixed": state.output_fixed,
+    })
+}
+
+fn group_volume(speaker: &FakeSpeaker) -> Value {
+    let state = speaker.state.lock();
+    json!({
+        "_objectType": "groupVolume",
+        "volume": state.group_volume,
+        "muted": state.group_mute,
+        "fixed": false,
+    })
+}
+
+fn set_player_volume(
+    system: &FakeSonosSystem,
+    speaker: &FakeSpeaker,
+    body: &Value,
+) -> Result<Value, Value> {
+    let volume = body["volume"].as_u64().unwrap_or(0).min(100) as u8;
+    let changed = {
+        let mut state = speaker.state.lock();
+        if state.output_fixed {
+            return Err(refusal("ERROR_DISALLOWED_BY_POLICY", "The output is fixed"));
+        }
+        std::mem::replace(&mut state.volume, volume) != volume
+    };
+    if changed {
+        system.push_player_volume(speaker);
+    }
+    Ok(json!({}))
+}
+
+fn set_player_mute(system: &FakeSonosSystem, speaker: &FakeSpeaker, body: &Value) {
+    let muted = body["muted"].as_bool().unwrap_or(false);
+    let changed = std::mem::replace(&mut speaker.state.lock().mute, muted) != muted;
+    if changed {
+        system.push_player_volume(speaker);
+    }
+}
+
+fn set_group(system: &FakeSonosSystem, speaker: &FakeSpeaker, body: &Value, field: &str) {
+    let changed = {
+        let mut state = speaker.state.lock();
+        if field == "volume" {
+            let volume = body["volume"].as_u64().unwrap_or(0).min(100) as u8;
+            std::mem::replace(&mut state.group_volume, volume) != volume
+        } else {
+            let muted = body["muted"].as_bool().unwrap_or(false);
+            std::mem::replace(&mut state.group_mute, muted) != muted
+        }
+    };
+    if changed {
+        system.push_group_volume(speaker);
+    }
+}
+
+impl FakeSonosSystem {
+    /// Sends `body` in `namespace` to every socket subscribed to it for
+    /// `target`, forgetting sockets that have closed.
+    fn push_lan(&self, namespace: &str, target: &str, body: Value) {
+        let text = event(namespace, target, body);
+        self.lan_subscribers.lock().retain(|s| {
+            if s.namespace != namespace || s.target != target {
+                return !s.out.is_closed();
+            }
+            s.out.send(text.clone()).is_ok()
+        });
+    }
+
+    /// Pushes `speaker`'s own level to its subscribers.
+    pub(super) fn push_player_volume(&self, speaker: &FakeSpeaker) {
+        self.push_lan(PLAYER_VOLUME, &speaker.uuid, player_volume(speaker));
+    }
+
+    /// Pushes the level of the group `coordinator` leads to its subscribers.
+    pub(super) fn push_group_volume(&self, coordinator: &FakeSpeaker) {
+        self.push_lan(
+            GROUP_VOLUME,
+            &group_id(coordinator),
+            group_volume(coordinator),
+        );
+    }
 }
 
 /// The `getGroups` body for the household's model.

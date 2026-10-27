@@ -7,14 +7,18 @@
 //!   checked for the player we meant to reach
 //! - `hub` - the household's sockets: open on use, reconnect with backoff,
 //!   follow a moved group, confirm group changes by reading them back
-//! - `client` - the household as the services see it: detection and the
-//!   topology from `getGroups`
+//! - `client` - the household as the services see it: detection, the
+//!   topology from `getGroups`, volume and mute
+//! - `volume` - the volume namespaces, and their events as GENA's
+//! - `events` - the pump that hands socket events to GENA's channel
 
 pub mod client;
+pub mod events;
 pub mod hub;
 pub mod protocol;
 pub mod socket;
 pub mod tls;
+pub mod volume;
 
 #[cfg(test)]
 pub(crate) mod fake;

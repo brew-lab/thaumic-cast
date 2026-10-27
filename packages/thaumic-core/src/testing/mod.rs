@@ -19,3 +19,4 @@ mod regroup_tests;
 mod route_tests;
 mod start_volume_tests;
 mod takeover_tests;
+mod volume_tests;

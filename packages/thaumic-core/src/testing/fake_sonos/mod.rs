@@ -639,6 +639,8 @@ pub(crate) struct FakeSonosSystem {
     lan_authentication: AtomicBool,
     /// Every command received on the local Control API, in order.
     lan_calls: Mutex<Vec<LanCall>>,
+    /// Sockets subscribed to events on the local Control API.
+    lan_subscribers: Mutex<Vec<lan::Subscriber>>,
     fetch_observer: Mutex<Option<FetchObserver>>,
     /// Satellite UUID to the UUID of the primary it is bonded to.
     satellites: Mutex<HashMap<String, String>>,
@@ -744,6 +746,7 @@ impl FakeSonosSystem {
             upnp_enabled: AtomicBool::new(true),
             lan_authentication: AtomicBool::new(false),
             lan_calls: Mutex::new(Vec::new()),
+            lan_subscribers: Mutex::new(Vec::new()),
             fetch_observer: Mutex::new(None),
             satellites: Mutex::new(HashMap::new()),
             joins: Mutex::new(Vec::new()),
@@ -1234,6 +1237,22 @@ impl FakeSonosSystem {
     /// Every command received on the local Control API so far, in order.
     pub fn lan_calls(&self) -> Vec<LanCall> {
         self.lan_calls.lock().clone()
+    }
+
+    /// Sets the room `name`'s own level, as the Sonos app would, and
+    /// pushes it to the local Control API's subscribers.
+    pub fn change_volume_in_app(&self, name: &str, volume: u8) {
+        let speaker = self.speaker_named(name);
+        speaker.set_volume(volume);
+        self.push_player_volume(speaker);
+    }
+
+    /// Sets the level of the group `coordinator` leads, as the Sonos app
+    /// would, and pushes it to the local Control API's subscribers.
+    pub fn change_group_volume_in_app(&self, coordinator: &str, volume: u8) {
+        let speaker = self.speaker_named(coordinator);
+        speaker.set_group_volume(volume);
+        self.push_group_volume(speaker);
     }
 
     /// Sets the subscription lifetime granted to SUBSCRIBE and renewals.

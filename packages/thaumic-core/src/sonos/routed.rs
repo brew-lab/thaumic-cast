@@ -273,60 +273,54 @@ impl SonosPlayback for RoutedClient {
     }
 }
 
+/// Sends a volume call to port 1443 while the household is there, and to
+/// UPnP otherwise.
+macro_rules! routed_volume {
+    ($self:ident.$method:ident($($arg:expr),*)) => {
+        if $self.route.is_lan() {
+            $self.lan.$method($($arg),*).await
+        } else {
+            $self.upnp.$method($($arg),*).await
+        }
+    };
+}
+
 #[async_trait]
 impl SonosVolumeControl for RoutedClient {
     async fn get_group_volume(&self, coordinator_ip: &str) -> SoapResult<u8> {
-        self.upnp("get_group_volume")?
-            .get_group_volume(coordinator_ip)
-            .await
+        routed_volume!(self.get_group_volume(coordinator_ip))
     }
 
     async fn set_group_volume(&self, coordinator_ip: &str, volume: u8) -> SoapResult<()> {
-        self.upnp("set_group_volume")?
-            .set_group_volume(coordinator_ip, volume)
-            .await
+        routed_volume!(self.set_group_volume(coordinator_ip, volume))
     }
 
     async fn get_group_mute(&self, coordinator_ip: &str) -> SoapResult<bool> {
-        self.upnp("get_group_mute")?
-            .get_group_mute(coordinator_ip)
-            .await
+        routed_volume!(self.get_group_mute(coordinator_ip))
     }
 
     async fn set_group_mute(&self, coordinator_ip: &str, mute: bool) -> SoapResult<()> {
-        self.upnp("set_group_mute")?
-            .set_group_mute(coordinator_ip, mute)
-            .await
+        routed_volume!(self.set_group_mute(coordinator_ip, mute))
     }
 
     async fn get_speaker_volume(&self, speaker_ip: &str) -> SoapResult<u8> {
-        self.upnp("get_speaker_volume")?
-            .get_speaker_volume(speaker_ip)
-            .await
+        routed_volume!(self.get_speaker_volume(speaker_ip))
     }
 
     async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()> {
-        self.upnp("set_speaker_volume")?
-            .set_speaker_volume(speaker_ip, volume)
-            .await
+        routed_volume!(self.set_speaker_volume(speaker_ip, volume))
     }
 
     async fn get_speaker_output_fixed(&self, speaker_ip: &str) -> SoapResult<bool> {
-        self.upnp("get_speaker_output_fixed")?
-            .get_speaker_output_fixed(speaker_ip)
-            .await
+        routed_volume!(self.get_speaker_output_fixed(speaker_ip))
     }
 
     async fn get_speaker_mute(&self, speaker_ip: &str) -> SoapResult<bool> {
-        self.upnp("get_speaker_mute")?
-            .get_speaker_mute(speaker_ip)
-            .await
+        routed_volume!(self.get_speaker_mute(speaker_ip))
     }
 
     async fn set_speaker_mute(&self, speaker_ip: &str, mute: bool) -> SoapResult<()> {
-        self.upnp("set_speaker_mute")?
-            .set_speaker_mute(speaker_ip, mute)
-            .await
+        routed_volume!(self.set_speaker_mute(speaker_ip, mute))
     }
 }
 

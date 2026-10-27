@@ -4,21 +4,40 @@
 //! asked for over a connection checked for that player, and the topology is
 //! read with `groups:1 getGroups` and given the shape `GetZoneGroupState`
 //! gives on port 1400. Every player that read lists is made known to the hub
-//! at its address, so later sockets can be checked for it.
+//! at its address, so later sockets can be checked for it, and the read is
+//! kept: a group's commands name its group id, which only `getGroups` gives.
+//!
+//! Each read also makes sure every room's own level and every group's level
+//! is subscribed to, so their events reach the event pump (see
+//! [`super::events`]); a socket that closed loses its subscriptions, and the
+//! pump asks for them again when it reopens.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use async_trait::async_trait;
+use futures::future::join_all;
+use parking_lot::{Mutex, RwLock};
+use serde_json::json;
 
 use super::hub::LanHub;
-use super::protocol::{code, host_of, transport_error, Groups, LocalInfo, SpeakerIdentity};
+use super::protocol::{
+    code, host_of, transport_error, Command, Groups, LocalInfo, SpeakerIdentity, Target,
+};
 use super::socket::LanConnector;
+use super::volume::{VolumeState, GROUP_VOLUME, PLAYER_VOLUME};
 use crate::error::SoapResult;
+use crate::sonos::soap::SoapError;
+use crate::sonos::traits::SonosVolumeControl;
 use crate::sonos::types::{HouseholdTopology, ZoneGroup, ZoneGroupMember, ZoneGroupSnapshot};
 use crate::sonos::zone_groups::group_name;
 
 /// What a member's model reads as when Sonos does not name it.
 const UNKNOWN_MODEL: &str = "Speaker";
+
+/// One event subscription: the speaker whose socket holds it, the
+/// namespace, and the player or group it is for.
+type Subscription = (String, &'static str, String);
 
 /// The household over port 1443.
 pub struct LanClient {
@@ -26,6 +45,10 @@ pub struct LanClient {
     hub: LanHub,
     /// The household id, once detection has learnt it.
     household_id: RwLock<Option<String>>,
+    /// The last groups read.
+    groups: RwLock<Groups>,
+    /// The event subscriptions held.
+    subscribed: Mutex<HashSet<Subscription>>,
 }
 
 impl LanClient {
@@ -36,6 +59,8 @@ impl LanClient {
             hub: LanHub::new(Arc::clone(&connector)),
             connector,
             household_id: RwLock::new(None),
+            groups: RwLock::new(Groups::default()),
+            subscribed: Mutex::new(HashSet::new()),
         }
     }
 
@@ -55,6 +80,19 @@ impl LanClient {
     /// route that stopped working, whose household may have changed.
     pub fn forget_household(&self) {
         *self.household_id.write() = None;
+    }
+
+    /// The household id, for a command.
+    fn household(&self) -> SoapResult<String> {
+        self.household_id()
+            .ok_or_else(|| transport_error(code::CONNECT_FAILED, "the household is not known yet"))
+    }
+
+    /// The player at `ip`, for a command.
+    fn player(&self, ip: &str) -> SoapResult<String> {
+        self.hub.player_at(ip).ok_or_else(|| {
+            transport_error(code::CONNECT_FAILED, format!("no player known at {ip}"))
+        })
     }
 
     /// Learns the household id from the player at `ip`, which must be
@@ -84,6 +122,19 @@ impl LanClient {
         Ok(info.household_id)
     }
 
+    /// Reads the groups through `ip` and keeps them, making each listed
+    /// player known at its address.
+    async fn read_groups(&self, ip: &str, household_id: &str) -> SoapResult<Groups> {
+        let groups = self.hub.groups(ip, household_id).await?;
+        for player in &groups.players {
+            if let Some(at) = host_of(&player.websocket_url) {
+                self.hub.know(at, &player.id);
+            }
+        }
+        *self.groups.write() = groups.clone();
+        Ok(groups)
+    }
+
     /// Reads the household's groups through the player at `ip`, learning
     /// the household from it first if that is not known yet.
     ///
@@ -98,16 +149,194 @@ impl LanClient {
             }
             None => self.detect(ip, player_id).await?,
         };
-        let groups = self.hub.groups(ip, &household_id).await?;
-        for player in &groups.players {
-            if let Some(at) = host_of(&player.websocket_url) {
-                self.hub.know(at, &player.id);
-            }
-        }
+        let groups = self.read_groups(ip, &household_id).await?;
+        self.ensure_subscriptions().await;
         Ok(ZoneGroupSnapshot {
             groups: zone_groups(&groups),
             household: HouseholdTopology::default(),
         })
+    }
+
+    /// The subscriptions the last groups read call for: every player's own
+    /// level on its own socket, and every group's level on its
+    /// coordinator's.
+    fn wanted_subscriptions(&self) -> HashSet<Subscription> {
+        let groups = self.groups.read();
+        let players = groups.players.iter().filter_map(|p| {
+            let ip = host_of(&p.websocket_url)?;
+            Some((ip.to_string(), PLAYER_VOLUME, p.id.clone()))
+        });
+        let led = groups.groups.iter().filter_map(|g| {
+            let ip = groups.ip_of(&g.coordinator_id)?;
+            Some((ip.to_string(), GROUP_VOLUME, g.id.clone()))
+        });
+        players.chain(led).collect()
+    }
+
+    /// Subscribes to every level the last groups read calls for that is not
+    /// subscribed to yet, and forgets the ones it no longer calls for. A
+    /// failure is logged and tried again on the next call.
+    pub async fn ensure_subscriptions(&self) {
+        let Some(household_id) = self.household_id() else {
+            return;
+        };
+        let wanted = self.wanted_subscriptions();
+        let missing: Vec<Subscription> = {
+            let mut held = self.subscribed.lock();
+            held.retain(|s| wanted.contains(s));
+            wanted.into_iter().filter(|s| !held.contains(s)).collect()
+        };
+        let calls = missing.into_iter().map(|sub| {
+            let household_id = household_id.clone();
+            async move {
+                let (ip, namespace, id) = &sub;
+                let target = match *namespace {
+                    GROUP_VOLUME => Target::Group(id.clone()),
+                    _ => Target::Player(id.clone()),
+                };
+                let cmd = Command::new(namespace, "subscribe", target);
+                match self.hub.call(ip, &household_id, &cmd).await {
+                    Ok(_) => {
+                        self.subscribed.lock().insert(sub);
+                    }
+                    Err(e) => log::warn!("[Lan] {ip}: {namespace} subscribe for {id}: {e}"),
+                }
+            }
+        });
+        join_all(calls).await;
+    }
+
+    /// Forgets the subscriptions held on `ip`'s socket, which closed.
+    pub fn socket_closed(&self, ip: &str) {
+        self.subscribed.lock().retain(|(at, _, _)| at != ip);
+    }
+
+    /// The group led by the player at `ip`, from the last groups read, or
+    /// from a fresh read when that one names none.
+    async fn group_led_by(&self, ip: &str, household_id: &str) -> SoapResult<String> {
+        let player = self.player(ip)?;
+        let led = |groups: &Groups| {
+            groups
+                .groups
+                .iter()
+                .find(|g| g.coordinator_id == player)
+                .map(|g| g.id.clone())
+        };
+        if let Some(id) = led(&self.groups.read()) {
+            return Ok(id);
+        }
+        led(&self.read_groups(ip, household_id).await?)
+            .ok_or_else(|| transport_error(code::BAD_REPLY, format!("{ip} leads no group")))
+    }
+
+    /// Sends a `playerVolume` command for the room at `ip`, on its socket.
+    async fn room(
+        &self,
+        ip: &str,
+        command: &'static str,
+        body: serde_json::Value,
+    ) -> SoapResult<serde_json::Value> {
+        let household_id = self.household()?;
+        let cmd =
+            Command::new(PLAYER_VOLUME, command, Target::Player(self.player(ip)?)).with_body(body);
+        Ok(self
+            .hub
+            .call(ip, &household_id, &cmd)
+            .await?
+            .frame()
+            .body
+            .clone())
+    }
+
+    /// Sends a `groupVolume` command for the group led by the player at
+    /// `ip`, on its socket. A refusal after the group changed is sent once
+    /// more, to the group a fresh read names.
+    async fn group(
+        &self,
+        ip: &str,
+        command: &'static str,
+        body: serde_json::Value,
+    ) -> SoapResult<serde_json::Value> {
+        let household_id = self.household()?;
+        let group_id = self.group_led_by(ip, &household_id).await?;
+        let send = |group_id: String| {
+            let cmd = Command::new(GROUP_VOLUME, command, Target::Group(group_id))
+                .with_body(body.clone());
+            let household_id = household_id.clone();
+            async move { self.hub.call(ip, &household_id, &cmd).await }
+        };
+        match send(group_id.clone()).await {
+            Ok(reply) => Ok(reply.frame().body.clone()),
+            Err(e @ SoapError::Lan { .. }) if !e.is_transient() => {
+                self.read_groups(ip, &household_id).await?;
+                let now = self.group_led_by(ip, &household_id).await?;
+                if now == group_id {
+                    return Err(e);
+                }
+                Ok(send(now).await?.frame().body.clone())
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[async_trait]
+impl SonosVolumeControl for LanClient {
+    async fn get_group_volume(&self, coordinator_ip: &str) -> SoapResult<u8> {
+        let body = self.group(coordinator_ip, "getVolume", json!({})).await?;
+        Ok(VolumeState::from_body(&body)?.volume)
+    }
+
+    async fn set_group_volume(&self, coordinator_ip: &str, volume: u8) -> SoapResult<()> {
+        self.group(
+            coordinator_ip,
+            "setVolume",
+            json!({ "volume": volume.min(100) }),
+        )
+        .await
+        .map(drop)
+    }
+
+    async fn get_group_mute(&self, coordinator_ip: &str) -> SoapResult<bool> {
+        let body = self.group(coordinator_ip, "getVolume", json!({})).await?;
+        Ok(VolumeState::from_body(&body)?.muted)
+    }
+
+    async fn set_group_mute(&self, coordinator_ip: &str, mute: bool) -> SoapResult<()> {
+        self.group(coordinator_ip, "setMute", json!({ "muted": mute }))
+            .await
+            .map(drop)
+    }
+
+    async fn get_speaker_volume(&self, speaker_ip: &str) -> SoapResult<u8> {
+        let body = self.room(speaker_ip, "getVolume", json!({})).await?;
+        Ok(VolumeState::from_body(&body)?.volume)
+    }
+
+    async fn set_speaker_volume(&self, speaker_ip: &str, volume: u8) -> SoapResult<()> {
+        self.room(
+            speaker_ip,
+            "setVolume",
+            json!({ "volume": volume.min(100) }),
+        )
+        .await
+        .map(drop)
+    }
+
+    async fn get_speaker_output_fixed(&self, speaker_ip: &str) -> SoapResult<bool> {
+        let body = self.room(speaker_ip, "getVolume", json!({})).await?;
+        Ok(VolumeState::from_body(&body)?.fixed)
+    }
+
+    async fn get_speaker_mute(&self, speaker_ip: &str) -> SoapResult<bool> {
+        let body = self.room(speaker_ip, "getVolume", json!({})).await?;
+        Ok(VolumeState::from_body(&body)?.muted)
+    }
+
+    async fn set_speaker_mute(&self, speaker_ip: &str, mute: bool) -> SoapResult<()> {
+        self.room(speaker_ip, "setMute", json!({ "muted": mute }))
+            .await
+            .map(drop)
     }
 }
 
@@ -157,6 +386,7 @@ mod tests {
     use crate::sonos::lan::protocol::tests::recorded;
     use crate::sonos::lan::protocol::Frame;
     use crate::sonos::soap::SoapError;
+    use serde_json::json;
 
     const HH: &str = "Sonos_HOUSEHOLD0000000000000000000";
     const OFFICE: &str = "192.168.1.10";
@@ -167,10 +397,18 @@ mod tests {
     }
 
     /// A household whose Office answers `getGroups` with the recorded reply.
+    /// The command a frame carries.
+    fn command(f: &Frame) -> &str {
+        f.header["command"].as_str().unwrap_or_default()
+    }
+
+    /// A household whose Office answers `getGroups` with the recorded reply
+    /// and every volume command with level 48. Its other players have no
+    /// fake, so they cannot be reached.
     async fn office() -> (Arc<FakeConnector>, FakeSpeaker) {
-        let speaker = FakeSpeaker::start(|f| {
-            assert_eq!(f.header["command"], "getGroups");
-            vec![ok(groups_body())]
+        let speaker = FakeSpeaker::start(|f| match command(f) {
+            "getGroups" => vec![ok(groups_body())],
+            _ => vec![ok(json!({ "volume": 48, "muted": false, "fixed": false }))],
         })
         .await;
         let connector = Arc::new(FakeConnector::default());
@@ -191,7 +429,7 @@ mod tests {
         assert_eq!(lan.household_id().as_deref(), Some(HH));
         let expected = connector.expected.lock().clone();
         assert_eq!(
-            expected,
+            expected[..2],
             [
                 SpeakerIdentity {
                     player_id: OFFICE_ID.into(),
@@ -207,9 +445,187 @@ mod tests {
         assert_eq!(snapshot.groups.len(), 3);
         assert!(snapshot.household.groups.is_empty());
 
-        // Known now: a second read asks for no description.
+        // Known now: a second read asks for no description, and every
+        // socket expects the household.
         lan.zone_groups(OFFICE, OFFICE_ID).await.unwrap();
-        assert_eq!(connector.expected.lock().len(), 2);
+        let expected = connector.expected.lock().clone();
+        assert_eq!(
+            expected.iter().filter(|e| e.household_id.is_none()).count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_subscribes_each_room_s_level_and_each_group_s_on_its_coordinator() {
+        let (connector, speaker) = office().await;
+        let lan = LanClient::new(connector.clone());
+        lan.zone_groups(OFFICE, OFFICE_ID).await.unwrap();
+
+        let subscribed: Vec<(String, Option<String>, Option<String>)> = speaker
+            .received
+            .lock()
+            .iter()
+            .filter(|f| command(f) == "subscribe")
+            .map(|f| {
+                (
+                    f.namespace().to_string(),
+                    f.player_id().map(str::to_string),
+                    f.group_id().map(str::to_string),
+                )
+            })
+            .collect();
+        assert_eq!(subscribed.len(), 2, "{subscribed:?}");
+        assert!(subscribed.contains(&(PLAYER_VOLUME.into(), Some(OFFICE_ID.into()), None)));
+        assert!(subscribed.contains(&(
+            GROUP_VOLUME.into(),
+            None,
+            Some("RINCON_000000000A0101400:205".into())
+        )));
+        // Kitchen and the Playbar were tried on their own sockets.
+        assert_eq!(connector.attempts("192.168.1.11"), 1);
+        assert_eq!(connector.attempts("192.168.1.12"), 1);
+
+        // Held now: a second read asks for nothing more on Office.
+        let before = speaker.received.lock().len();
+        lan.zone_groups(OFFICE, OFFICE_ID).await.unwrap();
+        assert_eq!(speaker.received.lock().len(), before + 1);
+
+        // A closed socket loses them, and they are asked for again.
+        lan.socket_closed(OFFICE);
+        lan.ensure_subscriptions().await;
+        assert_eq!(speaker.received.lock().len(), before + 3);
+    }
+
+    #[tokio::test]
+    async fn a_room_s_level_goes_to_its_player_and_a_group_s_to_the_group_it_leads() {
+        let (connector, speaker) = office().await;
+        let lan = LanClient::new(connector);
+        lan.zone_groups(OFFICE, OFFICE_ID).await.unwrap();
+        let from = speaker.received.lock().len();
+
+        assert_eq!(lan.get_speaker_volume(OFFICE).await.unwrap(), 48);
+        assert!(!lan.get_speaker_output_fixed(OFFICE).await.unwrap());
+        lan.set_speaker_volume(OFFICE, 130).await.unwrap();
+        lan.set_speaker_mute(OFFICE, true).await.unwrap();
+        assert_eq!(lan.get_group_volume(OFFICE).await.unwrap(), 48);
+        lan.set_group_mute(OFFICE, false).await.unwrap();
+
+        let sent: Vec<(String, String, serde_json::Value, Option<String>)> =
+            speaker.received.lock()[from..]
+                .iter()
+                .map(|f| {
+                    (
+                        f.namespace().to_string(),
+                        command(f).to_string(),
+                        f.body.clone(),
+                        f.player_id().or(f.group_id()).map(str::to_string),
+                    )
+                })
+                .collect();
+        let office = Some(OFFICE_ID.to_string());
+        let group = Some("RINCON_000000000A0101400:205".to_string());
+        assert_eq!(
+            sent,
+            [
+                (
+                    PLAYER_VOLUME.into(),
+                    "getVolume".into(),
+                    json!({}),
+                    office.clone()
+                ),
+                (
+                    PLAYER_VOLUME.into(),
+                    "getVolume".into(),
+                    json!({}),
+                    office.clone()
+                ),
+                (
+                    PLAYER_VOLUME.into(),
+                    "setVolume".into(),
+                    json!({ "volume": 100 }),
+                    office.clone()
+                ),
+                (
+                    PLAYER_VOLUME.into(),
+                    "setMute".into(),
+                    json!({ "muted": true }),
+                    office
+                ),
+                (
+                    GROUP_VOLUME.into(),
+                    "getVolume".into(),
+                    json!({}),
+                    group.clone()
+                ),
+                (
+                    GROUP_VOLUME.into(),
+                    "setMute".into(),
+                    json!({ "muted": false }),
+                    group
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_command_refused_after_a_regroup_goes_to_the_group_a_fresh_read_names() {
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&reads);
+        let speaker = FakeSpeaker::start(move |f| match command(f) {
+            "getGroups" => {
+                let mut body = groups_body();
+                if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+                    body["groups"][0]["id"] = "RINCON_000000000A0101400:206".into();
+                }
+                vec![ok(body)]
+            }
+            "setVolume" if f.group_id() == Some("RINCON_000000000A0101400:205") => {
+                vec![Act::Reply {
+                    success: false,
+                    body: json!({ "_objectType": "globalError", "errorCode": "ERROR_INVALID_OBJECT_ID" }),
+                }]
+            }
+            _ => vec![ok(json!({}))],
+        })
+        .await;
+        let connector = Arc::new(FakeConnector::default());
+        connector.add(OFFICE, &speaker);
+        connector
+            .infos
+            .lock()
+            .insert(OFFICE.into(), recorded("local_info"));
+        let lan = LanClient::new(connector);
+        lan.zone_groups(OFFICE, OFFICE_ID).await.unwrap();
+
+        lan.set_group_volume(OFFICE, 20).await.unwrap();
+        let sets: Vec<Option<String>> = speaker
+            .received
+            .lock()
+            .iter()
+            .filter(|f| command(f) == "setVolume")
+            .map(|f| f.group_id().map(str::to_string))
+            .collect();
+        assert_eq!(
+            sets,
+            [
+                Some("RINCON_000000000A0101400:205".to_string()),
+                Some("RINCON_000000000A0101400:206".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn volume_needs_a_known_household_and_player() {
+        let lan = LanClient::new(Arc::new(FakeConnector::default()));
+        for result in [
+            lan.get_speaker_volume(OFFICE).await.map(drop),
+            lan.set_group_volume(OFFICE, 5).await,
+        ] {
+            match result {
+                Err(SoapError::Lan { code: c, .. }) => assert_eq!(c, code::CONNECT_FAILED),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -309,6 +725,7 @@ mod hardware {
     use super::LanClient;
     use crate::sonos::lan::hub::CONNECT_TIMEOUT;
     use crate::sonos::lan::TlsConnector;
+    use crate::sonos::traits::SonosVolumeControl;
 
     fn env(name: &str) -> String {
         std::env::var(name).unwrap_or_else(|_| panic!("set {name}"))
@@ -342,5 +759,12 @@ mod hardware {
             .groups
             .iter()
             .any(|g| g.members.iter().any(|m| m.uuid == player && m.ip == ip)));
+
+        // Reads only: the room's own level and its group's.
+        let own = lan.get_speaker_volume(&ip).await.expect("room level");
+        let fixed = lan.get_speaker_output_fixed(&ip).await.expect("fixed");
+        let muted = lan.get_speaker_mute(&ip).await.expect("room mute");
+        let group = lan.get_group_volume(&ip).await.expect("group level");
+        println!("room {own} (muted {muted}, fixed {fixed}), group {group}");
     }
 }

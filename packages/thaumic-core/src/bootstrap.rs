@@ -27,7 +27,7 @@ use crate::services::speaker_monitor::GenaTransportView;
 use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::lan::hub::CONNECT_TIMEOUT as LAN_CONNECT_TIMEOUT;
-use crate::sonos::lan::{LanClient, LanConnector, TlsConnector};
+use crate::sonos::lan::{events as lan_events, LanClient, LanConnector, TlsConnector};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
 use crate::sonos::utils::SONOS_PORT;
@@ -274,12 +274,13 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     // or to the local Control API on port 1443 while the household has UPnP
     // off. The route is shared with everything that must know it.
     let route = Arc::new(HouseholdRoute::default());
+    let lan_client = Arc::new(LanClient::new(lan));
     let sonos_impl = Arc::new(RoutedClient::new(
         Arc::new(SonosClientImpl::with_speaker_port(
             http_client.clone(),
             speaker_port,
         )),
-        Arc::new(LanClient::new(lan)),
+        Arc::clone(&lan_client),
         Arc::clone(&route),
     ));
 
@@ -306,6 +307,15 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         Arc::clone(&gena_manager),
         Arc::clone(&route),
     ));
+
+    // Events from port 1443 go into GENA's channel, as if GENA had sent them.
+    lan_events::start(
+        lan_client,
+        Arc::clone(&arbiter),
+        lan_events::gena_sink(Arc::clone(&gena_manager)),
+        &spawner,
+        cancel_token.clone(),
+    );
 
     // Wire up stream coordinator with its dependencies
     let mut stream_coordinator = StreamCoordinator::new(

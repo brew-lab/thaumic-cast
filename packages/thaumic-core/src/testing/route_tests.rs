@@ -47,13 +47,17 @@ async fn with_upnp_off_the_household_is_found_on_port_1443() {
             .all(|(_, e)| e.household_id.as_deref() == Some(FAKE_HOUSEHOLD_ID)));
 
         let calls = sys.fake.lan_calls();
-        assert_eq!(calls[0].speaker_ip, sys.ip("Kitchen"));
+        assert_eq!(
+            (calls[0].speaker_ip.as_str(), calls[0].command.as_str()),
+            (sys.ip("Kitchen").as_str(), "getGroups")
+        );
         assert!(calls
             .iter()
             .all(|c| c.household_id.as_deref() == Some(FAKE_HOUSEHOLD_ID)));
+        // Reads, and the volume subscriptions they keep: nothing that plays.
         assert!(calls
             .iter()
-            .all(|c| (c.namespace.as_str(), c.command.as_str()) == ("groups:1", "getGroups")));
+            .all(|c| c.command == "getGroups" || c.command == "subscribe"));
         assert_eq!(subscribes(&sys), 0, "{}", sys.fake.format_log());
     })
     .await;
