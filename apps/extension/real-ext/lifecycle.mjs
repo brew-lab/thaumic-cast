@@ -217,7 +217,7 @@ async function releasesTab(env, before) {
     opened = env.ctx.pages().find((x) => !before.has(x));
     if (!opened) await lib.sleep(200);
   }
-  // Offline it stays on the releases URL, on an error page.
+  // Offline it stays on the download page URL, on an error page.
   for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++)
     await lib.sleep(200);
   const url = opened?.url();
