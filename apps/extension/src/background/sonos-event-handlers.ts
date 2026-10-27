@@ -56,6 +56,7 @@ import {
   type SpeakerRemovalReason,
 } from '@thaumic-cast/protocol';
 import { applyIngestGapsEvent, ingestGapsBroadcast } from './ingest-gaps-state';
+import { applyCastMoved, castMovedBroadcast } from './cast-moved-state';
 import { getConnectionState, setCompanionAudio } from './connection-state';
 import { handleVideoSyncLatency, stopVideoSync } from './video-sync/service';
 
@@ -145,6 +146,7 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
         break;
 
       case 'ingestGaps':
+      case 'castMoved':
       case 'companionAudioChanged':
         handleCompanionNoticeEvent(eventData);
         break;
@@ -155,8 +157,8 @@ export async function handleSonosEvent(event: BroadcastEvent): Promise<void> {
 }
 
 /**
- * Handles the stream events that feed notices: `ingestGaps` for one of this
- * extension's streams, and `companionAudioChanged`, which keeps the head start
+ * Handles the stream events that feed notices: `ingestGaps` and `castMoved`
+ * for one of this extension's streams, and `companionAudioChanged`, which keeps the head start
  * shown and the notice wording current. Broadcast events arrive unvalidated,
  * so these are checked against the protocol schema and dropped if malformed.
  * @param eventData - The raw stream event
@@ -177,6 +179,13 @@ function handleCompanionNoticeEvent(eventData: Record<string, unknown>): void {
     }
     applyIngestGapsEvent(event, Date.now());
     notifyPopup(ingestGapsBroadcast());
+  } else if (event.type === 'castMoved') {
+    if (!getSessionByStreamId(event.streamId)) {
+      log.debug(`Ignoring a move of stream ${event.streamId}: not an active cast`);
+      return;
+    }
+    applyCastMoved(event.streamId, Date.now());
+    notifyPopup(castMovedBroadcast());
   } else if (event.type === 'companionAudioChanged') {
     const audio = {
       headStartMs: event.headStartMs,

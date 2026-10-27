@@ -120,6 +120,7 @@ pub fn start(
                         sink(event);
                     }
                 }
+                lan.retry_leaves().await;
             }
         });
     }

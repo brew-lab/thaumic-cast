@@ -11,9 +11,9 @@
 //! The arbiter maintains a `sync_ips` set that is updated BEFORE GENA operations,
 //! closing TOCTOU race windows that existed when using `gena.is_subscribed()` queries.
 //!
-//! A household controlled over port 1443 has no GENA: the arbiter still keeps
-//! `sync_ips`, which says which volume source counts for each speaker, and
-//! makes no subscription.
+//! A household off UPnP (on port 1443, or with no route) has no GENA: the
+//! arbiter still keeps `sync_ips`, which says which volume source counts for
+//! each speaker, and makes no subscription.
 
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ pub struct SubscriptionArbiter {
     /// Speaker IPs currently in active sync sessions (using RenderingControl).
     /// Updated BEFORE GENA operations to close TOCTOU race windows.
     sync_ips: DashSet<String>,
-    /// How the household is controlled; over port 1443 there is no GENA.
+    /// How the household is controlled; off UPnP there is no GENA.
     route: Arc<HouseholdRoute>,
 }
 
@@ -87,7 +87,7 @@ impl SubscriptionArbiter {
         for ip in ips {
             self.sync_ips.insert(ip.clone());
         }
-        if self.route.is_lan() {
+        if !self.route.has_gena() {
             return;
         }
 
@@ -144,7 +144,7 @@ impl SubscriptionArbiter {
     /// Called by StreamCoordinator when a speaker leaves a sync group.
     pub async fn leave_sync_session(&self, ip: &str, callback_url: &str) {
         self.sync_ips.remove(ip);
-        if self.route.is_lan() {
+        if !self.route.has_gena() {
             return;
         }
 
@@ -185,7 +185,7 @@ impl SubscriptionArbiter {
     ///
     /// Called by TopologyMonitor during subscription sync.
     pub async fn ensure_group_rendering(&self, ip: &str, callback_url: &str) {
-        if self.route.is_lan() {
+        if !self.route.has_gena() {
             return;
         }
         if self.sync_ips.contains(ip) {

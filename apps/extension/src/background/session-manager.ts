@@ -20,6 +20,7 @@ import { notifyPopup } from './notification-service';
 import { persistenceManager } from './persistence-manager';
 import { captureHealthBroadcast, clearCaptureHealthForTab } from './capture-health-state';
 import { clearAllIngestGaps, clearIngestGaps, ingestGapsBroadcast } from './ingest-gaps-state';
+import { castMovedBroadcast, clearAllCastMoved, clearCastMoved } from './cast-moved-state';
 import {
   clearAllSpeakerHealth,
   clearSpeakerHealth,
@@ -252,6 +253,9 @@ export function removeSession(tabId: number): void {
     if (clearIngestGaps(session.streamId)) {
       notifyPopup(ingestGapsBroadcast());
     }
+    if (clearCastMoved(session.streamId)) {
+      notifyPopup(castMovedBroadcast());
+    }
 
     persistSessions();
     notifySessionsChanged();
@@ -274,6 +278,9 @@ export function clearAllSessions(): void {
   }
   if (clearAllIngestGaps()) {
     notifyPopup(ingestGapsBroadcast());
+  }
+  if (clearAllCastMoved()) {
+    notifyPopup(castMovedBroadcast());
   }
   persistSessions();
   notifySessionsChanged();

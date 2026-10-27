@@ -842,6 +842,67 @@ impl StreamCoordinator {
         self.remove_streams(&[stream_id.to_string()], None).await;
     }
 
+    /// Starts every cast this companion leads again on the route the
+    /// household is on now, and tells each stream's client its cast moved.
+    ///
+    /// For a household whose Sonos UPnP was switched off mid-cast: the audio
+    /// plays on, but port 1400 refuses every command, so the cast could not
+    /// be stopped, continued or kept in sync. Each coordinator's stream is
+    /// loaded again over port 1443, from the live edge (a skip of about the
+    /// head start); its rooms follow it as a group does. A cast that cannot
+    /// move (FLAC) is left as it is, and logged.
+    pub async fn rehome_casts(&self) {
+        let coordinators: Vec<PlaybackSession> = self
+            .sessions
+            .all_sessions()
+            .into_iter()
+            .filter(|s| s.role == GroupRole::Coordinator)
+            .collect();
+        let mut moved: Vec<String> = Vec::new();
+        for session in coordinators {
+            let Some(stream) = self.stream_registry.get_stream(&session.stream_id) else {
+                continue;
+            };
+            let metadata = stream.metadata.read().clone();
+            let artwork_url = self.network.url_builder().artwork_url();
+            match self
+                .sonos
+                .play_uri(
+                    &session.speaker_ip,
+                    &session.stream_url,
+                    session.codec,
+                    &stream.audio_format,
+                    Some(&metadata),
+                    &artwork_url,
+                )
+                .await
+            {
+                Ok(()) => {
+                    log::info!(
+                        "[Stream] Moved stream={} speaker={} to port 1443",
+                        session.stream_id,
+                        session.speaker_ip
+                    );
+                    if !moved.contains(&session.stream_id) {
+                        moved.push(session.stream_id.clone());
+                    }
+                }
+                Err(e) => log::warn!(
+                    "[Stream] Could not move stream={} speaker={} to port 1443: {}",
+                    session.stream_id,
+                    session.speaker_ip,
+                    e
+                ),
+            }
+        }
+        for stream_id in moved {
+            self.emit_event(StreamEvent::CastMoved {
+                stream_id,
+                timestamp: now_millis(),
+            });
+        }
+    }
+
     /// Ends `stream_ids` with graceful speaker cleanup, in one pass under the
     /// regroup lock; with `budget`, the speaker calls are cut off that long
     /// after the lock is held.

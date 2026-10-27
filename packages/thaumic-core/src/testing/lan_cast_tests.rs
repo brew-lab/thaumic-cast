@@ -521,3 +521,73 @@ async fn on_port_1443_a_flac_cast_is_refused_with_its_reason() {
     })
     .await;
 }
+
+/// Proves: a household whose UPnP is switched off mid-cast moves to port
+/// 1443 at the next refresh, the cast is started again there (the speaker
+/// fetches the stream afresh, from a queue), the route is held for it, and
+/// the stream's client is told its cast moved.
+#[tokio::test]
+async fn upnp_switched_off_mid_cast_moves_the_cast_to_port_1443() {
+    within("re-home", async {
+        let sys = pcm_system(Route::Upnp, &["Kitchen"]).await;
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+        let speaker = sys.fake.speaker_named("Kitchen");
+        assert_eq!(speaker.fetches().len(), 1);
+
+        sys.fake.set_upnp_enabled(false);
+        sys.refresh_topology().await;
+        assert_eq!(sys.route(), Route::Lan);
+
+        sys.events
+            .wait_for_stream(
+                |e| matches!(e, StreamEvent::CastMoved { stream_id, .. } if *stream_id == stream),
+            )
+            .await;
+        assert!(sys.fake.lan_session("Kitchen").is_some());
+        assert_eq!(speaker.fetches().len(), 2);
+        assert_eq!(speaker.fetches()[1].url, sys.speaker_uri(&stream));
+        assert!(speaker.is_fetching());
+        assert!(sys.services.route.is_held());
+        assert!(sys.session(&stream, "Kitchen").is_some());
+    })
+    .await;
+}
+
+/// Proves: with Authentication switched on mid-cast every command is
+/// refused and the route is lost, yet a stop still goes to port 1443 where
+/// the cast was started: the HTTP side closes (which silences the room), the
+/// session is tried, and the cast ends cleanly instead of failing to stop.
+#[tokio::test]
+async fn with_authentication_on_mid_cast_a_stop_still_ends_the_cast() {
+    within("auth stop", async {
+        let sys = pcm_system(Route::Lan, &["Kitchen"]).await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        sys.fake.set_lan_authentication(true);
+        assert!(sys.try_refresh_topology().await.is_err());
+        assert_eq!(sys.route(), Route::None);
+        let seq = sys.fake.next_seq();
+
+        sys.coordinator().remove_stream_async(&stream).await;
+        assert!(sys.sessions().is_empty());
+        assert!(!sys
+            .events
+            .stream_events()
+            .iter()
+            .any(|e| matches!(e, StreamEvent::PlaybackStopFailed { .. })));
+        assert!(lan_commands(&sys, &kitchen)
+            .iter()
+            .any(|(_, c)| c == "leaveSession"));
+        // Nothing went to port 1400 to be refused there.
+        assert!(
+            sys.fake.calls_since(seq).is_empty(),
+            "{}",
+            sys.fake.format_log()
+        );
+        assert!(!sys.services.route.is_held());
+    })
+    .await;
+}

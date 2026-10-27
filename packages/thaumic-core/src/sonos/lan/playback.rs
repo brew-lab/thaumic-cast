@@ -32,6 +32,11 @@
 //! - **Stop** ends the queue first, so a speaker that asks again gets nothing,
 //!   then pauses and leaves the session. The HTTP side is closed before
 //!   this, as for every PCM stop.
+//! - **Authentication switched on** mid-cast refuses every command, but
+//!   closing the HTTP side still silences the room (it plays out what it
+//!   holds and pauses). A stop then forgets the cast, and the session is left
+//!   again every [`LEAVE_RETRY_EVERY`] until the speaker lets it go, as it
+//!   does once Authentication is off.
 //! - **A takeover** is any eviction of a live session we did not cause:
 //!   another app's session, the Sonos app, or the TV input. Its reason cannot
 //!   tell it from our own leave, so a session is ours to end only through
@@ -81,6 +86,25 @@ const END_TOLERANCE_MS: u64 = 2_000;
 /// A status read this recently is reused by the event pump instead of
 /// asking again.
 pub const STATUS_FRESH_FOR: Duration = Duration::from_millis(1_500);
+
+/// How often a session the speaker refused to leave is left again.
+pub const LEAVE_RETRY_EVERY: Duration = Duration::from_secs(15);
+
+/// How long a refused leave is tried again before it is given up.
+const LEAVE_RETRY_FOR: Duration = Duration::from_secs(20 * 60);
+
+/// A session ended while the speaker refused to leave it.
+#[derive(Debug, Clone)]
+pub struct Unleft {
+    /// The coordinator it is on.
+    pub ip: String,
+    /// The session.
+    pub session_id: String,
+    /// When it was ended.
+    pub since: Instant,
+    /// When it was last tried.
+    pub tried: Instant,
+}
 
 /// A resume this soon after a load is the speaker still starting it, and
 /// loading again would only restart it.
@@ -555,9 +579,52 @@ impl LanClient {
             .await
         {
             log::warn!("[Lan] {ip}: leaveSession at stop: {e}");
+            if matches!(e, crate::sonos::soap::SoapError::UpnpDisabled) {
+                let now = Instant::now();
+                self.unleft.lock().push(Unleft {
+                    ip: ip.to_string(),
+                    session_id: cast.session_id.clone(),
+                    since: now,
+                    tried: now,
+                });
+            }
         }
         self.queues.remove(&cast.gen);
         log::info!("[Lan] {ip}: cast of {} ended", cast.stream_id);
+    }
+
+    /// Leaves again each session the speaker refused to leave at its stop,
+    /// once every [`LEAVE_RETRY_EVERY`], until it lets go or
+    /// [`LEAVE_RETRY_FOR`] has passed.
+    pub async fn retry_leaves(&self) {
+        let due: Vec<Unleft> = {
+            let mut unleft = self.unleft.lock();
+            unleft.retain(|u| u.since.elapsed() < LEAVE_RETRY_FOR);
+            unleft
+                .iter_mut()
+                .filter(|u| u.tried.elapsed() >= LEAVE_RETRY_EVERY)
+                .map(|u| {
+                    u.tried = Instant::now();
+                    u.clone()
+                })
+                .collect()
+        };
+        for u in due {
+            match self
+                .on_session(&u.ip, &u.session_id, "leaveSession", json!({}))
+                .await
+            {
+                Err(crate::sonos::soap::SoapError::UpnpDisabled) => {}
+                outcome => {
+                    if let Err(e) = outcome {
+                        log::info!("[Lan] {}: session {} gone: {e}", u.ip, u.session_id);
+                    } else {
+                        log::info!("[Lan] {}: session {} left at last", u.ip, u.session_id);
+                    }
+                    self.unleft.lock().retain(|x| x.session_id != u.session_id);
+                }
+            }
+        }
     }
 
     /// Reads the playback of the group `ip` leads, as the services see it.

@@ -65,6 +65,8 @@
   "castbar_lead_codec_detection_failed": "No codec was found",
   "castbar_lead_rate": "{{rate}} Hz cannot be sent",
   "castbar_lead_flac_needs_upnp": "FLAC needs Sonos UPnP",
+  "cast_lead_moved": "Moved to the speakers' own connection",
+  "cast_moved_text": "Sonos UPnP was switched off, so the cast was started again over the speakers' own connection. You may have heard a short skip; it plays on as before.",
   "auto_stop_source_changed": "{{name}} started playing something else, and it only plays one thing at a time.",
   "auto_stop_stream_ended": "The cast was stopped at the companion's end, not from here.",
   "auto_stop_playback_stopped": "{{name}} stopped playing the cast, for a reason this extension has no word for. Cast again.",

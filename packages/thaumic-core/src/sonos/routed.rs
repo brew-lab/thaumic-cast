@@ -8,12 +8,19 @@
 //! first on every refresh, and moves to port 1443 only when port 1400 refuses
 //! because UPnP is off. While any cast on port 1443 is live, the route holds
 //! there even if UPnP comes back on, so a cast is never split across routes.
+//!
+//! A call about a speaker with a live cast on port 1443 goes there whatever
+//! the route: with Authentication switched on mid-cast the route is lost, and
+//! the cast must still be stopped where it was started. A call refused on
+//! port 1400 because UPnP is off asks for a topology refresh, so a household
+//! whose UPnP is switched off mid-cast moves at once; whoever watches the
+//! route ([`HouseholdRoute::watch`]) then moves its casts across.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use parking_lot::RwLock;
+use tokio::sync::{watch, Notify};
 
 use crate::error::{DiscoveryResult, SoapResult};
 use crate::sonos::discovery::Speaker;
@@ -41,24 +48,46 @@ pub enum Route {
 }
 
 /// The household's route, shared by everything that has to know it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HouseholdRoute {
-    route: RwLock<Route>,
+    route: watch::Sender<Route>,
     /// Casts live on port 1443 (see [`HouseholdRoute::hold`]).
     live: AtomicUsize,
+}
+
+impl Default for HouseholdRoute {
+    fn default() -> Self {
+        Self {
+            route: watch::Sender::new(Route::default()),
+            live: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl HouseholdRoute {
     /// The route now.
     #[must_use]
     pub fn get(&self) -> Route {
-        *self.route.read()
+        *self.route.borrow()
+    }
+
+    /// Follows the route as it changes.
+    #[must_use]
+    pub fn watch(&self) -> watch::Receiver<Route> {
+        self.route.subscribe()
     }
 
     /// Whether the household is controlled over port 1443, so has no GENA.
     #[must_use]
     pub fn is_lan(&self) -> bool {
         self.get() == Route::Lan
+    }
+
+    /// Whether GENA can work: only on UPnP. Off it (on port 1443, or with
+    /// no route at all) every subscription would be refused.
+    #[must_use]
+    pub fn has_gena(&self) -> bool {
+        self.get() == Route::Upnp
     }
 
     /// Holds the route on port 1443 for as long as the returned guard
@@ -79,7 +108,7 @@ impl HouseholdRoute {
     /// sets it ([`RoutedClient::refresh_zone_groups`]); tests set it to
     /// stand in for one.
     pub(crate) fn set(&self, route: Route) -> Route {
-        std::mem::replace(&mut *self.route.write(), route)
+        self.route.send_replace(route)
     }
 }
 
@@ -99,6 +128,8 @@ pub struct RoutedClient {
     upnp: Arc<dyn SonosClient>,
     lan: Arc<LanClient>,
     route: Arc<HouseholdRoute>,
+    /// Asks the topology monitor for a refresh.
+    refresh: Option<Arc<Notify>>,
 }
 
 impl RoutedClient {
@@ -109,7 +140,37 @@ impl RoutedClient {
         lan: Arc<LanClient>,
         route: Arc<HouseholdRoute>,
     ) -> Self {
-        Self { upnp, lan, route }
+        Self {
+            upnp,
+            lan,
+            route,
+            refresh: None,
+        }
+    }
+
+    /// Asks for a topology refresh through `refresh` whenever port 1400
+    /// refuses a call because UPnP is off.
+    #[must_use]
+    pub fn with_refresh(mut self, refresh: Arc<Notify>) -> Self {
+        self.refresh = Some(refresh);
+        self
+    }
+
+    /// Whether a call about the speaker at `ip` goes to port 1443: the
+    /// household is there, or a cast on `ip` was started there.
+    fn on_lan(&self, ip: &str) -> bool {
+        self.route.is_lan() || self.lan.has_cast(ip)
+    }
+
+    /// Notes a call's outcome on port 1400: a refusal because UPnP is off
+    /// asks for a refresh, which finds the household on port 1443.
+    fn noted<T>(&self, result: SoapResult<T>) -> SoapResult<T> {
+        if matches!(result, Err(SoapError::UpnpDisabled)) {
+            if let Some(refresh) = &self.refresh {
+                refresh.notify_one();
+            }
+        }
+        result
     }
 
     /// The household's route.
@@ -200,14 +261,14 @@ impl SonosDiscovery for RoutedClient {
     }
 }
 
-/// Sends a call to port 1443 while the household is there, and to UPnP
-/// otherwise.
+/// Sends a call about the speaker at its first argument to port 1443 when
+/// it goes there ([`RoutedClient::on_lan`]), and to UPnP otherwise.
 macro_rules! routed {
-    ($self:ident.$method:ident($($arg:expr),*)) => {
-        if $self.route.is_lan() {
-            $self.lan.$method($($arg),*).await
+    ($self:ident.$method:ident($ip:expr $(, $arg:expr)*)) => {
+        if $self.on_lan($ip) {
+            $self.lan.$method($ip $(, $arg)*).await
         } else {
-            $self.upnp.$method($($arg),*).await
+            $self.noted($self.upnp.$method($ip $(, $arg)*).await)
         }
     };
 }
@@ -239,6 +300,11 @@ impl SonosPlayback for RoutedClient {
     }
 
     async fn switch_to_queue(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        // Off UPnP it follows a stop that already forgot the cast, and port
+        // 1400 would only refuse it.
+        if self.route.get() != Route::Upnp {
+            return self.lan.switch_to_queue(ip, coordinator_uuid).await;
+        }
         routed!(self.switch_to_queue(ip, coordinator_uuid))
     }
 

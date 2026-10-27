@@ -33,7 +33,8 @@ use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
 use crate::sonos::utils::SONOS_PORT;
 use crate::sonos::{
-    HouseholdRoute, RoutedClient, SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient,
+    HouseholdRoute, Route, RoutedClient, SonosClient, SonosClientImpl, SonosPlayback,
+    SonosTopologyClient,
 };
 use crate::state::{Config, SonosState};
 use crate::streaming_runtime::StreamingRuntime;
@@ -276,6 +277,11 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     // The Sonos client (implements multiple traits): each call goes to UPnP,
     // or to the local Control API on port 1443 while the household has UPnP
     // off. The route is shared with everything that must know it.
+    // Topology refresh notifier — shared between StreamCoordinator, GenaEventProcessor,
+    // TopologyMonitor and the Sonos client. Any party can signal it to trigger an
+    // immediate topology fetch.
+    let refresh_notify = Arc::new(tokio::sync::Notify::new());
+
     let route = Arc::new(HouseholdRoute::default());
     let cloud_queues = Arc::new(CloudQueues::default());
     let lan_client = Arc::new(LanClient::with_casting(
@@ -283,14 +289,17 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         Arc::clone(&cloud_queues),
         Arc::clone(&route),
     ));
-    let sonos_impl = Arc::new(RoutedClient::new(
-        Arc::new(SonosClientImpl::with_speaker_port(
-            http_client.clone(),
-            speaker_port,
-        )),
-        Arc::clone(&lan_client),
-        Arc::clone(&route),
-    ));
+    let sonos_impl = Arc::new(
+        RoutedClient::new(
+            Arc::new(SonosClientImpl::with_speaker_port(
+                http_client.clone(),
+                speaker_port,
+            )),
+            Arc::clone(&lan_client),
+            Arc::clone(&route),
+        )
+        .with_refresh(Arc::clone(&refresh_notify)),
+    );
 
     // mDNS advertisement slot, shared with the API layer and the topology monitor
     let mdns_advertiser = advertiser_handle();
@@ -305,10 +314,6 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     let (gena_manager, gena_event_rx) =
         GenaSubscriptionManager::with_speaker_port(http_client.clone(), speaker_port);
     let gena_manager = Arc::new(gena_manager);
-
-    // Topology refresh notifier — shared between StreamCoordinator, GenaEventProcessor,
-    // and TopologyMonitor. Any party can signal it to trigger an immediate topology fetch.
-    let refresh_notify = Arc::new(tokio::sync::Notify::new());
 
     // Create subscription arbiter (shared between StreamCoordinator and TopologyMonitor)
     let arbiter = Arc::new(SubscriptionArbiter::with_route(
@@ -339,6 +344,28 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     stream_coordinator.set_volume_source(Arc::clone(&sonos_impl) as Arc<dyn SonosVolumeControl>);
     stream_coordinator.set_control_runtime(runtime_handle);
     let stream_coordinator = Arc::new(stream_coordinator);
+
+    // A household whose UPnP is switched off mid-cast moves to port 1443 at
+    // the next refresh; its casts are started again there.
+    {
+        let mut changes = route.watch();
+        let coordinator = Arc::clone(&stream_coordinator);
+        let cancel = cancel_token.clone();
+        spawner.spawn(async move {
+            let mut was = *changes.borrow_and_update();
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    changed = changes.changed() => if changed.is_err() { break },
+                }
+                let now = *changes.borrow_and_update();
+                if was == Route::Upnp && now == Route::Lan {
+                    coordinator.rehome_casts().await;
+                }
+                was = now;
+            }
+        });
+    }
 
     // Wire up latency monitor with its dependencies
     let speaker_monitor = Arc::new(SpeakerMonitor::new(

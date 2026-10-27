@@ -79,6 +79,8 @@ export interface NoticeInputs {
   missing: readonly { speakerIp: string; name: string }[];
   /** The undismissed ingest-gaps reports. */
   gaps: readonly NoticeGaps[];
+  /** The casts moved to the speakers' local connection, undismissed. */
+  moved: readonly { streamId: string }[];
   /** The undismissed capture-health notice, on the tab whose cast drops frames. */
   capture: { tabId: number; key: string; hasAction: boolean } | null;
   /** The old companion warning, when it is shown (not dismissed for this build). */
@@ -129,7 +131,8 @@ export interface SlotPlan {
     | { kind: 'speaker'; speakerIp: string }
     | { kind: 'missing'; speakerIp: string }
     | { kind: 'capture' }
-    | { kind: 'gaps'; streamId: string };
+    | { kind: 'gaps'; streamId: string }
+    | { kind: 'moved'; streamId: string };
   /** Every slot item is a warning. */
   tone: 'warning';
   /** The lead. */
@@ -408,6 +411,20 @@ export function placeNotices(inputs: NoticeInputs): PopupNotices {
                   label: { key: 'ingest_gaps_action_open_settings' },
                 }
               : undefined,
+          },
+        });
+      }
+      // The cast moved to the speakers' own connection, with a short skip.
+      if (inputs.moved.some((m) => m.streamId === cast.streamId)) {
+        ranked.push({
+          rank: 5,
+          order: 0,
+          item: {
+            id: `moved:${cast.streamId}`,
+            source: { kind: 'moved', streamId: cast.streamId },
+            tone: 'warning',
+            lead: { key: 'cast_lead_moved' },
+            text: { key: 'cast_moved_text' },
           },
         });
       }

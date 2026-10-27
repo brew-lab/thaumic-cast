@@ -887,7 +887,7 @@ fn session_for_connection(conn: &ConnectionGuard, session: &PlaybackSession) -> 
 /// way out [`redact_foreign_streams`] replaces another client's stream id with
 /// the same opaque alias `INITIAL_STATE` used for it, and blanks the URL.
 ///
-/// `PlaybackStopFailed`, `IngestGaps`, the two latency events and
+/// `PlaybackStopFailed`, `IngestGaps`, `CastMoved`, the two latency events and
 /// `SpeakerHealth` are gated on the id still being *live and someone else's*.
 /// Non-owners have no use for them (the extension resolves them through its
 /// own session table and returns early for ids that are not its own), and the
@@ -910,7 +910,8 @@ fn event_is_visible_to(conn: &ConnectionGuard, event: &BroadcastEvent) -> bool {
         BroadcastEvent::Stream(StreamEvent::CompanionAudioChanged { .. }) => true,
         BroadcastEvent::Stream(
             StreamEvent::PlaybackStopFailed { stream_id, .. }
-            | StreamEvent::IngestGaps { stream_id, .. },
+            | StreamEvent::IngestGaps { stream_id, .. }
+            | StreamEvent::CastMoved { stream_id, .. },
         )
         | BroadcastEvent::Latency(
             LatencyEvent::Updated { stream_id, .. } | LatencyEvent::Stale { stream_id, .. },
@@ -1025,6 +1026,7 @@ fn redact_foreign_streams(conn: &ConnectionGuard, event: &mut BroadcastEvent) {
             StreamEvent::Created { .. }
             | StreamEvent::PlaybackStopFailed { .. }
             | StreamEvent::IngestGaps { .. }
+            | StreamEvent::CastMoved { .. }
             | StreamEvent::CompanionAudioChanged { .. },
         )
         | BroadcastEvent::Network(_)

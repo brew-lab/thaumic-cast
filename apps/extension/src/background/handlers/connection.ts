@@ -44,6 +44,7 @@ import {
   speakerHealthBroadcast,
 } from '../speaker-health-state';
 import { clearAllIngestGaps, ingestGapsBroadcast } from '../ingest-gaps-state';
+import { castMovedBroadcast, clearAllCastMoved } from '../cast-moved-state';
 
 const log = createLogger('Background');
 
@@ -184,6 +185,9 @@ function forgetSpeakerReadings(): void {
   }
   if (clearAllIngestGaps()) {
     notifyPopup(ingestGapsBroadcast());
+  }
+  if (clearAllCastMoved()) {
+    notifyPopup(castMovedBroadcast());
   }
 }
 

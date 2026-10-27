@@ -735,6 +735,30 @@ export const GetIngestGapsMessageSchema = z.object({
 export type GetIngestGapsMessage = z.infer<typeof GetIngestGapsMessageSchema>;
 
 /**
+ * When the companion last moved one of this extension's casts to the
+ * speakers' local connection (Sonos UPnP switched off mid-cast), as kept by
+ * the background. `receivedAt` is this browser's clock when it arrived, which
+ * ages the notice out and keys its dismissal.
+ */
+export const CastMovedEntrySchema = z.object({
+  receivedAt: z.number(),
+});
+export type CastMovedEntry = z.infer<typeof CastMovedEntrySchema>;
+
+/** Cast-moved broadcast (background → popup), keyed by stream ID. */
+export const CastMovedChangedMessageSchema = z.object({
+  type: z.literal('CAST_MOVED_CHANGED'),
+  streams: z.record(z.string(), CastMovedEntrySchema),
+});
+export type CastMovedChangedMessage = z.infer<typeof CastMovedChangedMessageSchema>;
+
+/** Popup → background query for the current cast-moved snapshot. */
+export const GetCastMovedMessageSchema = z.object({
+  type: z.literal('GET_CAST_MOVED'),
+});
+export type GetCastMovedMessage = z.infer<typeof GetCastMovedMessageSchema>;
+
+/**
  * The companion's speaker-side audio settings changed (background → popup),
  * from a `companionAudioChanged` event or a fresh `INITIAL_STATE`. Null when
  * the companion does not report them.

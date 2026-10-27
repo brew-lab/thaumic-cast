@@ -58,6 +58,9 @@ pub struct LanClient {
     pub(super) route: Arc<HouseholdRoute>,
     /// Live casts, by the IP of the coordinator they play on.
     pub(super) casts: Mutex<HashMap<String, Cast>>,
+    /// Sessions ended while the speaker refused to leave them (Authentication
+    /// on), left again later.
+    pub(super) unleft: Mutex<Vec<super::playback::Unleft>>,
 }
 
 impl LanClient {
@@ -85,6 +88,7 @@ impl LanClient {
             queues,
             route,
             casts: Mutex::new(HashMap::new()),
+            unleft: Mutex::new(Vec::new()),
         }
     }
 
@@ -101,9 +105,14 @@ impl LanClient {
     }
 
     /// Forgets the household id, so the next read learns it again: for a
-    /// route that stopped working, whose household may have changed.
+    /// route that stopped working, whose household may have changed. Kept
+    /// while a cast is live: its commands still need it (Authentication on
+    /// refuses them, but a stop still tries), and its household cannot have
+    /// changed under it.
     pub fn forget_household(&self) {
-        *self.household_id.write() = None;
+        if self.casts.lock().is_empty() {
+            *self.household_id.write() = None;
+        }
     }
 
     /// The household id, for a command.

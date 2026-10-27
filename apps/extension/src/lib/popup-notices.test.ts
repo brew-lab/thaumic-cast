@@ -32,6 +32,7 @@ function inputs(over: Partial<NoticeInputs> = {}): NoticeInputs {
     speakers: [],
     missing: [],
     gaps: [],
+    moved: [],
     capture: null,
     oldCompanion: null,
     noReplyDismissed: false,
@@ -309,6 +310,47 @@ describe('placeNotices: a cast slot (order, rule 5, the quiet tier)', () => {
         source: { kind: 'gaps', streamId: 's7' },
       },
     ]);
+  });
+
+  it("should say a moved cast moved, on that cast only, after the cast's other notices", () => {
+    const gaps = [
+      { streamId: 's7', hasRemedy: true, line: { key: 'ingest_gaps_message_desktop' } },
+    ];
+    const placed = placeNotices(
+      inputs({
+        casts: [
+          { tabId: 7, streamId: 's7', speakerIps: [KITCHEN] },
+          { tabId: 8, streamId: 's8', speakerIps: [OFFICE] },
+        ],
+        gaps,
+        moved: [{ streamId: 's7' }],
+      }),
+    );
+    expect(placed.slots[7].map((item) => item.lead.key)).toEqual([
+      'cast_lead_gaps',
+      'cast_lead_moved',
+    ]);
+    expect(placed.slots[7][1]).toMatchObject({
+      id: 'moved:s7',
+      source: { kind: 'moved', streamId: 's7' },
+      text: { key: 'cast_moved_text' },
+    });
+    expect(placed.slots[8]).toEqual([]);
+
+    // Not connected, the casts have stopped: nothing is said about them.
+    const offline = placeNotices(
+      inputs({
+        connection: {
+          phase: 'error',
+          error: 'error_desktop_not_found',
+          canRetry: true,
+          networkHealth: 'ok',
+          networkHealthReason: null,
+        },
+        moved: [{ streamId: 's7' }],
+      }),
+    );
+    expect(offline.slots[7]).toEqual([]);
   });
 
   it('should show nearly cut out and far drift nowhere, and give them no Badge', () => {

@@ -141,6 +141,18 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     suggestedSmoothingMs: z.number().int().positive().optional(),
     timestamp: z.number(),
   }),
+  z.object({
+    /**
+     * The household's Sonos UPnP was switched off while the stream played, so
+     * the companion started the cast again over the speakers' local connection
+     * (port 1443), from the live edge: listeners may have heard a short skip.
+     * Sent once per stream and move, only to the client that owns it.
+     */
+    type: z.literal('castMoved'),
+    /** ID of the stream whose cast moved */
+    streamId: z.string(),
+    timestamp: z.number(),
+  }),
   CompanionAudioSchema.extend({
     /**
      * The companion's speaker-side audio settings changed. Sent to every

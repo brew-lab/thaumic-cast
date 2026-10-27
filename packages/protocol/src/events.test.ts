@@ -221,6 +221,12 @@ describe('StreamEventSchema', () => {
     expect(parsed.type === 'ingestGaps' && parsed.suggestedSmoothingMs).toBeUndefined();
   });
 
+  it('should parse castMoved exactly as thaumic-core serializes it', () => {
+    const event = { type: 'castMoved', streamId: 's1', timestamp: NOW } satisfies StreamEvent;
+    expect(StreamEventSchema.parse(event)).toEqual(event);
+    expect(StreamEventSchema.safeParse({ type: 'castMoved', timestamp: NOW }).success).toBe(false);
+  });
+
   it('should parse companionAudioChanged with its settings flattened in', () => {
     const event = {
       type: 'companionAudioChanged',

@@ -165,6 +165,17 @@ pub enum StreamEvent {
         /// Unix timestamp in milliseconds.
         timestamp: u64,
     },
+    /// The household's Sonos UPnP was switched off while this stream played,
+    /// so the cast was moved to the speakers' local Control API (port 1443)
+    /// and started again there at the live edge: listeners may have heard a
+    /// short skip. Sent once per stream and move, to the client that owns it.
+    CastMoved {
+        /// The stream that was moved.
+        #[serde(rename = "streamId")]
+        stream_id: String,
+        /// Unix timestamp in milliseconds.
+        timestamp: u64,
+    },
     /// The companion's speaker-side audio settings changed. Sent to every
     /// client, so what they show about the speaker head start and the
     /// wording of their speaker notices never goes stale. Each setting
@@ -768,6 +779,20 @@ mod tests {
         assert_eq!(wire(SpeakerHealthState::Paused), "\"paused\"");
         assert_eq!(wire(SpeakerHealthState::Stale), "\"stale\"");
         assert_eq!(wire(SpeakerHealthState::Dormant), "\"dormant\"");
+    }
+
+    /// A moved cast rides the stream category; its shape is protocol, shared
+    /// with the extension.
+    #[test]
+    fn cast_moved_wire_shape() {
+        let moved = BroadcastEvent::Stream(StreamEvent::CastMoved {
+            stream_id: "s".into(),
+            timestamp: 1,
+        });
+        assert_eq!(
+            serde_json::to_value(&moved).unwrap(),
+            serde_json::json!({ "category": "stream", "type": "castMoved", "streamId": "s", "timestamp": 1 })
+        );
     }
 
     /// The ingest-gap and companion-audio events ride the stream category;
