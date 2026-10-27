@@ -68,7 +68,7 @@ are never touched.
 
 ### Manual (tarball)
 
-Each [release](../../../../releases/latest) ships `thaumic-server-vX.Y.Z-linux-x64.tar.gz` and `-linux-arm64.tar.gz`
+Each release (all files are on the [download page](https://www.thaumiccast.com/download/#all-files)) ships `thaumic-server-vX.Y.Z-linux-x64.tar.gz` and `-linux-arm64.tar.gz`
 (plus `.sha256`) containing the binary, this README, `config.example.yaml`, the systemd unit with its sandbox drop-in,
 and `install.sh`. The binary needs glibc 2.35 or newer (Debian 12, Ubuntu 22.04 and later) and nothing else.
 

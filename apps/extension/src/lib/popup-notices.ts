@@ -97,9 +97,9 @@ export interface BannerPlan {
   lead: Words;
   /** The shipped sentence. */
   text: Words;
-  /** Its action: try the connection again, or open the releases page. */
+  /** Its action: try the connection again, or open the download page. */
   action?: { kind: 'retry' | 'update'; label: Words };
-  /** Nothing answered: a link to the releases page, for whoever has no companion yet. */
+  /** Nothing answered: a link to the download page, for whoever has no companion yet. */
   link?: { kind: 'download'; label: Words };
   /** Only the old companion's warning can be dismissed (P-x). */
   dismissible: boolean;

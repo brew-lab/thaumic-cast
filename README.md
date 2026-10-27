@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="../../releases/latest">Download</a> · <a href="https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm">Browser extension</a> · <a href="#quick-start">Quick start</a> · <a href="#development">Development</a>
+  <a href="https://www.thaumiccast.com/download/">Download</a> · <a href="https://www.thaumiccast.com/docs/">Docs</a> · <a href="https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm">Browser extension</a> · <a href="#quick-start">Quick start</a> · <a href="#development">Development</a>
 </p>
 
 <p align="center">
@@ -27,10 +27,10 @@ where you press Cast. The other piece finds the speakers and serves them the aud
 Cast Server, which is the same machinery with the window taken off, for the sort of computer that is kept in a cupboard
 and visited twice a year.[^1]
 
-1. Download and run the **desktop app** from the [latest release](../../releases/latest). If the computer in question
+1. Download and run the **desktop app** from the [download page](https://www.thaumiccast.com/download/). If the computer in question
    has no screen to show it on, run the server instead: see [`apps/server/README.md`](apps/server/README.md).
 2. Install the **extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm). To load it yourself, download
-   `thaumic-cast-extension-vX.Y.Z.zip` from the [latest release](../../releases/latest), unzip it, then load it via
+   `thaumic-cast-extension-vX.Y.Z.zip` from the [download page](https://www.thaumiccast.com/download/#step-ext), unzip it, then load it via
    `chrome://extensions` → Developer mode → **Load unpacked**.
 3. Open a tab that is playing something, click the extension, choose a room or several, and press **Cast**.
 
@@ -41,13 +41,13 @@ and visited twice a year.[^1]
 
 ## Downloads
 
-- Desktop app (Windows/macOS/Linux): [Latest release](../../releases/latest)
-- Browser extension: [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm), or the zip from the [latest release](../../releases/latest) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
-- Thaumic Cast Server (Linux x64/arm64): [Latest release](../../releases/latest) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md)
+- Desktop app (Windows/macOS/Linux): [Download page](https://www.thaumiccast.com/download/)
+- Browser extension: [Chrome Web Store](https://chromewebstore.google.com/detail/thaumic-cast/hpemmkbecklfacogdidaoncjmfadgedm), or the zip from the [download page](https://www.thaumiccast.com/download/#step-ext) (look for `thaumic-cast-extension-vX.Y.Z.zip`)
+- Thaumic Cast Server (Linux x64/arm64): [Download page](https://www.thaumiccast.com/download/#all-files) (look for `thaumic-server-vX.Y.Z-linux-*.tar.gz`), setup in [`apps/server/README.md`](apps/server/README.md) or the [server docs](https://www.thaumiccast.com/docs/run-thaumic-cast-server/)
 
 > [!NOTE]
 > Desktop app releases are not signed, and macOS Gatekeeper and Windows SmartScreen will each say so in their own
-> way. Check that your copy came from the [latest release](../../releases/latest), then let it through.
+> way. Check that your copy came from the [download page](https://www.thaumiccast.com/download/), then let it through.
 
 ## What it does
 

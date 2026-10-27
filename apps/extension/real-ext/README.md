@@ -49,7 +49,7 @@ Selects' edge), "Enter the address" with nothing saved (the warning Notice keeps
 its glyph inside it, the section's gap round it), nothing moving when a setting saves, the Toast's
 bar (0 tall without a Toast, sticky with one, never over focus), Reset all settings (it asks
 first in the Dialog, Cancel changes nothing, Reset puts the defaults back and keeps the companion's
-address), About's Check for updates (unpacked, it opens the releases page; a stand-in store install, its
+address), About's Check for updates (unpacked, it opens the download page; a stand-in store install, its
 manifest given an `update_url` and `requestUpdateCheck` answering from a list, says each answer
 and offers Restart, never pressed), About's Show again (the onboarding reset and nothing else, the
 popup opened on its first step and Skip marking it skipped again; with `openPopup` refused, the

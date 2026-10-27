@@ -1,6 +1,6 @@
 [Unit]
 Description=Thaumic Cast Server
-Documentation=https://github.com/brew-lab/thaumic-cast
+Documentation=https://www.thaumiccast.com/docs/run-thaumic-cast-server/
 After=network-online.target
 Wants=network-online.target
 

@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useCallback, useEffect } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Button, DescriptionList, SettingsSection, type DescriptionRow } from '@thaumic-cast/ui';
-import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { DOWNLOAD_URL } from '@thaumic-cast/shared';
 import { companionTypeLabelKey, hasVersionMismatch } from '../../lib/versionCheck';
 import type { ConnectionStatus } from '../../popup/hooks/useConnectionStatus';
 import { UpdatesRow } from './UpdatesRow';
@@ -28,7 +28,7 @@ export function AboutSection({ connection }: { connection: ConnectionStatus }): 
   const version = chrome.runtime.getManifest().version;
 
   const handleOpenReleases = useCallback(() => {
-    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
+    chrome.tabs.create({ url: DOWNLOAD_URL });
   }, []);
 
   // Opened from the popup's marked Settings (`#about`): the card is drawn after the settings

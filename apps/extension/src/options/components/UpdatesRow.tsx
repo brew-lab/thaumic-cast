@@ -2,7 +2,7 @@ import type { JSX } from 'preact';
 import { useCallback, useMemo, useState } from 'preact/hooks';
 import { useTranslation } from 'react-i18next';
 import { Button, SettingsRow, useAnnouncer } from '@thaumic-cast/ui';
-import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { DOWNLOAD_URL } from '@thaumic-cast/shared';
 import {
   checkForUpdate,
   updateChannel,
@@ -15,7 +15,7 @@ import { useActiveCasts } from '../../popup/hooks/useActiveCasts';
  * About's "Check for updates" row (DESIGN.md §11 call 99): one action row whose Button
  * suits how this copy updates. A store install asks the store now; a version it finds turns
  * the Button into "Restart the extension", which waits while a cast runs. A copy loaded by
- * hand opens the releases page, as the desktop app's Check for updates does.
+ * hand opens the download page, as the desktop app's Check for updates does.
  * @returns The row
  */
 export function UpdatesRow(): JSX.Element {
@@ -31,7 +31,7 @@ export function UpdatesRow(): JSX.Element {
 function ManualUpdatesRow(): JSX.Element {
   const { t } = useTranslation();
   const openReleases = useCallback(() => {
-    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
+    chrome.tabs.create({ url: DOWNLOAD_URL });
   }, []);
   return (
     <SettingsRow

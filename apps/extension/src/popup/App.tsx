@@ -7,7 +7,7 @@ import {
   roomAvailability,
   roomLevel,
 } from '@thaumic-cast/protocol';
-import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { DOWNLOAD_URL } from '@thaumic-cast/shared';
 import {
   Badge,
   CastBar,
@@ -362,7 +362,7 @@ function MainPopup(): JSX.Element {
   const updateAvailable = hasMismatch && connected;
   const openAbout = useCallback(() => openOptionsAt('about'), []);
   const openReleases = useCallback(() => {
-    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
+    chrome.tabs.create({ url: DOWNLOAD_URL });
   }, []);
 
   /**
@@ -987,7 +987,7 @@ function MainPopup(): JSX.Element {
       link={
         placed.banner.link && {
           label: sayWords(placed.banner.link.label),
-          href: GITHUB_RELEASES_URL,
+          href: DOWNLOAD_URL,
         }
       }
       onDismiss={placed.banner.dismissible ? dismissMismatchWarning : undefined}

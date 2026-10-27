@@ -9,7 +9,7 @@ import {
   Notice,
 } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
-import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { DOWNLOAD_URL } from '@thaumic-cast/shared';
 import { useConnectionStatus } from '../../hooks/useConnectionStatus';
 import { connectToServer, isServerUrl, serverAddressResult } from '../../../lib/serverTest';
 
@@ -46,8 +46,8 @@ export function DesktopConnectionStep({
   }, [connected, onConnectionChange]);
 
   const handleDownload = () => {
-    // Open releases page in new tab
-    chrome.tabs.create({ url: GITHUB_RELEASES_URL });
+    // Open the download page in new tab
+    chrome.tabs.create({ url: DOWNLOAD_URL });
   };
 
   /**
