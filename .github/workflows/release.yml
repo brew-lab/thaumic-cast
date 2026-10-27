@@ -231,3 +231,28 @@ jobs:
               release_id: ${{ needs.create-release.outputs.release_id }},
               draft: false
             })
+
+  update-site:
+    name: Tell the website about the release
+    needs: [create-release, publish-release]
+    runs-on: ubuntu-latest
+    # The site also checks for a new release every 3 hours, so a failure here only delays it.
+    continue-on-error: true
+    permissions: {}
+    steps:
+      - name: Get a token for the website repo
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: thaumic-cast-site
+
+      - name: Ask the website to snapshot the release now
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: v${{ needs.create-release.outputs.version }}
+        run: |
+          gh api repos/${{ github.repository_owner }}/thaumic-cast-site/dispatches \
+            -f event_type=release-published -f "client_payload[tag]=$TAG"
