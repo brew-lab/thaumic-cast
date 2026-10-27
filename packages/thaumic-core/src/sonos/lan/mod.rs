@@ -11,11 +11,15 @@
 //!   topology from `getGroups`, volume and mute
 //! - `volume` - the volume namespaces, and their events as GENA's
 //! - `events` - the pump that hands socket events to GENA's channel
+//! - `queue` - the cloud queues served to speakers that cast over port 1443
+//! - `playback` - casts: sessions, loads, status and stop
 
 pub mod client;
 pub mod events;
 pub mod hub;
+pub mod playback;
 pub mod protocol;
+pub mod queue;
 pub mod socket;
 pub mod tls;
 pub mod volume;

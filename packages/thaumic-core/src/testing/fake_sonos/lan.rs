@@ -20,6 +20,9 @@
 //! * `subscribe` to either namespace pushes the current level at once and
 //!   every change after it to that socket, as hardware does; a write that
 //!   changes nothing pushes nothing.
+//! * Casts (`playback:1`, `playbackSession:1`) are modelled in `lan_cast`.
+//! * A speaker's sockets can be dropped from its side
+//!   ([`FakeSonosSystem::drop_lan_sockets`]).
 //! * With Authentication on ([`FakeSonosSystem::set_lan_authentication`])
 //!   every command is refused with `ERROR_NO_PERMISSION`, the reply recorded
 //!   from hardware; the description still answers.
@@ -39,12 +42,14 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::{SinkExt, StreamExt};
+use parking_lot::Mutex;
 use serde_json::{json, Map, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::sonos::lan::protocol::{Frame, API_KEY, SUBPROTOCOL, WS_PATH};
 use crate::sonos::lan::volume::{GROUP_VOLUME, PLAYER_VOLUME};
 
+use super::lan_cast::{self, PLAYBACK, SESSION};
 use super::server::Ctx;
 use super::{Failure, FakeSonosSystem, FakeSpeaker};
 
@@ -69,11 +74,31 @@ pub(crate) struct LanCall {
     pub body: Value,
 }
 
-/// A socket subscribed to one namespace for one player or group.
+/// A socket subscribed to one namespace for one player, group or session.
 pub(super) struct Subscriber {
-    namespace: String,
-    target: String,
-    out: mpsc::UnboundedSender<String>,
+    pub namespace: String,
+    pub target: String,
+    pub out: mpsc::UnboundedSender<String>,
+}
+
+/// One playback session on a group.
+#[derive(Debug, Clone)]
+pub(super) struct LanSession {
+    pub id: String,
+    pub app_id: String,
+}
+
+/// The household's local Control API state.
+#[derive(Default)]
+pub(super) struct LanState {
+    /// Sockets subscribed to events.
+    pub subscribers: Mutex<Vec<Subscriber>>,
+    /// Each open socket's speaker, and how to drop it.
+    pub sockets: Mutex<Vec<(String, Arc<Notify>)>>,
+    /// The playback session on each group, by group id.
+    pub sessions: Mutex<std::collections::HashMap<String, LanSession>>,
+    /// Session ids handed out so far.
+    pub next_session: std::sync::atomic::AtomicUsize,
 }
 
 fn has_key(headers: &HeaderMap) -> bool {
@@ -119,6 +144,14 @@ pub(super) async fn socket(
 /// Answers each command in its own task, so a hang or a delay holds up
 /// nothing else; replies and pushes share one writer.
 async fn serve(ctx: Ctx, socket: WebSocket) {
+    let dropped = Arc::new(Notify::new());
+    if let Some(system) = ctx.system.upgrade() {
+        system
+            .lan
+            .sockets
+            .lock()
+            .push((ctx.speaker.ip.to_string(), Arc::clone(&dropped)));
+    }
     let (mut sink, mut stream) = socket.split();
     let (out, mut outgoing) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -128,7 +161,14 @@ async fn serve(ctx: Ctx, socket: WebSocket) {
             }
         }
     });
-    while let Some(Ok(message)) = stream.next().await {
+    loop {
+        let message = tokio::select! {
+            _ = dropped.notified() => break,
+            message = stream.next() => message,
+        };
+        let Some(Ok(message)) = message else {
+            break;
+        };
         let Message::Text(text) = message else {
             continue;
         };
@@ -143,6 +183,13 @@ async fn serve(ctx: Ctx, socket: WebSocket) {
         tokio::spawn(async move { answer(&system, &speaker, &frame, out).await });
     }
     writer.abort();
+    if let Some(system) = ctx.system.upgrade() {
+        system
+            .lan
+            .sockets
+            .lock()
+            .retain(|(_, d)| !Arc::ptr_eq(d, &dropped));
+    }
 }
 
 /// The player, group or session a frame names.
@@ -156,8 +203,8 @@ fn target_of(frame: &Frame) -> Option<String> {
 
 /// Answers `frame` on `out`.
 async fn answer(
-    system: &FakeSonosSystem,
-    speaker: &FakeSpeaker,
+    system: &Arc<FakeSonosSystem>,
+    speaker: &Arc<FakeSpeaker>,
     frame: &Frame,
     out: mpsc::UnboundedSender<String>,
 ) {
@@ -230,12 +277,18 @@ async fn answer(
                 group_volume(speaker)
             };
             let _ = out.send(event(frame.namespace(), &target, first));
-            system.lan_subscribers.lock().push(Subscriber {
+            system.lan.subscribers.lock().push(Subscriber {
                 namespace: frame.namespace().to_string(),
                 target,
                 out,
             });
             return;
+        }
+        (PLAYBACK | SESSION, _) => {
+            match lan_cast::answer(system, speaker, frame, &command, &target, &out).await {
+                Some(result) => result,
+                None => return,
+            }
         }
         _ => Err(refusal(
             "ERROR_UNSUPPORTED_COMMAND",
@@ -247,7 +300,7 @@ async fn answer(
 
 /// A reply to `frame`: its header with `response` for `command`, then the
 /// body, or the refusal's.
-fn reply(frame: &Frame, command: &str, result: Result<Value, Value>) -> String {
+pub(super) fn reply(frame: &Frame, command: &str, result: Result<Value, Value>) -> String {
     let mut header: Map<String, Value> = frame.header.clone();
     header.remove("command");
     header.insert("response".into(), command.into());
@@ -264,6 +317,18 @@ fn event(namespace: &str, target: &str, body: Value) -> String {
     } else {
         "playerId"
     };
+    event_as(namespace, name, id_field, target, body)
+}
+
+/// An event named `name` in `namespace`, whose header names `target` in
+/// `id_field`.
+pub(super) fn event_as(
+    namespace: &str,
+    name: &str,
+    id_field: &str,
+    target: &str,
+    body: Value,
+) -> String {
     json!([
         {
             "namespace": namespace,
@@ -277,11 +342,11 @@ fn event(namespace: &str, target: &str, body: Value) -> String {
     .to_string()
 }
 
-fn refusal(code: &str, reason: &str) -> Value {
+pub(super) fn refusal(code: &str, reason: &str) -> Value {
     json!({ "_objectType": "globalError", "errorCode": code, "reason": reason })
 }
 
-fn not_here(target: &str) -> Value {
+pub(super) fn not_here(target: &str) -> Value {
     refusal(
         "ERROR_INVALID_OBJECT_ID",
         &format!("{target} is not on this player"),
@@ -289,11 +354,11 @@ fn not_here(target: &str) -> Value {
 }
 
 /// The id of the group `speaker` is in.
-fn group_id(speaker: &FakeSpeaker) -> String {
+pub(super) fn group_id(speaker: &FakeSpeaker) -> String {
     format!("{}:1", speaker.coordinator_uuid())
 }
 
-fn leads(speaker: &FakeSpeaker) -> bool {
+pub(super) fn leads(speaker: &FakeSpeaker) -> bool {
     speaker.coordinator_uuid() == speaker.uuid
 }
 
@@ -364,8 +429,14 @@ impl FakeSonosSystem {
     /// Sends `body` in `namespace` to every socket subscribed to it for
     /// `target`, forgetting sockets that have closed.
     fn push_lan(&self, namespace: &str, target: &str, body: Value) {
-        let text = event(namespace, target, body);
-        self.lan_subscribers.lock().retain(|s| {
+        self.push_lan_text(namespace, target, &event(namespace, target, body));
+    }
+
+    /// Sends `text` to every socket subscribed to `namespace` for `target`,
+    /// forgetting sockets that have closed.
+    pub(super) fn push_lan_text(&self, namespace: &str, target: &str, text: &str) {
+        let text = text.to_string();
+        self.lan.subscribers.lock().retain(|s| {
             if s.namespace != namespace || s.target != target {
                 return !s.out.is_closed();
             }

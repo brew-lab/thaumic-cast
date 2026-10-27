@@ -2,11 +2,23 @@
 //! would have sent and handed to the same channel, so everything downstream
 //! of GENA runs unchanged on port 1443.
 //!
-//! Only while the household is on port 1443: a socket still open after the
-//! household moved back to UPnP says nothing GENA does not.
+//! - **Volume** events are handed on from the source the arbiter names for
+//!   each speaker, while the household is on port 1443: a socket still open
+//!   after it moved back to UPnP says nothing GENA does not.
+//! - **A cast's state** is polled every [`POLL_EVERY`], and reported when it
+//!   changes, as GENA reports a transport change. The speakers' own
+//!   `playbackStatus` pushes can arrive 26-40 s late, so a push only brings
+//!   the next poll forward; it never sets the state itself.
+//! - **A session evicted** that we did not end is a takeover.
+//! - **A socket that drops** under a live cast is reopened (the hub's
+//!   backoff paces it) and the session joined again; one that reopens is
+//!   given its subscriptions again.
 
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
+use parking_lot::Mutex;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
@@ -17,6 +29,12 @@ use crate::runtime::TokioSpawner;
 use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 
+/// How often a live cast's state is read.
+pub const POLL_EVERY: Duration = Duration::from_secs(2);
+
+/// How long to wait between attempts to join a cast again.
+const REJOIN_EVERY: Duration = Duration::from_secs(1);
+
 /// Where the pump hands each event.
 pub type EventSink = Arc<dyn Fn(SonosEvent) + Send + Sync>;
 
@@ -26,9 +44,56 @@ pub fn gena_sink(gena: Arc<GenaSubscriptionManager>) -> EventSink {
     Arc::new(move |event| gena.report(event))
 }
 
-/// Runs the pump until `cancel`: each volume event from the source the
-/// arbiter names for its speaker goes to `sink`, and a socket that reopens
-/// is given its subscriptions again.
+/// Polls the cast on `ip` now and hands on what changed.
+fn poll_now(lan: &Arc<LanClient>, sink: &EventSink, spawner: &TokioSpawner, ip: String) {
+    let (lan, sink) = (Arc::clone(lan), Arc::clone(sink));
+    spawner.spawn(async move {
+        lan.status_stale(&ip);
+        if let Some(event) = lan.poll(&ip).await {
+            sink(event);
+        }
+    });
+}
+
+/// Joins the cast on `ip` again until that works or the cast is over, once
+/// at a time per speaker.
+fn rejoin(
+    lan: &Arc<LanClient>,
+    sink: &EventSink,
+    spawner: &TokioSpawner,
+    rejoining: &Arc<Mutex<HashSet<String>>>,
+    cancel: &CancellationToken,
+    ip: String,
+) {
+    if !rejoining.lock().insert(ip.clone()) {
+        return;
+    }
+    let (lan, sink, rejoining, cancel) = (
+        Arc::clone(lan),
+        Arc::clone(sink),
+        Arc::clone(rejoining),
+        cancel.clone(),
+    );
+    spawner.spawn(async move {
+        while lan.has_cast(&ip) && !cancel.is_cancelled() {
+            match lan.rejoin(&ip).await {
+                Ok(event) => {
+                    if let Some(event) = event {
+                        sink(event);
+                    }
+                    break;
+                }
+                Err(e) => {
+                    log::debug!("[Lan] {ip}: joining the cast again: {e}");
+                    tokio::time::sleep(REJOIN_EVERY).await;
+                }
+            }
+        }
+        rejoining.lock().remove(&ip);
+    });
+}
+
+/// Runs the pump until `cancel`.
 pub fn start(
     lan: Arc<LanClient>,
     arbiter: Arc<SubscriptionArbiter>,
@@ -37,7 +102,26 @@ pub fn start(
     cancel: CancellationToken,
 ) {
     let mut events = lan.hub().subscribe();
-    let resubscriber = spawner.clone();
+    let tasks = spawner.clone();
+    let rejoining = Arc::new(Mutex::new(HashSet::new()));
+    {
+        let (lan, sink, cancel) = (Arc::clone(&lan), Arc::clone(&sink), cancel.clone());
+        spawner.spawn(async move {
+            let mut every = tokio::time::interval(POLL_EVERY);
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    _ = every.tick() => {}
+                }
+                for ip in lan.live_casts() {
+                    if let Some(event) = lan.poll(&ip).await {
+                        sink(event);
+                    }
+                }
+            }
+        });
+    }
     spawner.spawn(async move {
         loop {
             let event = tokio::select! {
@@ -45,19 +129,32 @@ pub fn start(
                 event = events.recv() => event,
             };
             match event {
-                Ok(LanEvent::Frame { ip, frame, .. }) => {
-                    if !arbiter.route().is_lan() {
-                        continue;
+                Ok(LanEvent::Frame { ip, frame, .. }) => match frame.name() {
+                    "playbackStatus" if lan.has_cast(&ip) => {
+                        poll_now(&lan, &sink, &tasks, ip);
                     }
-                    for event in volume_events(&ip, &frame, arbiter.is_in_sync_session(&ip)) {
-                        sink(event);
+                    "sessionError" => {
+                        if let Some(event) = lan.session_error(&ip, &frame) {
+                            sink(event);
+                        }
+                    }
+                    _ if arbiter.route().is_lan() => {
+                        for event in volume_events(&ip, &frame, arbiter.is_in_sync_session(&ip)) {
+                            sink(event);
+                        }
+                    }
+                    _ => {}
+                },
+                Ok(LanEvent::Closed { ip }) => {
+                    lan.socket_closed(&ip);
+                    if lan.has_cast(&ip) {
+                        rejoin(&lan, &sink, &tasks, &rejoining, &cancel, ip);
                     }
                 }
-                Ok(LanEvent::Closed { ip }) => lan.socket_closed(&ip),
                 Ok(LanEvent::Reconnected { ip }) => {
                     lan.socket_closed(&ip);
                     let lan = Arc::clone(&lan);
-                    resubscriber.spawn(async move { lan.ensure_subscriptions().await });
+                    tasks.spawn(async move { lan.ensure_subscriptions().await });
                 }
                 Err(RecvError::Lagged(missed)) => {
                     log::warn!("[Lan] event pump fell behind; {missed} event(s) lost");

@@ -10,6 +10,7 @@ pub(crate) mod harness;
 mod failure_tests;
 mod gena_tests;
 mod household_tests;
+mod lan_cast_tests;
 mod listen_tests;
 mod playback_tests;
 mod queue_tests;

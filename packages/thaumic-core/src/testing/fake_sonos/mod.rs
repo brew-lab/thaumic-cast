@@ -92,10 +92,12 @@ use crate::sonos::services::SonosService;
 use crate::sonos::types::TransportState;
 
 mod lan;
+mod lan_cast;
 mod server;
 mod xml;
 
 pub(crate) use lan::{LanCall, FAKE_HOUSEHOLD_ID};
+pub(crate) use lan_cast::QueueRead;
 
 /// How long [`FakeSonosSystem::wait_for_call`] waits before failing the test.
 const WAIT_FOR_CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -225,9 +227,25 @@ struct SpeakerState {
     output_fixed: bool,
     group_volume: u8,
     group_mute: bool,
+    /// What the local Control API plays, when a cloud queue item is loaded.
+    lan: LanPlay,
     /// Task draining the body of the current stream fetch, if one is open.
     fetch: Option<JoinHandle<()>>,
     fetches: Vec<FetchRecord>,
+}
+
+/// A cloud queue item loaded over the local Control API (see `lan`).
+#[derive(Debug, Clone, Default)]
+pub(super) struct LanPlay {
+    /// The item playing, if one is loaded.
+    pub item_id: Option<String>,
+    /// The item played before it.
+    pub previous_item_id: Option<String>,
+    /// Its declared length.
+    pub duration_ms: Option<u64>,
+    /// The position reported: a fixed 5 s while playing, as RelTime is,
+    /// and the declared length once the item has played out.
+    pub position_ms: u64,
 }
 
 /// One fake speaker: identity plus the state its SOAP surface reads and writes.
@@ -271,6 +289,7 @@ impl FakeSpeaker {
                 output_fixed: false,
                 group_volume: 25,
                 group_mute: false,
+                lan: LanPlay::default(),
                 fetch: None,
                 fetches: Vec::new(),
             }),
@@ -419,6 +438,9 @@ impl FakeSpeaker {
             }
 
             let Some(next) = self.advance_to_queued() else {
+                if let Some(system) = system.upgrade() {
+                    system.lan_item_ended(&self);
+                }
                 return;
             };
             let Some(url) = stream_fetch_url(&next) else {
@@ -639,8 +661,10 @@ pub(crate) struct FakeSonosSystem {
     lan_authentication: AtomicBool,
     /// Every command received on the local Control API, in order.
     lan_calls: Mutex<Vec<LanCall>>,
-    /// Sockets subscribed to events on the local Control API.
-    lan_subscribers: Mutex<Vec<lan::Subscriber>>,
+    /// The local Control API's sockets, subscriptions and sessions.
+    lan: lan::LanState,
+    /// Every cloud queue request the speakers made.
+    queue_reads: Mutex<Vec<QueueRead>>,
     fetch_observer: Mutex<Option<FetchObserver>>,
     /// Satellite UUID to the UUID of the primary it is bonded to.
     satellites: Mutex<HashMap<String, String>>,
@@ -746,7 +770,8 @@ impl FakeSonosSystem {
             upnp_enabled: AtomicBool::new(true),
             lan_authentication: AtomicBool::new(false),
             lan_calls: Mutex::new(Vec::new()),
-            lan_subscribers: Mutex::new(Vec::new()),
+            lan: lan::LanState::default(),
+            queue_reads: Mutex::new(Vec::new()),
             fetch_observer: Mutex::new(None),
             satellites: Mutex::new(HashMap::new()),
             joins: Mutex::new(Vec::new()),

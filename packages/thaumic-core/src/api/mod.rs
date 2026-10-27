@@ -22,6 +22,7 @@ use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::SonosClient;
 use crate::state::{Config, SonosState};
 
+mod cloud_queue;
 pub mod http;
 pub mod response;
 mod stream;
@@ -122,6 +123,8 @@ pub struct AppState {
     /// Sockets of accepted connections, so the stream handler can read TCP
     /// statistics for the connection a speaker fetches over.
     pub link_registry: Arc<crate::stream::link::TcpLinkRegistry>,
+    /// The cloud queues of casts over port 1443.
+    pub cloud_queues: Arc<crate::sonos::lan::queue::CloudQueues>,
 }
 
 impl AppState {
@@ -153,6 +156,7 @@ impl AppState {
             capture_factory: None,
             app_info,
             link_registry: crate::stream::link::TcpLinkRegistry::new(),
+            cloud_queues: Arc::clone(&services.cloud_queues),
         }
     }
 

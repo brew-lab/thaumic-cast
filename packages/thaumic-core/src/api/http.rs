@@ -172,6 +172,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(STREAM_ROUTES[1], get(stream_audio))
         .route(STREAM_ROUTES[2], get(stream_audio))
         .route(STREAM_SEGMENT_ROUTE, get(stream_audio_segment))
+        .route(
+            super::cloud_queue::ROUTE,
+            get(super::cloud_queue::handle).post(super::cloud_queue::handle),
+        )
         .route(LISTEN_ROUTES[0], get(listen_audio))
         .route(LISTEN_ROUTES[1], get(listen_audio))
         .route(LISTEN_ROUTES[2], get(listen_audio))

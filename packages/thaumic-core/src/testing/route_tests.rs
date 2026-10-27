@@ -172,7 +172,12 @@ async fn on_port_1443_a_call_not_carried_out_is_refused_without_upnp() {
             .await;
         let seq = sys.fake.next_seq();
 
-        match sys.services.sonos.play(&sys.ip("Kitchen")).await {
+        match sys
+            .services
+            .sonos
+            .join_group(&sys.ip("Kitchen"), "RINCON_OTHER")
+            .await
+        {
             Err(SoapError::Lan { code: c, .. }) => assert_eq!(c, code::UNSUPPORTED),
             other => panic!("unexpected {other:?}"),
         }

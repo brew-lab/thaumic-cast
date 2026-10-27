@@ -27,6 +27,7 @@ use crate::services::speaker_monitor::GenaTransportView;
 use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
 use crate::sonos::lan::hub::CONNECT_TIMEOUT as LAN_CONNECT_TIMEOUT;
+use crate::sonos::lan::queue::CloudQueues;
 use crate::sonos::lan::{events as lan_events, LanClient, LanConnector, TlsConnector};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
@@ -47,6 +48,8 @@ pub struct BootstrappedServices {
     pub sonos: Arc<dyn SonosClient>,
     /// How the household is controlled: UPnP, or port 1443 with UPnP off.
     pub route: Arc<HouseholdRoute>,
+    /// The cloud queues casts over port 1443 are loaded from.
+    pub cloud_queues: Arc<CloudQueues>,
     /// Coordinates active audio streams.
     pub stream_coordinator: Arc<StreamCoordinator>,
     /// Manages Sonos device discovery and topology.
@@ -274,7 +277,12 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     // or to the local Control API on port 1443 while the household has UPnP
     // off. The route is shared with everything that must know it.
     let route = Arc::new(HouseholdRoute::default());
-    let lan_client = Arc::new(LanClient::new(lan));
+    let cloud_queues = Arc::new(CloudQueues::default());
+    let lan_client = Arc::new(LanClient::with_casting(
+        lan,
+        Arc::clone(&cloud_queues),
+        Arc::clone(&route),
+    ));
     let sonos_impl = Arc::new(RoutedClient::new(
         Arc::new(SonosClientImpl::with_speaker_port(
             http_client.clone(),
@@ -370,6 +378,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     Ok(BootstrappedServices {
         sonos,
         route,
+        cloud_queues,
         stream_coordinator,
         discovery_service,
         sonos_state,

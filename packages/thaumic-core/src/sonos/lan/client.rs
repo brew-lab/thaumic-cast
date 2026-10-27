@@ -12,7 +12,7 @@
 //! [`super::events`]); a socket that closed loses its subscriptions, and the
 //! pump asks for them again when it reopens.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -21,12 +21,15 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::json;
 
 use super::hub::LanHub;
+use super::playback::Cast;
 use super::protocol::{
     code, host_of, transport_error, Command, Groups, LocalInfo, SpeakerIdentity, Target,
 };
+use super::queue::CloudQueues;
 use super::socket::LanConnector;
 use super::volume::{VolumeState, GROUP_VOLUME, PLAYER_VOLUME};
 use crate::error::SoapResult;
+use crate::sonos::routed::HouseholdRoute;
 use crate::sonos::soap::SoapError;
 use crate::sonos::traits::SonosVolumeControl;
 use crate::sonos::types::{HouseholdTopology, ZoneGroup, ZoneGroupMember, ZoneGroupSnapshot};
@@ -49,18 +52,39 @@ pub struct LanClient {
     groups: RwLock<Groups>,
     /// The event subscriptions held.
     subscribed: Mutex<HashSet<Subscription>>,
+    /// The queues casts are loaded from, served by the API.
+    pub(super) queues: Arc<CloudQueues>,
+    /// The household's route, held while a cast is live.
+    pub(super) route: Arc<HouseholdRoute>,
+    /// Live casts, by the IP of the coordinator they play on.
+    pub(super) casts: Mutex<HashMap<String, Cast>>,
 }
 
 impl LanClient {
-    /// A client whose sockets and requests go through `connector`.
+    /// A client whose sockets and requests go through `connector`, with
+    /// queues and a route of its own.
     #[must_use]
     pub fn new(connector: Arc<dyn LanConnector>) -> Self {
+        Self::with_casting(connector, Arc::default(), Arc::default())
+    }
+
+    /// A client that loads casts from `queues`, which the API serves, and
+    /// holds `route` on port 1443 while one is live.
+    #[must_use]
+    pub fn with_casting(
+        connector: Arc<dyn LanConnector>,
+        queues: Arc<CloudQueues>,
+        route: Arc<HouseholdRoute>,
+    ) -> Self {
         Self {
             hub: LanHub::new(Arc::clone(&connector)),
             connector,
             household_id: RwLock::new(None),
             groups: RwLock::new(Groups::default()),
             subscribed: Mutex::new(HashSet::new()),
+            queues,
+            route,
+            casts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -83,7 +107,7 @@ impl LanClient {
     }
 
     /// The household id, for a command.
-    fn household(&self) -> SoapResult<String> {
+    pub(super) fn household(&self) -> SoapResult<String> {
         self.household_id()
             .ok_or_else(|| transport_error(code::CONNECT_FAILED, "the household is not known yet"))
     }
@@ -249,19 +273,31 @@ impl LanClient {
     }
 
     /// Sends a `groupVolume` command for the group led by the player at
-    /// `ip`, on its socket. A refusal after the group changed is sent once
-    /// more, to the group a fresh read names.
+    /// `ip`, on its socket.
     async fn group(
         &self,
         ip: &str,
         command: &'static str,
         body: serde_json::Value,
     ) -> SoapResult<serde_json::Value> {
+        self.on_group(ip, GROUP_VOLUME, command, body).await
+    }
+
+    /// Sends a command in `namespace` for the group led by the player at
+    /// `ip`, on its socket, and returns the reply's body. A refusal after the
+    /// group changed is sent once more, to the group a fresh read names.
+    pub(super) async fn on_group(
+        &self,
+        ip: &str,
+        namespace: &'static str,
+        command: &'static str,
+        body: serde_json::Value,
+    ) -> SoapResult<serde_json::Value> {
         let household_id = self.household()?;
         let group_id = self.group_led_by(ip, &household_id).await?;
         let send = |group_id: String| {
-            let cmd = Command::new(GROUP_VOLUME, command, Target::Group(group_id))
-                .with_body(body.clone());
+            let cmd =
+                Command::new(namespace, command, Target::Group(group_id)).with_body(body.clone());
             let household_id = household_id.clone();
             async move { self.hub.call(ip, &household_id, &cmd).await }
         };
