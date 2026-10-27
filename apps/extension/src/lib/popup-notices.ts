@@ -424,7 +424,7 @@ export function placeNotices(inputs: NoticeInputs): PopupNotices {
             source: { kind: 'moved', streamId: cast.streamId },
             tone: 'warning',
             lead: { key: 'cast_lead_moved' },
-            text: { key: 'cast_moved_text' },
+            details: [{ key: 'cast_moved_text' }],
           },
         });
       }

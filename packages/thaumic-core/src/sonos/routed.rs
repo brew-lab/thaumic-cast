@@ -165,7 +165,9 @@ impl RoutedClient {
     /// Notes a call's outcome on port 1400: a refusal because UPnP is off
     /// asks for a refresh, which finds the household on port 1443.
     fn noted<T>(&self, result: SoapResult<T>) -> SoapResult<T> {
-        if matches!(result, Err(SoapError::UpnpDisabled)) {
+        // Only news while the household is on UPnP: off it, refusals are what
+        // the route already says, and the periodic refresh looks again.
+        if matches!(result, Err(SoapError::UpnpDisabled)) && self.route.get() == Route::Upnp {
             if let Some(refresh) = &self.refresh {
                 refresh.notify_one();
             }
@@ -198,17 +200,30 @@ impl RoutedClient {
         }
     }
 
-    /// The groups over port 1443, moving the route by the outcome. A missing
-    /// reply leaves the route as it is; a refusal ends it, and the household
-    /// is learnt afresh on the next refresh. Either way the caller sees UPnP
-    /// switched off, the fix for both.
+    /// The groups over port 1443, moving the route by the outcome.
+    ///
+    /// Only a refusal ends the route: Authentication on, or detection
+    /// failing for a household not on port 1443 yet. One speaker not
+    /// answering on a route that works (asleep, rebooting, a missing reply)
+    /// leaves it as it is, so a live cast keeps its hold; the next refresh
+    /// asks again. Each failure reads as UPnP switched off, the fix for all.
     async fn refresh_over_lan(&self, ip: &str, uuid: &str) -> SoapResult<ZoneGroupSnapshot> {
+        let established = self.route.is_lan() && self.lan.household_id().is_some();
         match self.lan.zone_groups(ip, uuid).await {
             Ok(snapshot) => {
                 self.move_to(Route::Lan, "");
                 Ok(snapshot)
             }
-            Err(e) if e.is_transient() => Err(e),
+            Err(SoapError::UpnpDisabled) => {
+                self.lan.forget_household();
+                self.move_to(Route::None, "Authentication is on");
+                Err(SoapError::UpnpDisabled)
+            }
+            Err(e) if established => {
+                log::info!("[Route] {ip} did not answer on port 1443 ({e}); keeping the route");
+                Err(e)
+            }
+            Err(e) if e.is_transient() => Err(SoapError::UpnpDisabled),
             Err(e) => {
                 self.lan.forget_household();
                 self.move_to(Route::None, &e.to_string());

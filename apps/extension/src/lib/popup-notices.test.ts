@@ -333,7 +333,7 @@ describe('placeNotices: a cast slot (order, rule 5, the quiet tier)', () => {
     expect(placed.slots[7][1]).toMatchObject({
       id: 'moved:s7',
       source: { kind: 'moved', streamId: 's7' },
-      text: { key: 'cast_moved_text' },
+      details: [{ key: 'cast_moved_text' }],
     });
     expect(placed.slots[8]).toEqual([]);
 
@@ -439,6 +439,8 @@ describe('the words the rules choose', () => {
       'notice_lead_upnp_disabled',
       'network.speakers_upnp_disabled',
       'error_upnp_disabled',
+      'cast_lead_moved',
+      'cast_moved_text',
       'notice_lead_no_reply',
       'network.speakers_not_responding',
       'badge_no_reply',

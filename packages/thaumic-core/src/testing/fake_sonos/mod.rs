@@ -1076,12 +1076,14 @@ impl FakeSonosSystem {
     pub fn regroup_externally(&self, member: &str, coordinator: &str) {
         self.leave_group(self.speaker_named(member));
         self.group(coordinator, &[member]);
+        self.push_groups();
     }
 
     /// Makes `name` standalone from outside, as someone in the Sonos app
     /// would, promoting a member if it coordinated others.
     pub fn make_standalone_externally(&self, name: &str) {
         self.leave_group(self.speaker_named(name));
+        self.push_groups();
     }
 
     /// Drops `name` out of the household's topology, as a speaker that was

@@ -145,7 +145,7 @@ impl CloudQueue {
             .and_then(|id| CloudQueues::segment_of(&self.gen, id))
             .filter(|segment| self.item(*segment).is_some())
             .unwrap_or(self.first);
-        let next = self.continues.then_some(asked + 1);
+        let next = asked.checked_add(1).filter(|_| self.continues);
         std::iter::once(asked)
             .chain(next)
             .filter_map(|segment| self.item(segment))

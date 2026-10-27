@@ -86,6 +86,10 @@ pub struct Reply {
 
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<(Frame, Instant)>>>>;
 
+/// How long a closed socket's reader waits for the speaker to close its
+/// side before it is stopped.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
+
 /// An open socket to one speaker.
 pub struct LanSocket {
     ip: String,
@@ -93,6 +97,8 @@ pub struct LanSocket {
     pending: Pending,
     closed: Arc<AtomicBool>,
     next_id: AtomicU64,
+    events: broadcast::Sender<LanEvent>,
+    reader: tokio::task::AbortHandle,
 }
 
 impl LanSocket {
@@ -142,8 +148,9 @@ impl LanSocket {
 
         let pending: Pending = Arc::default();
         let closed = Arc::new(AtomicBool::new(false));
-        {
+        let reader = {
             let (ip, pending, closed) = (ip.to_string(), pending.clone(), closed.clone());
+            let events = events.clone();
             tokio::spawn(async move {
                 while let Some(Ok(m)) = stream.next().await {
                     let text = match &m {
@@ -171,13 +178,15 @@ impl LanSocket {
                         frame: Arc::new(frame),
                     });
                 }
-                closed.store(true, Ordering::SeqCst);
                 // Dropping the senders wakes every waiting call.
                 pending.lock().clear();
-                log::info!("[Lan] {ip}: socket closed");
-                let _ = events.send(LanEvent::Closed { ip });
-            });
-        }
+                if !closed.swap(true, Ordering::SeqCst) {
+                    log::info!("[Lan] {ip}: socket closed");
+                    let _ = events.send(LanEvent::Closed { ip });
+                }
+            })
+            .abort_handle()
+        };
 
         Ok(Self {
             ip: ip.to_string(),
@@ -185,6 +194,8 @@ impl LanSocket {
             pending,
             closed,
             next_id: AtomicU64::new(1),
+            events,
+            reader,
         })
     }
 
@@ -217,6 +228,15 @@ impl LanSocket {
         let id = format!("t{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
         self.pending.lock().insert(id.clone(), tx);
+        // The reader may have ended between the check above and the insert,
+        // after clearing what was pending.
+        if self.is_closed() {
+            self.pending.lock().remove(&id);
+            return Err(transport_error(
+                code::SOCKET_CLOSED,
+                format!("{}: socket is closed", self.ip),
+            ));
+        }
         let sent_at = Instant::now();
         if self
             .out
@@ -254,15 +274,45 @@ impl LanSocket {
         }
     }
 
-    /// Closes the socket. Waiting calls fail as closed.
+    /// Closes the socket. Waiting calls fail as closed. The reader ends
+    /// when the speaker closes its side, which sends [`LanEvent::Closed`] as
+    /// usual, or is stopped after [`CLOSE_GRACE`] if it never does.
     pub fn close(&self) {
         let _ = self.out.send(Message::Close(None));
+        let reader = self.reader.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    tokio::time::sleep(CLOSE_GRACE).await;
+                    reader.abort();
+                });
+            }
+            Err(_) => reader.abort(),
+        }
+    }
+
+    /// Gives the socket up as dead: a call went unanswered, which on a
+    /// connection that went half-open (a speaker that lost power or Wi-Fi
+    /// sends no FIN) would go on for every call until the system notices,
+    /// minutes later. Waiting calls fail as closed, [`LanEvent::Closed`] is
+    /// sent, and the next call opens a fresh one.
+    pub fn abandon(&self) {
+        self.pending.lock().clear();
+        if !self.closed.swap(true, Ordering::SeqCst) {
+            log::info!(
+                "[Lan] {}: socket abandoned after a call went unanswered",
+                self.ip
+            );
+            let _ = self.events.send(LanEvent::Closed {
+                ip: self.ip.clone(),
+            });
+        }
+        self.close();
     }
 }
 
 impl Drop for LanSocket {
-    /// Closes the socket; the reader ends when the speaker closes its side,
-    /// which sends [`LanEvent::Closed`] as usual.
+    /// Closes the socket (see [`LanSocket::close`]).
     fn drop(&mut self) {
         self.close();
     }

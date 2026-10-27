@@ -453,7 +453,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_reply_times_out_as_transient_and_the_late_reply_is_dropped() {
+    async fn no_reply_times_out_as_transient_gives_the_socket_up_and_drops_the_late_reply() {
         let office = FakeSpeaker::start(|f| match f.group_id() {
             Some("late") => vec![Act::Delay(Duration::from_millis(500)), ok(json!({}))],
             _ => vec![ok(json!({ "fresh": true }))],
@@ -471,9 +471,22 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(450));
 
         tokio::time::sleep(Duration::from_millis(300)).await;
+        // A socket that left a call unanswered may be half-open: it is given
+        // up, and the next call opens a fresh one.
         let r = hub.call(OFFICE, HH, &status("next")).await.unwrap();
         assert_eq!(r.frame().body["fresh"], true);
-        assert!(events.try_recv().is_err(), "a late reply is not an event");
+        assert_eq!(office.accepted.load(Ordering::SeqCst), 2);
+        let mut seen = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            seen.push(event);
+        }
+        assert!(
+            !seen.iter().any(|e| matches!(e, LanEvent::Frame { .. })),
+            "a late reply is not an event: {seen:?}"
+        );
+        assert!(seen
+            .iter()
+            .any(|e| matches!(e, LanEvent::Closed { ip } if ip == OFFICE)));
     }
 
     #[tokio::test]

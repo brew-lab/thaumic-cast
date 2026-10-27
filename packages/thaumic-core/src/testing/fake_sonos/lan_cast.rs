@@ -186,6 +186,7 @@ pub(super) fn modify_members(
     let group = leads.map_or(Value::Null, |(coordinator, members)| {
         group_json(&coordinator, &members)
     });
+    system.push_groups();
     json!({ "_objectType": "groupInfo", "group": group })
 }
 

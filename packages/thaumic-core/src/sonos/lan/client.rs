@@ -35,6 +35,9 @@ use crate::sonos::traits::SonosVolumeControl;
 use crate::sonos::types::{HouseholdTopology, ZoneGroup, ZoneGroupMember, ZoneGroupSnapshot};
 use crate::sonos::zone_groups::group_name;
 
+/// The groups namespace, whose events say the household regrouped.
+pub const GROUPS: &str = "groups:1";
+
 /// What a member's model reads as when Sonos does not name it.
 const UNKNOWN_MODEL: &str = "Speaker";
 
@@ -110,7 +113,7 @@ impl LanClient {
     /// refuses them, but a stop still tries), and its household cannot have
     /// changed under it.
     pub fn forget_household(&self) {
-        if self.casts.lock().is_empty() {
+        if self.casts.lock().is_empty() && self.unleft.lock().is_empty() {
             *self.household_id.write() = None;
         }
     }
@@ -209,7 +212,14 @@ impl LanClient {
             let ip = groups.ip_of(&g.coordinator_id)?;
             Some((ip.to_string(), GROUP_VOLUME, g.id.clone()))
         });
-        players.chain(led).collect()
+        // The household's groups, on one socket, so a regroup in the Sonos
+        // app is seen at once, as the ZoneGroupTopology GENA event shows it.
+        let household = groups
+            .groups
+            .first()
+            .and_then(|g| groups.ip_of(&g.coordinator_id))
+            .map(|ip| (ip.to_string(), GROUPS, String::new()));
+        players.chain(led).chain(household).collect()
     }
 
     /// Subscribes to every level the last groups read calls for that is not
@@ -231,6 +241,7 @@ impl LanClient {
                 let (ip, namespace, id) = &sub;
                 let target = match *namespace {
                     GROUP_VOLUME => Target::Group(id.clone()),
+                    GROUPS => Target::Household,
                     _ => Target::Player(id.clone()),
                 };
                 let cmd = Command::new(namespace, "subscribe", target);
@@ -408,7 +419,7 @@ impl SonosVolumeControl for LanClient {
 /// coordinator's address and every member's room and model. A group whose
 /// coordinator has no address is left out, as the UPnP parser leaves out one
 /// it cannot place.
-fn zone_groups(groups: &Groups) -> Vec<ZoneGroup> {
+pub(super) fn zone_groups(groups: &Groups) -> Vec<ZoneGroup> {
     groups
         .groups
         .iter()
@@ -538,8 +549,10 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(subscribed.len(), 2, "{subscribed:?}");
+        assert_eq!(subscribed.len(), 3, "{subscribed:?}");
         assert!(subscribed.contains(&(PLAYER_VOLUME.into(), Some(OFFICE_ID.into()), None)));
+        // The household's groups, on the first group's coordinator.
+        assert!(subscribed.contains(&(GROUPS.into(), None, None)));
         assert!(subscribed.contains(&(
             GROUP_VOLUME.into(),
             None,
@@ -557,7 +570,7 @@ mod tests {
         // A closed socket loses them, and they are asked for again.
         lan.socket_closed(OFFICE);
         lan.ensure_subscriptions().await;
-        assert_eq!(speaker.received.lock().len(), before + 3);
+        assert_eq!(speaker.received.lock().len(), before + 4);
     }
 
     #[tokio::test]

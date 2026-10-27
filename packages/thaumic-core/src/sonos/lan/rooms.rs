@@ -56,7 +56,14 @@ impl LanClient {
     }
 
     /// Puts the room at `ip` in the group `coordinator_uuid` leads.
+    ///
+    /// A room leading a cast of ours ends it first: on port 1400 the join's
+    /// new transport replaces it, and here nothing else would, leaving its
+    /// session on the room and the route held.
     pub(super) async fn join(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        if self.has_cast(ip) {
+            self.end_cast(ip).await;
+        }
         let groups = self.fresh_groups(ip).await?;
         let player = self.player(ip)?;
         let joined = |g: &Groups| {

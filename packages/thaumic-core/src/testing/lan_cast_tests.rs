@@ -9,6 +9,7 @@ use crate::sonos::types::TransportState;
 use crate::sonos::Route;
 use crate::stream::AudioCodec;
 
+use super::fake_sonos::Failure;
 use super::harness::{both_routes, within, TestSystem};
 
 /// Waits until `done` holds, looking every few milliseconds. The caller
@@ -588,6 +589,158 @@ async fn with_authentication_on_mid_cast_a_stop_still_ends_the_cast() {
             sys.fake.format_log()
         );
         assert!(!sys.services.route.is_held());
+    })
+    .await;
+}
+
+/// Proves: a household whose UPnP goes off while port 1443 first refuses
+/// (passing through no route at all) still has its cast moved once port
+/// 1443 answers.
+#[tokio::test]
+async fn a_cast_is_moved_even_when_the_route_passes_through_none() {
+    within("re-home via none", async {
+        let sys = pcm_system(Route::Upnp, &["Kitchen"]).await;
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        sys.fake.set_upnp_enabled(false);
+        sys.fake.set_lan_authentication(true);
+        assert!(sys.try_refresh_topology().await.is_err());
+        assert_eq!(sys.route(), Route::None);
+
+        sys.fake.set_lan_authentication(false);
+        sys.refresh_topology().await;
+        assert_eq!(sys.route(), Route::Lan);
+        sys.events
+            .wait_for_stream(
+                |e| matches!(e, StreamEvent::CastMoved { stream_id, .. } if *stream_id == stream),
+            )
+            .await;
+        assert!(sys.fake.lan_session("Kitchen").is_some());
+    })
+    .await;
+}
+
+/// Proves: on port 1443 a speaker that fails to answer the topology read
+/// leaves the household's route and a live cast's hold as they were; only a
+/// refusal (Authentication on) ends the route.
+#[tokio::test]
+async fn one_speaker_failing_on_port_1443_keeps_the_route() {
+    within("unreachable speaker", async {
+        let sys = pcm_system(Route::Lan, &["Kitchen", "Office"]).await;
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        for room in ["Kitchen", "Office"] {
+            sys.fake
+                .fail(&sys.ip(room), "groups:1 getGroups", Failure::Fault(501));
+        }
+        assert!(sys.try_refresh_topology().await.is_err());
+        assert_eq!(sys.route(), Route::Lan);
+        assert!(sys.services.route.is_held());
+        assert!(sys.session(&stream, "Kitchen").is_some());
+    })
+    .await;
+}
+
+/// Proves: on port 1443 a cast taken over while its socket was down (the
+/// eviction lost with it) is found gone when the socket is back, reported
+/// as taken over, and whatever took the room is never joined or evicted.
+#[tokio::test]
+async fn a_takeover_while_the_socket_was_down_is_found_and_not_disturbed() {
+    within("takeover while down", async {
+        let sys = pcm_system(Route::Lan, &["Kitchen"]).await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        sys.fake.drop_lan_sockets("Kitchen");
+        sys.fake.take_over_on_lan("Kitchen");
+        sys.events
+            .wait_for_stream(|e| {
+                matches!(e, StreamEvent::PlaybackStopped { speaker_ip,
+                    reason: Some(SpeakerRemovalReason::SourceChanged), .. } if *speaker_ip == kitchen)
+            })
+            .await;
+        let commands = lan_commands(&sys, &kitchen);
+        assert!(
+            !commands
+                .iter()
+                .any(|(_, c)| c == "joinSession" || c == "pause" || c == "leaveSession"),
+            "{commands:?}"
+        );
+        until(|| !sys.services.route.is_held()).await;
+    })
+    .await;
+}
+
+/// Proves: on port 1443 a room leading a cast of ours that joins another
+/// group ends its own cast first, as a join's new transport does on port
+/// 1400, so neither its session nor the route's hold is left behind.
+#[tokio::test]
+async fn a_room_leading_a_cast_ends_it_when_it_joins_another_group() {
+    within("join ends own cast", async {
+        let sys = pcm_system(Route::Lan, &["Kitchen", "Patio"]).await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+        assert!(sys.services.route.is_held());
+
+        sys.services
+            .sonos
+            .join_group(&kitchen, &sys.uuid("Patio"))
+            .await
+            .expect("join");
+        assert!(lan_commands(&sys, &kitchen)
+            .iter()
+            .any(|(_, c)| c == "leaveSession"));
+        assert!(!sys.services.route.is_held());
+        assert_eq!(
+            sys.fake.grouping(),
+            [vec!["Kitchen".to_string(), "Patio".to_string()]]
+        );
+    })
+    .await;
+}
+
+/// Proves: on port 1443 a load into a live cast's session that fails leaves
+/// the cast as it was: still held, still read as the segment it plays.
+#[tokio::test]
+async fn a_failed_load_into_a_live_cast_keeps_the_cast_as_it_was() {
+    within("failed reload", async {
+        let sys = pcm_system(Route::Lan, &["Kitchen"]).await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        sys.fake.fail(
+            &kitchen,
+            "playbackSession:1 loadCloudQueue",
+            Failure::Fault(501),
+        );
+        let next = format!("{}/1", sys.stream_url(&stream));
+        let refused = sys
+            .services
+            .sonos
+            .play_uri(
+                &kitchen,
+                &next,
+                AudioCodec::Pcm,
+                &crate::stream::AudioFormat::default(),
+                None,
+                "",
+            )
+            .await;
+        assert!(refused.is_err());
+        assert!(sys.services.route.is_held());
+        assert!(sys.fake.lan_session("Kitchen").is_some());
+        let position = sys
+            .services
+            .sonos
+            .get_position_info(&kitchen)
+            .await
+            .unwrap();
+        assert_eq!(position.track_uri, sys.speaker_uri(&stream));
     })
     .await;
 }

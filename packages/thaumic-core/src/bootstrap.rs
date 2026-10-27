@@ -352,6 +352,8 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         let coordinator = Arc::clone(&stream_coordinator);
         let cancel = cancel_token.clone();
         spawner.spawn(async move {
+            // The last route that worked: a household can pass through None
+            // (port 1443 not answering at first) on its way from UPnP to it.
             let mut was = *changes.borrow_and_update();
             loop {
                 tokio::select! {
@@ -362,7 +364,9 @@ pub(crate) fn bootstrap_services_with_speaker_port(
                 if was == Route::Upnp && now == Route::Lan {
                     coordinator.rehome_casts().await;
                 }
-                was = now;
+                if now != Route::None {
+                    was = now;
+                }
             }
         });
     }

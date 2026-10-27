@@ -201,7 +201,10 @@ async fn on_port_1443_pushed_levels_reach_the_services_from_the_source_that_coun
             .filter(|c| c.command == "subscribe")
             .map(|c| (c.namespace, c.target))
             .collect();
-        assert_eq!(subscribes.len(), 3, "{subscribes:?}");
+        // Each room's own level, the group's level, and the household's
+        // groups.
+        assert_eq!(subscribes.len(), 4, "{subscribes:?}");
+        assert!(subscribes.contains(&("groups:1".to_string(), None)));
         assert!(subscribes.contains(&(
             "groupVolume:1".to_string(),
             Some(format!("{}:1", sys.uuid("Kitchen")))

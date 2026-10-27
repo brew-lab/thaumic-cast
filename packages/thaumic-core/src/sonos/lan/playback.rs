@@ -80,6 +80,14 @@ pub const APP_ID: &str = "com.thaumic.cast";
 const PLAYBACK: &str = "playback:1";
 const SESSION: &str = "playbackSession:1";
 
+/// How a status names an item that is not ours.
+const FOREIGN_ITEM: &str = "x-sonos-lan-item:";
+
+/// A cast this new is still starting: a status saying it stopped is the
+/// speaker between our session and our load (a new session leaves the group
+/// idle until the load), not the cast ending.
+const START_GRACE: Duration = Duration::from_secs(5);
+
 /// A cast paused this close to its item's declared end has reached it.
 const END_TOLERANCE_MS: u64 = 2_000;
 
@@ -211,7 +219,7 @@ fn read_status(
             .item_id
             .as_deref()
             .filter(|id| !id.is_empty())
-            .map(|id| format!("x-sonos-lan-item:{id}"))
+            .map(|id| format!("{FOREIGN_ITEM}{id}"))
             .unwrap_or_default(),
     };
     (state, track)
@@ -349,13 +357,31 @@ impl LanClient {
 
     /// Records the cast on `ip` before it is loaded, so the session's own
     /// events are known as ours from the start.
-    fn record_cast(&self, ip: &str, cast: impl FnOnce(LanHold) -> Cast) {
+    ///
+    /// Returns the cast it replaces, to put back if the load fails.
+    fn record_cast(&self, ip: &str, cast: impl FnOnce(LanHold) -> Cast) -> Option<Cast> {
         let hold = self.route.hold();
         let mut casts = self.casts.lock();
         let reported = casts.get(ip).and_then(|c| c.reported.clone());
         let mut cast = cast(hold);
         cast.reported = reported;
-        casts.insert(ip.to_string(), cast);
+        casts.insert(ip.to_string(), cast)
+    }
+
+    /// Undoes [`Self::record_cast`] after a failed load: the cast it
+    /// replaced plays on, so its record comes back; a new session is left.
+    async fn unrecord_cast(&self, ip: &str, session_id: &str, previous: Option<Cast>) {
+        match previous {
+            Some(previous) => {
+                self.casts.lock().insert(ip.to_string(), previous);
+            }
+            None => {
+                self.casts.lock().remove(ip);
+                let _ = self
+                    .on_session(ip, session_id, "leaveSession", json!({}))
+                    .await;
+            }
+        }
     }
 
     /// Casts an MP3 or AAC stream on `ip` with `loadStreamUrl`.
@@ -386,7 +412,7 @@ impl LanClient {
                 image_url: None,
             },
         };
-        self.record_cast(ip, |hold| Cast {
+        let previous = self.record_cast(ip, |hold| Cast {
             stream_id: stream_id.clone(),
             session_id: session_id.clone(),
             gen: String::new(),
@@ -405,12 +431,7 @@ impl LanClient {
         }
         if let Err(e) = self.load_stream(ip, &session_id, uri, &title).await {
             log::warn!("[Lan] {ip}: loadStreamUrl of {stream_id}: {e}");
-            if existing.is_none() {
-                self.casts.lock().remove(ip);
-                let _ = self
-                    .on_session(ip, &session_id, "leaveSession", json!({}))
-                    .await;
-            }
+            self.unrecord_cast(ip, &session_id, previous).await;
             return Err(e);
         }
         if let Some(old) = existing.filter(|gen| !gen.is_empty()) {
@@ -509,7 +530,7 @@ impl LanClient {
                 return Err(e);
             }
         };
-        self.record_cast(ip, |hold| Cast {
+        let previous = self.record_cast(ip, |hold| Cast {
             stream_id: stream_id.clone(),
             session_id: session_id.clone(),
             gen: gen.clone(),
@@ -528,12 +549,7 @@ impl LanClient {
         }
         if let Err(e) = self.load(ip, &session_id, &queue_url, &item, &gen).await {
             log::warn!("[Lan] {ip}: loadCloudQueue of {stream_id} segment {segment}: {e}");
-            if existing.is_none() {
-                self.casts.lock().remove(ip);
-                let _ = self
-                    .on_session(ip, &session_id, "leaveSession", json!({}))
-                    .await;
-            }
+            self.unrecord_cast(ip, &session_id, previous).await;
             self.queues.remove(&gen);
             return Err(e);
         }
@@ -571,7 +587,15 @@ impl LanClient {
             return;
         };
         self.queues.end(&cast.gen);
-        if let Err(e) = self.on_group(ip, PLAYBACK, "pause", json!({})).await {
+        // A group last seen playing something else was taken over and the
+        // eviction is still on its way: pausing it could pause the TV.
+        let foreign = cast
+            .status
+            .as_ref()
+            .is_some_and(|(_, _, position)| position.track_uri.starts_with(FOREIGN_ITEM));
+        if foreign {
+            log::info!("[Lan] {ip}: playing something else at stop; not paused");
+        } else if let Err(e) = self.on_group(ip, PLAYBACK, "pause", json!({})).await {
             log::warn!("[Lan] {ip}: pause at stop: {e}");
         }
         if let Err(e) = self
@@ -610,19 +634,24 @@ impl LanClient {
                 .collect()
         };
         for u in due {
-            match self
+            let done = match self
                 .on_session(&u.ip, &u.session_id, "leaveSession", json!({}))
                 .await
             {
-                Err(crate::sonos::soap::SoapError::UpnpDisabled) => {}
-                outcome => {
-                    if let Err(e) = outcome {
-                        log::info!("[Lan] {}: session {} gone: {e}", u.ip, u.session_id);
-                    } else {
-                        log::info!("[Lan] {}: session {} left at last", u.ip, u.session_id);
-                    }
-                    self.unleft.lock().retain(|x| x.session_id != u.session_id);
+                Ok(_) => {
+                    log::info!("[Lan] {}: session {} left at last", u.ip, u.session_id);
+                    true
                 }
+                Err(crate::sonos::soap::SoapError::Lan { code: c, .. })
+                    if c == "ERROR_INVALID_OBJECT_ID" =>
+                {
+                    log::info!("[Lan] {}: session {} is gone", u.ip, u.session_id);
+                    true
+                }
+                Err(_) => false,
+            };
+            if done {
+                self.unleft.lock().retain(|x| x.session_id != u.session_id);
             }
         }
     }
@@ -729,6 +758,9 @@ impl LanClient {
         if cast.reported.as_ref() == Some(&now) {
             return None;
         }
+        if state == TransportState::Stopped && cast.loaded_at.elapsed() < START_GRACE {
+            return None;
+        }
         cast.reported = Some(now);
         Some(SonosEvent::TransportState {
             speaker_ip: ip.to_string(),
@@ -744,6 +776,9 @@ impl LanClient {
     /// the cast was taken over, and the session is left on `to` (a command
     /// sent to `ip` for the group follows it there).
     pub async fn coordinator_moved(&self, ip: &str, to: &str) -> Option<SonosEvent> {
+        if to == ip {
+            return None;
+        }
         let cast = self.casts.lock().remove(ip)?;
         self.queues.end(&cast.gen);
         log::warn!(
@@ -815,30 +850,44 @@ impl LanClient {
         }) else {
             return Ok(None);
         };
-        let body = self
-            .on_group(
-                ip,
-                SESSION,
-                "joinSession",
-                json!({ "appId": APP_ID, "appContext": stream_id }),
-            )
-            .await?;
-        let joined = body["sessionId"].as_str().unwrap_or_default().to_string();
-        if joined == session_id {
-            self.follow(ip, &session_id).await;
-            log::info!("[Lan] {ip}: session {session_id} joined again");
+        // Its eviction may have been lost with the socket: whatever took the
+        // room over must not be evicted by joining, so look first.
+        let (state, position) = self.status(ip).await?;
+        // Idle (with our item only as the one before) is a cast that ended or
+        // was taken over while the socket was down.
+        let ours = state != TransportState::Stopped
+            && !position.track_uri.is_empty()
+            && !position.track_uri.starts_with(FOREIGN_ITEM);
+        if ours {
+            let body = self
+                .on_group(
+                    ip,
+                    SESSION,
+                    "joinSession",
+                    json!({ "appId": APP_ID, "appContext": stream_id }),
+                )
+                .await?;
+            let joined = body["sessionId"].as_str().unwrap_or_default().to_string();
+            if joined != session_id {
+                log::info!("[Lan] {ip}: joined session {joined}, not {session_id}; following it");
+                if let Some(cast) = self.casts.lock().get_mut(ip) {
+                    cast.session_id = joined.clone();
+                }
+            }
+            self.follow(ip, &joined).await;
+            log::info!("[Lan] {ip}: cast of {stream_id} joined again");
             return Ok(None);
         }
-        // A session of ours that is not the cast's: the cast is gone.
-        let _ = self
-            .on_session(ip, &joined, "leaveSession", json!({}))
-            .await;
         if self.casts.lock().remove(ip).is_none() {
             return Ok(None);
         }
         self.queues.end(&gen);
         self.queues.remove(&gen);
-        log::warn!("[Lan] {ip}: cast of {stream_id} was gone after its socket dropped");
+        log::warn!(
+            "[Lan] {ip}: cast of {stream_id} was taken over while its socket was down \
+             ({})",
+            position.track_uri
+        );
         Ok(Some(SonosEvent::SourceChanged {
             speaker_ip: ip.to_string(),
             current_uri: "x-sonos-lan-evicted:session gone".into(),
@@ -1093,5 +1142,64 @@ mod tests {
         // The default 0xFFFF_0000 bytes at 48 kHz, 16-bit stereo: 6h12m49s.
         let ms = segment_duration_ms(&AudioFormat::default()).unwrap();
         assert_eq!(ms / 1000, 6 * 3600 + 12 * 60 + 49);
+    }
+
+    /// Proves: a cast still starting does not report the group stopped (a
+    /// new session leaves it idle until the load, and a re-homed cast must
+    /// not be ended by that), and once started a stop is reported.
+    #[tokio::test]
+    async fn a_cast_still_starting_does_not_report_stopped() {
+        use crate::sonos::lan::fake::{ok, FakeConnector, FakeSpeaker};
+        use crate::sonos::lan::protocol::tests::recorded;
+        use std::sync::Arc;
+
+        const OFFICE: &str = "192.168.1.10";
+        let speaker = FakeSpeaker::start(|f| match f.header["command"].as_str() {
+            Some("getGroups") => {
+                vec![ok(Frame::parse(&recorded("reply_get_groups"))
+                    .unwrap()
+                    .body)]
+            }
+            Some("createSession") => vec![ok(json!({ "sessionId": "S1" }))],
+            Some("getPlaybackStatus") => vec![ok(json!({
+                "playbackState": "PLAYBACK_STATE_IDLE",
+                "positionMillis": 0,
+            }))],
+            _ => vec![ok(json!({}))],
+        })
+        .await;
+        let connector = Arc::new(FakeConnector::default());
+        connector.add(OFFICE, &speaker);
+        connector
+            .infos
+            .lock()
+            .insert(OFFICE.into(), recorded("local_info"));
+        let lan = LanClient::new(connector);
+        lan.zone_groups(OFFICE, "RINCON_000000000A0101400")
+            .await
+            .unwrap();
+        lan.play_uri(
+            OFFICE,
+            "http://10.0.0.2:1/stream/s1/live",
+            AudioCodec::Pcm,
+            &AudioFormat::default(),
+            None,
+            "",
+        )
+        .await
+        .unwrap();
+
+        assert!(lan.poll(OFFICE).await.is_none());
+
+        if let Some(cast) = lan.casts.lock().get_mut(OFFICE) {
+            cast.loaded_at = Instant::now() - START_GRACE;
+            cast.status = None;
+        }
+        match lan.poll(OFFICE).await {
+            Some(SonosEvent::TransportState { state, .. }) => {
+                assert_eq!(state, TransportState::Stopped);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }

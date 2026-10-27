@@ -222,7 +222,12 @@ impl LanHub {
 
     async fn call_once(&self, ip: &str, household_id: &str, cmd: &Command) -> SoapResult<Reply> {
         let sock = self.socket(ip, household_id).await?;
-        sock.call(household_id, cmd, self.call_timeout).await
+        let reply = sock.call(household_id, cmd, self.call_timeout).await;
+        if matches!(&reply, Err(crate::sonos::soap::SoapError::Lan { code: c, .. }) if c == code::TIMEOUT)
+        {
+            sock.abandon();
+        }
+        reply
     }
 
     fn finish(reply: Reply, ip: &str) -> SoapResult<HubReply> {

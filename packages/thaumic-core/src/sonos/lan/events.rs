@@ -23,12 +23,14 @@ use parking_lot::Mutex;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
-use super::client::LanClient;
+use super::client::{zone_groups, LanClient};
+use super::protocol::Groups;
 use super::socket::LanEvent;
 use super::volume::volume_events;
 use crate::runtime::TokioSpawner;
 use crate::sonos::gena::{GenaSubscriptionManager, SonosEvent};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
+use crate::utils::now_millis;
 
 /// How often a live cast's state is read.
 pub const POLL_EVERY: Duration = Duration::from_secs(2);
@@ -136,7 +138,11 @@ pub fn start(
                         poll_now(&lan, &sink, &tasks, ip);
                     }
                     "groupCoordinatorChanged" if lan.has_cast(&ip) => {
-                        if let Some(to) = frame.group_moved().and_then(|m| m.ip) {
+                        let moved = frame.group_moved();
+                        if let Some(to) = moved.as_ref().and_then(|m| m.ip.clone()) {
+                            if let Some(player) = moved.and_then(|m| m.player_id) {
+                                lan.hub().know(&to, &player);
+                            }
                             let (lan, sink) = (Arc::clone(&lan), Arc::clone(&sink));
                             tasks.spawn(async move {
                                 if let Some(event) = lan.coordinator_moved(&ip, &to).await {
@@ -148,6 +154,16 @@ pub fn start(
                     "sessionError" => {
                         if let Some(event) = lan.session_error(&ip, &frame) {
                             sink(event);
+                        }
+                    }
+                    "groups" if arbiter.route().is_lan() => {
+                        // The household regrouped: the topology refresh reads
+                        // it, as after a ZoneGroupTopology event.
+                        if let Ok(groups) = Groups::from_body(&frame.body) {
+                            sink(SonosEvent::ZoneGroupsUpdated {
+                                groups: zone_groups(&groups),
+                                timestamp: now_millis(),
+                            });
                         }
                     }
                     _ if arbiter.route().is_lan() => {

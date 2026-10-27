@@ -17,7 +17,9 @@
 //!   group's id is `<coordinator>:1`, as in `GetZoneGroupState`. A fixed
 //!   output refuses `setVolume` (the error code is assumed; none has been
 //!   recorded).
-//! * `subscribe` to either namespace pushes the current level at once and
+//! * `groups:1 subscribe` pushes the household's groups whenever they
+//!   change, by our commands or in the Sonos app.
+//! * `subscribe` to either volume namespace pushes the current level at once and
 //!   every change after it to that socket, as hardware does; a write that
 //!   changes nothing pushes nothing.
 //! * Casts (`playback:1`, `playbackSession:1`) and group changes
@@ -251,6 +253,15 @@ async fn answer(
     let target = target.unwrap_or_default();
     let result = match (frame.namespace(), command.as_str()) {
         ("groups:1", "getGroups") => Ok(groups(system)),
+        ("groups:1", "subscribe") => {
+            let _ = out.send(reply(frame, &command, Ok(json!({}))));
+            system.lan.subscribers.lock().push(Subscriber {
+                namespace: "groups:1".into(),
+                target: String::new(),
+                out,
+            });
+            return;
+        }
         ("groups:1", "modifyGroupMembers") if target != group_id(speaker) || !leads(speaker) => {
             Err(not_here(&target))
         }
@@ -449,6 +460,18 @@ impl FakeSonosSystem {
             }
             s.out.send(text.clone()).is_ok()
         });
+    }
+
+    /// Pushes the household's groups to their subscribers, after a regroup.
+    pub(super) fn push_groups(&self) {
+        let text = event_as(
+            "groups:1",
+            "groups",
+            "householdId",
+            FAKE_HOUSEHOLD_ID,
+            groups(self),
+        );
+        self.push_lan_text("groups:1", "", &text);
     }
 
     /// Pushes `speaker`'s own level to its subscribers.

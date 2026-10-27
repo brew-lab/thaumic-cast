@@ -2,8 +2,9 @@
 //! parsers and Sonos client: pre-grouped rooms, home-theatre satellites,
 //! a coordinator leaving its group, joins, and regrouping from outside.
 //!
-//! Reading the groups, joins and leaves run on both routes; topology events
-//! from outside are UPnP's (GENA ZoneGroupTopology).
+//! Every test runs on both routes: a regroup from outside reaches the
+//! services through a ZoneGroupTopology NOTIFY on UPnP, and through the
+//! speakers' own `groups` event on port 1443.
 
 use crate::events::SonosEvent;
 use crate::sonos::types::TransportState;
@@ -174,18 +175,22 @@ async fn a_join_plays_with_the_group_and_records_its_followers(route) {
 }
 }
 
-/// Proves: a regroup made from outside reaches the services through a
-/// ZoneGroupTopology NOTIFY.
-#[tokio::test]
-async fn a_regroup_from_outside_reaches_the_services() {
+both_routes! {
+/// Proves: a regroup made from outside reaches the services, through a
+/// ZoneGroupTopology NOTIFY on UPnP and the speakers' `groups` event on
+/// port 1443.
+async fn a_regroup_from_outside_reaches_the_services(route) {
     within("external regroup", async {
         let sys = TestSystem::builder()
             .speakers(["Kitchen", "Patio"])
+            .route(route)
             .build()
             .await;
 
         sys.fake.regroup_externally("Patio", "Kitchen");
-        assert_eq!(sys.fake.notify_zone_group_topology().await, 200);
+        if route == Route::Upnp {
+            assert_eq!(sys.fake.notify_zone_group_topology().await, 200);
+        }
         sys.events
             .wait_for_sonos(|event| {
                 matches!(event, SonosEvent::ZoneGroupsUpdated { groups, .. } if groups.len() == 1)
@@ -196,4 +201,5 @@ async fn a_regroup_from_outside_reaches_the_services() {
         assert_eq!(sys.fake.grouping().len(), 2);
     })
     .await;
+}
 }

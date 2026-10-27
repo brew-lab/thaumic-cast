@@ -860,6 +860,19 @@ impl StreamCoordinator {
             .collect();
         let mut moved: Vec<String> = Vec::new();
         for session in coordinators {
+            // As every start does: under the speaker's start lock, for the
+            // session as it stands once the lock is held.
+            let _start = self
+                .sessions
+                .lock_speaker_start(&session.stream_id, &session.speaker_ip)
+                .await;
+            let Some(session) = self
+                .sessions
+                .get(&session.stream_id, &session.speaker_ip)
+                .filter(|s| s.role == GroupRole::Coordinator)
+            else {
+                continue;
+            };
             let Some(stream) = self.stream_registry.get_stream(&session.stream_id) else {
                 continue;
             };
@@ -877,6 +890,15 @@ impl StreamCoordinator {
                 )
                 .await
             {
+                Ok(())
+                    if self
+                        .sessions
+                        .get(&session.stream_id, &session.speaker_ip)
+                        .is_none() =>
+                {
+                    // Stopped while it moved: end what the move started.
+                    let _ = self.sonos.stop(&session.speaker_ip).await;
+                }
                 Ok(()) => {
                     log::info!(
                         "[Stream] Moved stream={} speaker={} to port 1443",
