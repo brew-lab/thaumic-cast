@@ -12,6 +12,8 @@ import { TransportStateSchema, ZoneGroupSchema } from './sonos.js';
  * - `user_removed`: User explicitly removed the speaker via UI
  * - `continuation_failed`: A long PCM cast could not be moved on to its next segment
  *   (the speaker would not start it), so it ended there
+ * - `move_failed`: Sonos UPnP was switched off mid-cast and the cast could not be moved
+ *   to the speakers' local connection (a FLAC cast cannot), so it ended there
  */
 export const SpeakerRemovalReasonSchema = z.enum([
   'source_changed',
@@ -20,6 +22,7 @@ export const SpeakerRemovalReasonSchema = z.enum([
   'speaker_taken_over',
   'user_removed',
   'continuation_failed',
+  'move_failed',
 ]);
 export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
 
@@ -139,6 +142,18 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
      * Absent when no step offered would: the gap is more than smoothing covers.
      */
     suggestedSmoothingMs: z.number().int().positive().optional(),
+    timestamp: z.number(),
+  }),
+  z.object({
+    /**
+     * The household's Sonos UPnP was switched off while the stream played, so
+     * the companion started the cast again over the speakers' local connection
+     * (port 1443), from the live edge: listeners may have heard a short skip.
+     * Sent once per stream and move, only to the client that owns it.
+     */
+    type: z.literal('castMoved'),
+    /** ID of the stream whose cast moved */
+    streamId: z.string(),
     timestamp: z.number(),
   }),
   CompanionAudioSchema.extend({

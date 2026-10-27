@@ -126,34 +126,8 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
                     (current_coordinator_uuid.take(), coordinator_ip.take())
                 {
                     if !current_members.is_empty() {
-                        // Build group name from member zone names:
-                        // - Single room / stereo pair / HT: use coordinator's name
-                        // - Multi-room (x-rincon join): combine unique zone names
-                        let group_name = coordinator_zone_name.take().map_or_else(
-                            || {
-                                let mut unique_names: Vec<&str> = Vec::new();
-                                for m in &current_members {
-                                    if !unique_names.contains(&m.zone_name.as_str()) {
-                                        unique_names.push(&m.zone_name);
-                                    }
-                                }
-                                unique_names.join(", ")
-                            },
-                            |coord_name| {
-                                let mut other_names: Vec<&str> = Vec::new();
-                                for m in &current_members {
-                                    let name = m.zone_name.as_str();
-                                    if name != coord_name.as_str() && !other_names.contains(&name) {
-                                        other_names.push(name);
-                                    }
-                                }
-                                if other_names.is_empty() {
-                                    coord_name
-                                } else {
-                                    format!("{}, {}", coord_name, other_names.join(", "))
-                                }
-                            },
-                        );
+                        let group_name =
+                            group_name(coordinator_zone_name.take().as_deref(), &current_members);
 
                         groups.push(ZoneGroup {
                             id: current_group_id.clone(),
@@ -176,6 +150,21 @@ pub fn parse_zone_group_xml(xml: &str) -> Vec<ZoneGroup> {
     }
 
     groups
+}
+
+/// A group's name from its members' room names:
+/// - a single room, stereo pair or home theatre: the coordinator's name;
+/// - several rooms: the coordinator's name, then each other room's once.
+///
+/// Without a known coordinator name, every room's name once.
+pub(crate) fn group_name(coordinator_name: Option<&str>, members: &[ZoneGroupMember]) -> String {
+    let mut names: Vec<&str> = coordinator_name.into_iter().collect();
+    for m in members {
+        if !names.contains(&m.zone_name.as_str()) {
+            names.push(&m.zone_name);
+        }
+    }
+    names.join(", ")
 }
 
 /// Reads one device's attributes from a `ZoneGroupMember` or `Satellite`

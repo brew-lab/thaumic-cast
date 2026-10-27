@@ -54,6 +54,10 @@
 //!   A `SetAVTransportURI` or leaving a group empties the queue, and the
 //!   AVTransport NOTIFY reports it as `NextAVTransportURI`, empty when
 //!   nothing is queued.
+//! * The local Control API (port 1443 on hardware) is served on the same
+//!   port: the player's description of itself and the WebSocket, answering
+//!   `getGroups` from the same model (see `lan`). Its commands have their
+//!   own log ([`FakeSonosSystem::lan_calls`]).
 //! * Every SOAP action and GENA request is appended to one ordered call log
 //!   for the household. Unknown actions answer with a SOAP fault (UPnP 401)
 //!   so a test fails loudly instead of silently succeeding.
@@ -87,8 +91,13 @@ use tokio::task::JoinHandle;
 use crate::sonos::services::SonosService;
 use crate::sonos::types::TransportState;
 
+mod lan;
+mod lan_cast;
 mod server;
 mod xml;
+
+pub(crate) use lan::{LanCall, FAKE_HOUSEHOLD_ID};
+pub(crate) use lan_cast::QueueRead;
 
 /// How long [`FakeSonosSystem::wait_for_call`] waits before failing the test.
 const WAIT_FOR_CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -218,9 +227,29 @@ struct SpeakerState {
     output_fixed: bool,
     group_volume: u8,
     group_mute: bool,
+    /// What the local Control API plays, when a cloud queue item is loaded.
+    lan: LanPlay,
     /// Task draining the body of the current stream fetch, if one is open.
     fetch: Option<JoinHandle<()>>,
     fetches: Vec<FetchRecord>,
+}
+
+/// A cloud queue item loaded over the local Control API (see `lan`).
+#[derive(Debug, Clone, Default)]
+pub(super) struct LanPlay {
+    /// The item playing, if one is loaded.
+    pub item_id: Option<String>,
+    /// The item played before it.
+    pub previous_item_id: Option<String>,
+    /// Its declared length.
+    pub duration_ms: Option<u64>,
+    /// The queue's base URL, to ask it again when the items run out.
+    pub queue_base: String,
+    /// The item listed after it: id, media URL and declared length.
+    pub next: Option<(String, String, Option<u64>)>,
+    /// The position reported: a fixed 5 s while playing, as RelTime is,
+    /// and the declared length once the item has played out.
+    pub position_ms: u64,
 }
 
 /// One fake speaker: identity plus the state its SOAP surface reads and writes.
@@ -264,6 +293,7 @@ impl FakeSpeaker {
                 output_fixed: false,
                 group_volume: 25,
                 group_mute: false,
+                lan: LanPlay::default(),
                 fetch: None,
                 fetches: Vec::new(),
             }),
@@ -411,18 +441,27 @@ impl FakeSpeaker {
                 }
             }
 
-            let Some(next) = self.advance_to_queued() else {
+            let Some(system) = system.upgrade() else {
                 return;
+            };
+            let next = match self.advance_to_queued() {
+                Some(next) => next,
+                None => match system.lan_advance(&self).await {
+                    Some(next) => next,
+                    None => return,
+                },
             };
             let Some(url) = stream_fetch_url(&next) else {
                 return;
             };
-            let Some(system) = system.upgrade() else {
-                return;
-            };
             match self.fetch_once(&system, url).await {
-                Some(next_response) => response = next_response,
-                None => return,
+                Some(next_response) if next_response.status().is_success() => {
+                    response = next_response;
+                }
+                _ => {
+                    system.lan_item_failed(&self);
+                    return;
+                }
             }
         }
     }
@@ -627,6 +666,15 @@ pub(crate) struct FakeSonosSystem {
     /// The household's Connection Security > UPnP switch; while off every
     /// control and event request is refused with a bare 403.
     upnp_enabled: AtomicBool,
+    /// The household's Authentication switch; while on, every command on
+    /// the local Control API is refused.
+    lan_authentication: AtomicBool,
+    /// Every command received on the local Control API, in order.
+    lan_calls: Mutex<Vec<LanCall>>,
+    /// The local Control API's sockets, subscriptions and sessions.
+    lan: lan::LanState,
+    /// Every cloud queue request the speakers made.
+    queue_reads: Mutex<Vec<QueueRead>>,
     fetch_observer: Mutex<Option<FetchObserver>>,
     /// Satellite UUID to the UUID of the primary it is bonded to.
     satellites: Mutex<HashMap<String, String>>,
@@ -730,6 +778,10 @@ impl FakeSonosSystem {
             notify_seq: AtomicUsize::new(0),
             gena_timeout_secs: AtomicU64::new(DEFAULT_GENA_TIMEOUT_SECS),
             upnp_enabled: AtomicBool::new(true),
+            lan_authentication: AtomicBool::new(false),
+            lan_calls: Mutex::new(Vec::new()),
+            lan: lan::LanState::default(),
+            queue_reads: Mutex::new(Vec::new()),
             fetch_observer: Mutex::new(None),
             satellites: Mutex::new(HashMap::new()),
             joins: Mutex::new(Vec::new()),
@@ -1024,12 +1076,14 @@ impl FakeSonosSystem {
     pub fn regroup_externally(&self, member: &str, coordinator: &str) {
         self.leave_group(self.speaker_named(member));
         self.group(coordinator, &[member]);
+        self.push_groups();
     }
 
     /// Makes `name` standalone from outside, as someone in the Sonos app
     /// would, promoting a member if it coordinated others.
     pub fn make_standalone_externally(&self, name: &str) {
         self.leave_group(self.speaker_named(name));
+        self.push_groups();
     }
 
     /// Drops `name` out of the household's topology, as a speaker that was
@@ -1198,6 +1252,44 @@ impl FakeSonosSystem {
 
     pub(super) fn upnp_enabled(&self) -> bool {
         self.upnp_enabled.load(Ordering::SeqCst)
+    }
+
+    // ── Local Control API ───────────────────────────────────────────────────
+
+    /// Flips the household's Authentication switch in the Sonos app. On,
+    /// every command on the local Control API is refused with
+    /// `ERROR_NO_PERMISSION`.
+    pub fn set_lan_authentication(&self, on: bool) {
+        self.lan_authentication.store(on, Ordering::SeqCst);
+    }
+
+    pub(super) fn lan_authentication(&self) -> bool {
+        self.lan_authentication.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn record_lan(&self, call: LanCall) {
+        self.lan_calls.lock().push(call);
+    }
+
+    /// Every command received on the local Control API so far, in order.
+    pub fn lan_calls(&self) -> Vec<LanCall> {
+        self.lan_calls.lock().clone()
+    }
+
+    /// Sets the room `name`'s own level, as the Sonos app would, and
+    /// pushes it to the local Control API's subscribers.
+    pub fn change_volume_in_app(&self, name: &str, volume: u8) {
+        let speaker = self.speaker_named(name);
+        speaker.set_volume(volume);
+        self.push_player_volume(speaker);
+    }
+
+    /// Sets the level of the group `coordinator` leads, as the Sonos app
+    /// would, and pushes it to the local Control API's subscribers.
+    pub fn change_group_volume_in_app(&self, coordinator: &str, volume: u8) {
+        let speaker = self.speaker_named(coordinator);
+        speaker.set_group_volume(volume);
+        self.push_group_volume(speaker);
     }
 
     /// Sets the subscription lifetime granted to SUBSCRIBE and renewals.

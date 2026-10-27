@@ -1,5 +1,6 @@
 //! The HTTP surface of one fake speaker: device description, SOAP control
-//! endpoints and GENA event endpoints, dispatched on path and method.
+//! endpoints and GENA event endpoints, dispatched on path and method, plus
+//! the local Control API (see [`super::lan`]).
 
 use std::sync::Arc;
 
@@ -7,12 +8,13 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::any;
+use axum::routing::{any, get};
 use axum::Router;
 
+use crate::sonos::lan::protocol::{INFO_PATH, WS_PATH};
 use crate::sonos::services::SonosService;
 
-use super::{xml, Failure, FakeSonosSystem, FakeSpeaker, SystemHandle};
+use super::{lan, xml, Failure, FakeSonosSystem, FakeSpeaker, SystemHandle};
 
 /// Largest SOAP body accepted; DIDL metadata is well under this.
 const MAX_BODY_BYTES: usize = 1 << 20;
@@ -25,14 +27,16 @@ const ALL_SERVICES: [SonosService; 4] = [
 ];
 
 #[derive(Clone)]
-struct Ctx {
-    system: SystemHandle,
-    speaker: Arc<FakeSpeaker>,
+pub(super) struct Ctx {
+    pub(super) system: SystemHandle,
+    pub(super) speaker: Arc<FakeSpeaker>,
 }
 
 /// Builds the router serving `speaker` on behalf of `system`.
 pub(super) fn router(system: SystemHandle, speaker: Arc<FakeSpeaker>) -> Router {
     Router::new()
+        .route(INFO_PATH, get(lan::info))
+        .route(WS_PATH, get(lan::socket))
         .fallback(any(handle))
         .with_state(Ctx { system, speaker })
 }

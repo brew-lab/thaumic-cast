@@ -114,6 +114,14 @@ export type PlaybackResult = z.infer<typeof PlaybackResultSchema>;
 export const SPEAKERS_UPNP_DISABLED = 'speakers_upnp_disabled';
 
 /**
+ * A room's `PlaybackResult.error` when a FLAC cast was asked of a household
+ * with Sonos UPnP switched off, where FLAC never plays: the user casts PCM or
+ * AAC, or switches UPnP on. Kept in sync with `FLAC_NEEDS_UPNP` in the core's
+ * `protocol_constants.rs`.
+ */
+export const FLAC_NEEDS_UPNP = 'flac_needs_upnp';
+
+/**
  * An active cast session with its current state.
  * Used for displaying in the popup's active casts list.
  * Supports multi-group casting (one stream to multiple speaker groups).

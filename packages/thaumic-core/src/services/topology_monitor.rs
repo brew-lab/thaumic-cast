@@ -536,13 +536,15 @@ impl TopologyMonitor {
     /// when its coordinator left) gets its AVTransport subscription here, instead of
     /// waiting up to a full refresh interval for one.
     pub(crate) async fn quick_refresh_zone_groups(&self) -> ThaumicResult<()> {
-        // Pick a coordinator IP from current state
-        let coordinator_ip = {
+        // Pick a coordinator from current state
+        let coordinator = {
             let groups = self.sonos_state.groups.read();
-            groups.first().map(|g| g.coordinator_ip.clone())
+            groups
+                .first()
+                .map(|g| (g.coordinator_ip.clone(), g.coordinator_uuid.clone()))
         };
 
-        let ip = coordinator_ip.ok_or_else(|| {
+        let (ip, uuid) = coordinator.ok_or_else(|| {
             ThaumicError::SpeakerNotFound("no known speakers for quick refresh".to_string())
         })?;
 
@@ -553,7 +555,7 @@ impl TopologyMonitor {
 
         let snapshot = self
             .sonos
-            .get_zone_group_state(&ip)
+            .refresh_zone_groups(&ip, &uuid)
             .await
             .map_err(|e| ThaumicError::Soap(format!("quick refresh SOAP failed: {}", e)))?;
         let groups = snapshot.groups;
@@ -562,7 +564,8 @@ impl TopologyMonitor {
             "[TopologyMonitor] Quick refresh: {} groups found",
             groups.len()
         );
-        // A speaker answering means the household's UPnP switch is back on.
+        // A speaker answering means the household's UPnP switch is back on,
+        // or that it is off and the speakers answer on port 1443 instead.
         if self.upnp_is_off() {
             self.set_network_health(NetworkHealth::Ok, None);
         }
@@ -724,7 +727,11 @@ impl TopologyMonitor {
         // UPnP switch is back on; health is decided here, not by the event
         // check below, which would read the empty transport states as no reply.
         let upnp_was_off = self.upnp_is_off();
-        let snapshot = match self.sonos.get_zone_group_state(&query_speaker.ip).await {
+        let snapshot = match self
+            .sonos
+            .refresh_zone_groups(&query_speaker.ip, &query_speaker.uuid)
+            .await
+        {
             Ok(snapshot) => {
                 log::info!(
                     "[TopologyMonitor] SOAP succeeded: {} groups found",
@@ -737,6 +744,7 @@ impl TopologyMonitor {
             }
             Err(SoapError::UpnpDisabled) => {
                 // The switch is per household, so one refusal speaks for all.
+                // Port 1443 refused too, or the refusal would not be here.
                 if !upnp_was_off {
                     log::warn!(
                         "[TopologyMonitor] {} refused control: UPnP is switched off for this \
@@ -796,6 +804,13 @@ impl TopologyMonitor {
             &callback_url,
         )
         .await;
+
+        // Over port 1443 the groups just read are the proof of contact, and
+        // there are no subscriptions to judge events by.
+        if self.arbiter.route().is_lan() {
+            self.set_network_health(NetworkHealth::Ok, None);
+            return Ok(());
+        }
 
         let av_sub_count = self
             .gena_manager
@@ -1216,6 +1231,12 @@ impl TopologyMonitor {
 
         // Clean up stale state entries for speakers that left the network
         self.sonos_state.cleanup_stale_entries(current_speaker_ips);
+
+        // Over port 1443 there is no GENA: every subscription would be
+        // refused, and the speakers report over their sockets instead.
+        if self.arbiter.route().is_lan() {
+            return;
+        }
 
         // Drop subscriptions that name an address we no longer advertise, before
         // the steps below rebuild them against the one we do.
@@ -2147,6 +2168,33 @@ mod tests {
         let health = monitor.get_network_health();
         assert_eq!((health.health, health.reason), upnp_disabled());
         assert_eq!(emitter.health_changes(), vec![upnp_disabled()]);
+    }
+
+    #[tokio::test]
+    async fn a_household_found_on_port_1443_is_healthy_and_never_judged_by_events() {
+        let emitter = Arc::new(CollectingEmitter::new());
+        let (monitor, upnp_off) = upnp_switchable_monitor(Arc::clone(&emitter));
+        upnp_off.store(true, Ordering::Relaxed);
+        assert!(monitor.refresh_topology().await.is_err());
+
+        // The router answers from port 1443 and moves the route there.
+        upnp_off.store(false, Ordering::Relaxed);
+        monitor
+            .arbiter
+            .route()
+            .set(crate::sonos::routed::Route::Lan);
+        monitor.refresh_topology().await.unwrap();
+        // Not the first discovery, groups and no transport state: on UPnP
+        // that could read as events not arriving. Over port 1443 it cannot.
+        monitor.refresh_topology().await.unwrap();
+
+        let health = monitor.get_network_health();
+        assert_eq!((health.health, health.reason), (NetworkHealth::Ok, None));
+        assert_eq!(
+            emitter.health_changes(),
+            vec![upnp_disabled(), (NetworkHealth::Ok, None)]
+        );
+        assert_eq!(monitor.gena_manager.subscription_count(), 0);
     }
 
     #[tokio::test]
