@@ -113,7 +113,7 @@ impl LanClient {
     }
 
     /// The player at `ip`, for a command.
-    fn player(&self, ip: &str) -> SoapResult<String> {
+    pub(super) fn player(&self, ip: &str) -> SoapResult<String> {
         self.hub.player_at(ip).ok_or_else(|| {
             transport_error(code::CONNECT_FAILED, format!("no player known at {ip}"))
         })
@@ -148,15 +148,21 @@ impl LanClient {
 
     /// Reads the groups through `ip` and keeps them, making each listed
     /// player known at its address.
-    async fn read_groups(&self, ip: &str, household_id: &str) -> SoapResult<Groups> {
+    pub(super) async fn read_groups(&self, ip: &str, household_id: &str) -> SoapResult<Groups> {
         let groups = self.hub.groups(ip, household_id).await?;
+        self.keep_groups(&groups);
+        Ok(groups)
+    }
+
+    /// Keeps `groups` as the last read, making each listed player known at
+    /// its address.
+    pub(super) fn keep_groups(&self, groups: &Groups) {
         for player in &groups.players {
             if let Some(at) = host_of(&player.websocket_url) {
                 self.hub.know(at, &player.id);
             }
         }
         *self.groups.write() = groups.clone();
-        Ok(groups)
     }
 
     /// Reads the household's groups through the player at `ip`, learning
@@ -293,6 +299,18 @@ impl LanClient {
         command: &'static str,
         body: serde_json::Value,
     ) -> SoapResult<serde_json::Value> {
+        Ok(self.on_group_at(ip, namespace, command, body).await?.0)
+    }
+
+    /// [`Self::on_group`], with the speaker that answered: another one than
+    /// `ip` when the group's coordinator moved and the command followed it.
+    pub(super) async fn on_group_at(
+        &self,
+        ip: &str,
+        namespace: &'static str,
+        command: &'static str,
+        body: serde_json::Value,
+    ) -> SoapResult<(serde_json::Value, String)> {
         let household_id = self.household()?;
         let group_id = self.group_led_by(ip, &household_id).await?;
         let send = |group_id: String| {
@@ -301,15 +319,16 @@ impl LanClient {
             let household_id = household_id.clone();
             async move { self.hub.call(ip, &household_id, &cmd).await }
         };
+        let answer = |reply: super::hub::HubReply| (reply.frame().body.clone(), reply.ip);
         match send(group_id.clone()).await {
-            Ok(reply) => Ok(reply.frame().body.clone()),
+            Ok(reply) => Ok(answer(reply)),
             Err(e @ SoapError::Lan { .. }) if !e.is_transient() => {
                 self.read_groups(ip, &household_id).await?;
                 let now = self.group_led_by(ip, &household_id).await?;
                 if now == group_id {
                     return Err(e);
                 }
-                Ok(send(now).await?.frame().body.clone())
+                Ok(answer(send(now).await?))
             }
             Err(e) => Err(e),
         }

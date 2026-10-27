@@ -25,6 +25,15 @@
 //! * `subscribe` to `playback:1` pushes the group's status at once and on
 //!   every change; to `playbackSession:1`, its session's errors.
 //! * The Sonos app can take a group over ([`FakeSonosSystem::take_over_on_lan`]).
+//! * `groups:1 modifyGroupMembers` on a group's coordinator adds and removes
+//!   players, on the same model as the UPnP joins and leaves: an added room
+//!   plays what the group plays, a refused one ([`FakeSonosSystem::refuse_join`])
+//!   is answered as accepted and never changes, so only a read-back can tell.
+//!   A coordinator that leaves promotes the first room left, which takes the
+//!   group's session and stays PAUSED, and the old coordinator's subscribers
+//!   get `groupCoordinatorChanged` (`GROUP_STATUS_MOVED`) naming it. The
+//!   promoted group's id is its own coordinator's, where hardware keeps the
+//!   old one: the fake derives every id from its coordinator.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -35,7 +44,10 @@ use tokio::sync::mpsc;
 use crate::sonos::lan::protocol::Frame;
 use crate::sonos::types::TransportState;
 
-use super::lan::{event_as, group_id, leads, not_here, refusal, reply, LanSession, Subscriber};
+use super::lan::{
+    event_as, group_id, group_json, leads, not_here, refusal, reply, websocket_url, LanSession,
+    Subscriber,
+};
 use super::{FakeSonosSystem, FakeSpeaker};
 
 /// The playback namespace.
@@ -119,6 +131,113 @@ pub(super) async fn answer(
         )),
     };
     Some(result)
+}
+
+/// Applies a `modifyGroupMembers` body on the group `speaker` leads, and
+/// returns the `groupInfo` of the group it then leads, or joined.
+pub(super) fn modify_members(
+    system: &FakeSonosSystem,
+    speaker: &Arc<FakeSpeaker>,
+    body: &Value,
+) -> Value {
+    let ids = |key: &str| -> Vec<String> {
+        body[key]
+            .as_array()
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| id.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for id in ids("playerIdsToAdd") {
+        let Some(member) = system.speakers.iter().find(|s| s.uuid == id) else {
+            continue;
+        };
+        let refused = (member.ip_string(), speaker.uuid.clone());
+        if system.refused_joins.lock().contains(&refused) {
+            continue;
+        }
+        system.record_join(member, &speaker.uuid);
+        member.abort_fetch();
+        let mut state = member.state.lock();
+        state.transport = speaker.transport_state();
+        state.coordinator_uuid = speaker.uuid.clone();
+        state.current_uri = format!("x-rincon:{}", speaker.uuid);
+        state.next_uri.clear();
+    }
+    for id in ids("playerIdsToRemove") {
+        let Some(member) = system.speakers.iter().find(|s| s.uuid == id) else {
+            continue;
+        };
+        if member.uuid == speaker.uuid {
+            coordinator_leaves(system, speaker);
+        } else {
+            system.leave_group(member);
+        }
+    }
+    let leads = system
+        .zone_groups()
+        .into_iter()
+        .find(|(_, members)| members.iter().any(|m| m.uuid == speaker.uuid));
+    let group = leads.map_or(Value::Null, |(coordinator, members)| {
+        group_json(&coordinator, &members)
+    });
+    json!({ "_objectType": "groupInfo", "group": group })
+}
+
+/// The coordinator `speaker` leaves its group: the first room left is
+/// promoted and takes the group's session, PAUSED; `speaker`'s subscribers
+/// are told where the group went.
+fn coordinator_leaves(system: &FakeSonosSystem, speaker: &FakeSpeaker) {
+    let old_group = group_id(speaker);
+    let promoted = system.followers_of(speaker).first().cloned();
+    let lan = speaker.state.lock().lan.clone();
+    system.leave_group(speaker);
+    {
+        let mut state = speaker.state.lock();
+        let played = state.lan.item_id.take();
+        state.lan.previous_item_id = played.or(state.lan.previous_item_id.take());
+        state.lan.next = None;
+    }
+    let Some(promoted) = promoted else {
+        return;
+    };
+    let session = system.lan.sessions.lock().remove(&old_group);
+    if let Some(session) = session {
+        system
+            .lan
+            .sessions
+            .lock()
+            .insert(group_id(&promoted), session);
+        let mut state = promoted.state.lock();
+        state.lan = lan;
+        state.transport = TransportState::Paused;
+    }
+    let text = event_as(
+        "global",
+        "groupCoordinatorChanged",
+        "groupId",
+        &old_group,
+        json!({
+            "_objectType": "groupCoordinatorChanged",
+            "groupStatus": "GROUP_STATUS_MOVED",
+            "groupName": promoted.name,
+            "websocketUrl": websocket_url(system, &promoted),
+            "playerId": promoted.uuid,
+        }),
+    );
+    system.push_lan_text(PLAYBACK, &old_group, &text);
+    system.push_status(&promoted);
+}
+
+impl FakeSonosSystem {
+    /// Takes the coordinator in room `name` out of its group in the Sonos
+    /// app, as the household would: a cast's session moves with the group to
+    /// the room promoted in its place.
+    pub fn coordinator_leaves_in_app(&self, name: &str) {
+        coordinator_leaves(self, self.speaker_named(name));
+    }
 }
 
 fn subscribe(

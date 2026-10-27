@@ -171,11 +171,20 @@ async fn on_port_1443_a_call_not_carried_out_is_refused_without_upnp() {
             .build()
             .await;
         let seq = sys.fake.next_seq();
+        let stream = sys.new_stream();
 
+        // The builder's codec is AAC, which is not cast over port 1443 yet.
         match sys
             .services
             .sonos
-            .join_group(&sys.ip("Kitchen"), "RINCON_OTHER")
+            .play_uri(
+                &sys.ip("Kitchen"),
+                &sys.stream_url(&stream),
+                crate::stream::AudioCodec::Aac,
+                &crate::stream::AudioFormat::default(),
+                None,
+                "",
+            )
             .await
         {
             Err(SoapError::Lan { code: c, .. }) => assert_eq!(c, code::UNSUPPORTED),

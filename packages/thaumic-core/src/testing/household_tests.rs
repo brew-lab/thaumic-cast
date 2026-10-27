@@ -2,8 +2,8 @@
 //! parsers and Sonos client: pre-grouped rooms, home-theatre satellites,
 //! a coordinator leaving its group, joins, and regrouping from outside.
 //!
-//! Reading the groups runs on both routes. Joins, leaves and topology events
-//! are on UPnP only until port 1443 carries them.
+//! Reading the groups, joins and leaves run on both routes; topology events
+//! from outside are UPnP's (GENA ZoneGroupTopology).
 
 use crate::events::SonosEvent;
 use crate::sonos::types::TransportState;
@@ -78,15 +78,16 @@ async fn a_pre_grouped_household_reads_back_as_its_groups(route) {
 }
 }
 
+both_routes! {
 /// Proves: when a playing group's coordinator leaves, its first member is
 /// promoted with the group's track and transport, the rest follow it, and
 /// the track is recorded as restarted; a member leaving promotes nobody.
-#[tokio::test]
-async fn a_coordinator_leaving_promotes_its_first_member() {
+async fn a_coordinator_leaving_promotes_its_first_member(route) {
     within("promotion", async {
         let sys = TestSystem::builder()
             .speakers(["Kitchen", "Patio", "Dining Room"])
             .groups(&[&["Kitchen", "Patio", "Dining Room"]])
+            .route(route)
             .build()
             .await;
         sys.fake.play_music("Kitchen", MUSIC);
@@ -122,15 +123,17 @@ async fn a_coordinator_leaving_promotes_its_first_member() {
     })
     .await;
 }
+}
 
+both_routes! {
 /// Proves: a join takes on the group's transport at once with no Play, and
 /// each join records how many speakers followed the joining one.
-#[tokio::test]
-async fn a_join_plays_with_the_group_and_records_its_followers() {
+async fn a_join_plays_with_the_group_and_records_its_followers(route) {
     within("join", async {
         let sys = TestSystem::builder()
             .speakers(["Kitchen", "Patio", "Office", "Den"])
             .groups(&[&["Office", "Den"]])
+            .route(route)
             .build()
             .await;
         sys.fake.play_music("Kitchen", MUSIC);
@@ -168,6 +171,7 @@ async fn a_join_plays_with_the_group_and_records_its_followers() {
         );
     })
     .await;
+}
 }
 
 /// Proves: a regroup made from outside reaches the services through a

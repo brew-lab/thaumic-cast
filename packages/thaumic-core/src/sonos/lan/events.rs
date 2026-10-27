@@ -9,7 +9,8 @@
 //!   changes, as GENA reports a transport change. The speakers' own
 //!   `playbackStatus` pushes can arrive 26-40 s late, so a push only brings
 //!   the next poll forward; it never sets the state itself.
-//! - **A session evicted** that we did not end is a takeover.
+//! - **A session evicted** that we did not end is a takeover, and so is a
+//!   cast's group moved to another coordinator by the household.
 //! - **A socket that drops** under a live cast is reopened (the hub's
 //!   backoff paces it) and the session joined again; one that reopens is
 //!   given its subscriptions again.
@@ -132,6 +133,16 @@ pub fn start(
                 Ok(LanEvent::Frame { ip, frame, .. }) => match frame.name() {
                     "playbackStatus" | "playbackError" if lan.has_cast(&ip) => {
                         poll_now(&lan, &sink, &tasks, ip);
+                    }
+                    "groupCoordinatorChanged" if lan.has_cast(&ip) => {
+                        if let Some(to) = frame.group_moved().and_then(|m| m.ip) {
+                            let (lan, sink) = (Arc::clone(&lan), Arc::clone(&sink));
+                            tasks.spawn(async move {
+                                if let Some(event) = lan.coordinator_moved(&ip, &to).await {
+                                    sink(event);
+                                }
+                            });
+                        }
                     }
                     "sessionError" => {
                         if let Some(event) = lan.session_error(&ip, &frame) {

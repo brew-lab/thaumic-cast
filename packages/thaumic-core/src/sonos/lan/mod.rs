@@ -13,6 +13,7 @@
 //! - `events` - the pump that hands socket events to GENA's channel
 //! - `queue` - the cloud queues served to speakers that cast over port 1443
 //! - `playback` - casts: sessions, loads, status and stop
+//! - `rooms` - rooms joining and leaving groups
 
 pub mod client;
 pub mod events;
@@ -20,6 +21,7 @@ pub mod hub;
 pub mod playback;
 pub mod protocol;
 pub mod queue;
+pub mod rooms;
 pub mod socket;
 pub mod tls;
 pub mod volume;

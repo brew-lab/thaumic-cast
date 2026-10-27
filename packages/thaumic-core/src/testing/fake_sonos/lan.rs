@@ -20,7 +20,8 @@
 //! * `subscribe` to either namespace pushes the current level at once and
 //!   every change after it to that socket, as hardware does; a write that
 //!   changes nothing pushes nothing.
-//! * Casts (`playback:1`, `playbackSession:1`) are modelled in `lan_cast`.
+//! * Casts (`playback:1`, `playbackSession:1`) and group changes
+//!   (`groups:1 modifyGroupMembers`) are modelled in `lan_cast`.
 //! * A speaker's sockets can be dropped from its side
 //!   ([`FakeSonosSystem::drop_lan_sockets`]).
 //! * With Authentication on ([`FakeSonosSystem::set_lan_authentication`])
@@ -250,6 +251,12 @@ async fn answer(
     let target = target.unwrap_or_default();
     let result = match (frame.namespace(), command.as_str()) {
         ("groups:1", "getGroups") => Ok(groups(system)),
+        ("groups:1", "modifyGroupMembers") if target != group_id(speaker) || !leads(speaker) => {
+            Err(not_here(&target))
+        }
+        ("groups:1", "modifyGroupMembers") => {
+            Ok(lan_cast::modify_members(system, speaker, &frame.body))
+        }
         (PLAYER_VOLUME, _) if target != speaker.uuid => Err(not_here(&target)),
         (PLAYER_VOLUME, "getVolume") => Ok(player_volume(speaker)),
         (PLAYER_VOLUME, "setVolume") => set_player_volume(system, speaker, &frame.body),
@@ -459,20 +466,29 @@ impl FakeSonosSystem {
     }
 }
 
+/// The `group` object `getGroups` and `modifyGroupMembers` describe a
+/// group with.
+pub(super) fn group_json(coordinator: &FakeSpeaker, members: &[Arc<FakeSpeaker>]) -> Value {
+    json!({
+        "_objectType": "group",
+        "id": format!("{}:1", coordinator.uuid),
+        "name": coordinator.name,
+        "coordinatorId": coordinator.uuid,
+        "playerIds": members.iter().map(|m| m.uuid.clone()).collect::<Vec<_>>(),
+    })
+}
+
+/// The address the local Control API of `speaker` is reached at.
+pub(super) fn websocket_url(system: &FakeSonosSystem, speaker: &FakeSpeaker) -> String {
+    format!("ws://{}:{}{WS_PATH}", speaker.ip, system.port())
+}
+
 /// The `getGroups` body for the household's model.
 fn groups(system: &FakeSonosSystem) -> Value {
     let zone_groups = system.zone_groups();
     let groups: Vec<Value> = zone_groups
         .iter()
-        .map(|(coordinator, members)| {
-            json!({
-                "_objectType": "group",
-                "id": format!("{}:1", coordinator.uuid),
-                "name": coordinator.name,
-                "coordinatorId": coordinator.uuid,
-                "playerIds": members.iter().map(|m| m.uuid.clone()).collect::<Vec<_>>(),
-            })
-        })
+        .map(|(coordinator, members)| group_json(coordinator, members))
         .collect();
     let players: Vec<Value> = zone_groups
         .iter()
@@ -486,7 +502,7 @@ fn player(system: &FakeSonosSystem, speaker: &Arc<FakeSpeaker>) -> Value {
         "_objectType": "player",
         "id": speaker.uuid,
         "name": speaker.name,
-        "websocketUrl": format!("ws://{}:{}{WS_PATH}", speaker.ip, system.port()),
+        "websocketUrl": websocket_url(system, speaker),
         "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
         "devices": [{ "id": speaker.uuid, "modelDisplayName": "Play:1" }],
     })

@@ -326,3 +326,93 @@ async fn a_loud_room_is_turned_down_before_the_cast_plays(route) {
     .await;
 }
 }
+
+/// The household's grouping, as room names.
+fn grouping(sys: &TestSystem) -> Vec<Vec<String>> {
+    sys.fake.grouping()
+}
+
+fn rooms(groups: &[&[&str]]) -> Vec<Vec<String>> {
+    groups
+        .iter()
+        .map(|g| g.iter().map(|n| (*n).to_string()).collect())
+        .collect()
+}
+
+both_routes! {
+/// Proves: on either route a cast to two rooms plays them as one Sonos
+/// group, only its coordinator fetching, and the rooms are put back as they
+/// were when it stops.
+async fn a_cast_to_two_rooms_plays_as_one_group_and_puts_them_back(route) {
+    within("rooms", async {
+        let sys = pcm_system(route, &["Kitchen", "Patio"]).await;
+        let stream = sys.new_stream();
+
+        let results = sys.start_rooms(&stream, &["Kitchen", "Patio"], None).await;
+        assert!(results.iter().all(|r| r.success), "{results:?}");
+        assert_eq!(grouping(&sys), rooms(&[&["Kitchen", "Patio"]]));
+        assert!(sys.fake.speaker_named("Kitchen").is_fetching());
+        assert!(!sys.fake.speaker_named("Patio").is_fetching());
+        assert!(sys.session(&stream, "Patio").is_some());
+
+        sys.coordinator().remove_stream_async(&stream).await;
+        assert_eq!(grouping(&sys), rooms(&[&["Kitchen"], &["Patio"]]));
+        assert!(sys.sessions().is_empty());
+    })
+    .await;
+}
+}
+
+both_routes! {
+/// Proves: on either route a room the household will not let join is left
+/// out of the cast, the rest plays, and nothing is left grouped that was not.
+/// On port 1443 the refusal is never said: only reading the groups back
+/// shows the join did not happen.
+async fn a_room_that_will_not_join_is_left_out_and_the_rest_plays(route) {
+    within("refused join", async {
+        let sys = pcm_system(route, &["Kitchen", "Patio"]).await;
+        sys.fake.refuse_join("Patio", "Kitchen");
+        let stream = sys.new_stream();
+
+        let results = sys.start_rooms(&stream, &["Kitchen", "Patio"], None).await;
+        assert_eq!(
+            sys.outcome(&results),
+            [("Kitchen".to_string(), true), ("Patio".to_string(), false)]
+        );
+        assert!(sys.fake.speaker_named("Kitchen").is_fetching());
+        assert_eq!(grouping(&sys), rooms(&[&["Kitchen"], &["Patio"]]));
+        assert!(sys.session(&stream, "Patio").is_none());
+    })
+    .await;
+}
+}
+
+/// Proves: on port 1443 a coordinator the household takes out of its group
+/// mid-cast ends the cast in every room as a takeover, and the session the
+/// promoted room inherited is left there, so nothing plays out of view.
+#[tokio::test]
+async fn on_port_1443_a_coordinator_moved_by_the_household_ends_the_cast() {
+    within("coordinator moved", async {
+        let sys = pcm_system(Route::Lan, &["Kitchen", "Patio"]).await;
+        let (kitchen, patio) = (sys.ip("Kitchen"), sys.ip("Patio"));
+        let stream = sys.new_stream();
+        let results = sys.start_rooms(&stream, &["Kitchen", "Patio"], None).await;
+        assert!(results.iter().all(|r| r.success), "{results:?}");
+
+        sys.fake.coordinator_leaves_in_app("Kitchen");
+        for ip in [&kitchen, &patio] {
+            sys.events
+                .wait_for_stream(|e| {
+                    matches!(e, StreamEvent::PlaybackStopped { speaker_ip,
+                        reason: Some(SpeakerRemovalReason::SourceChanged), .. } if speaker_ip == ip)
+                })
+                .await;
+        }
+        until(|| sys.fake.lan_session("Patio").is_none()).await;
+        assert!(lan_commands(&sys, &patio)
+            .iter()
+            .any(|(n, c)| n == "playbackSession:1" && c == "leaveSession"));
+        until(|| !sys.services.route.is_held()).await;
+    })
+    .await;
+}

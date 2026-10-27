@@ -32,6 +32,11 @@
 //! - **A dropped socket** is reopened and the session joined again: playback
 //!   carries on over the same audio request, and the speaker returns the same
 //!   session.
+//! - **A coordinator moved by the household** (it left its group in the Sonos
+//!   app) hands the group and our session to the room promoted in its place,
+//!   which stays PAUSED. That ends the cast as a takeover, as on port 1400,
+//!   and the session is left on the promoted room so nothing plays there out
+//!   of view.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -111,6 +116,8 @@ pub struct Cast {
     pub status: Option<(Instant, TransportState, PositionInfo)>,
     /// The state and track last reported as an event.
     pub reported: Option<(TransportState, String)>,
+    /// Where the group went, when a status was answered by another player.
+    pub moved_to: Option<String>,
     /// Keeps the household on port 1443.
     _hold: LanHold,
 }
@@ -362,6 +369,7 @@ impl LanClient {
                     gen: gen.clone(),
                     item: item.clone(),
                     played: HashSet::new(),
+                    moved_to: None,
                     queue_url: queue_url.clone(),
                     loaded_at: Instant::now(),
                     status: None,
@@ -445,9 +453,14 @@ impl LanClient {
 
     /// Reads the playback of the group `ip` leads, as the services see it.
     async fn status(&self, ip: &str) -> SoapResult<(TransportState, PositionInfo)> {
-        let body = self
-            .on_group(ip, PLAYBACK, "getPlaybackStatus", json!({}))
+        let (body, answered_by) = self
+            .on_group_at(ip, PLAYBACK, "getPlaybackStatus", json!({}))
             .await?;
+        if answered_by != ip {
+            if let Some(cast) = self.casts.lock().get_mut(ip) {
+                cast.moved_to = Some(answered_by.clone());
+            }
+        }
         let status = PlaybackStatus::deserialize(&body)
             .map_err(|e| transport_error(code::BAD_REPLY, format!("playback status: {e}")))?;
         let played = self
@@ -500,6 +513,10 @@ impl LanClient {
     /// The event for the cast on `ip`'s state, if it changed since the last
     /// one: from a status read within [`STATUS_FRESH_FOR`], or a fresh one.
     pub async fn poll(&self, ip: &str) -> Option<SonosEvent> {
+        let moved = self.casts.lock().get(ip)?.moved_to.clone();
+        if let Some(to) = moved {
+            return self.coordinator_moved(ip, &to).await;
+        }
         let fresh = {
             let casts = self.casts.lock();
             let cast = casts.get(ip)?;
@@ -530,6 +547,32 @@ impl LanClient {
             state,
             current_uri: (!track.is_empty()).then_some(track),
             next_uri: None,
+            timestamp: now_millis(),
+        })
+    }
+
+    /// The cast on `ip` lost its coordinator: the household moved the group,
+    /// and our session with it, to the player at `to`. The services are told
+    /// the cast was taken over, and the session is left on `to` (a command
+    /// sent to `ip` for the group follows it there).
+    pub async fn coordinator_moved(&self, ip: &str, to: &str) -> Option<SonosEvent> {
+        let cast = self.casts.lock().remove(ip)?;
+        self.queues.end(&cast.gen);
+        log::warn!(
+            "[Lan] {ip}: the household moved the group casting {} to {to}; ending it there",
+            cast.stream_id
+        );
+        if let Err(e) = self
+            .on_session(to, &cast.session_id, "leaveSession", json!({}))
+            .await
+        {
+            log::warn!("[Lan] {to}: leaveSession after the move: {e}");
+        }
+        self.queues.remove(&cast.gen);
+        Some(SonosEvent::SourceChanged {
+            speaker_ip: ip.to_string(),
+            current_uri: format!("x-sonos-lan-moved:{to}"),
+            expected_uri: Some(cast.item.media_url),
             timestamp: now_millis(),
         })
     }
@@ -672,25 +715,18 @@ impl SonosPlayback for LanClient {
         Ok(self.status(ip).await?.0)
     }
 
-    async fn join_group(&self, _ip: &str, _coordinator_uuid: &str) -> SoapResult<()> {
-        Err(transport_error(
-            code::UNSUPPORTED,
-            "grouping is not carried out on port 1443",
-        ))
+    async fn join_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        self.join(ip, coordinator_uuid).await
     }
 
-    async fn leave_group(&self, _ip: &str) -> SoapResult<()> {
-        Err(transport_error(
-            code::UNSUPPORTED,
-            "grouping is not carried out on port 1443",
-        ))
+    async fn leave_group(&self, ip: &str) -> SoapResult<()> {
+        self.leave(ip).await
     }
 
-    async fn rejoin_group(&self, _ip: &str, _coordinator_uuid: &str) -> SoapResult<()> {
-        Err(transport_error(
-            code::UNSUPPORTED,
-            "grouping is not carried out on port 1443",
-        ))
+    async fn rejoin_group(&self, ip: &str, coordinator_uuid: &str) -> SoapResult<()> {
+        // A room joining plays what its group plays with no command of its
+        // own, so putting one back is the same as a join.
+        self.join(ip, coordinator_uuid).await
     }
 }
 
