@@ -1,5 +1,14 @@
 # @thaumic-cast/server
 
+## 0.13.2
+
+### Patch Changes
+
+- [#281](https://github.com/brew-lab/thaumic-cast/pull/281) [`ee542ae`](https://github.com/brew-lab/thaumic-cast/commit/ee542aea542bd61caccac76a7d384ae316c33d27) Thanks [@skezo](https://github.com/skezo)! - Every HTTP response now carries `X-Clacks-Overhead: GNU Terry Pratchett`, keeping his name moving in the clacks.
+
+- [#283](https://github.com/brew-lab/thaumic-cast/pull/283) [`46aa05f`](https://github.com/brew-lab/thaumic-cast/commit/46aa05f5fa096c0e34bfa8c5abe489fe3192408d) Thanks [@skezo](https://github.com/skezo)! - Download and Check for updates now open the download page on thaumiccast.com, which picks the right file for your
+  computer, instead of the GitHub releases page.
+
 ## 0.13.1
 
 ## 0.13.0
