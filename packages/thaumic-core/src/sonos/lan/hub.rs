@@ -121,6 +121,12 @@ impl LanHub {
         }
     }
 
+    /// The player known to answer at `ip`.
+    #[must_use]
+    pub fn player_at(&self, ip: &str) -> Option<String> {
+        self.players.lock().get(ip).cloned()
+    }
+
     fn slot(&self, ip: &str) -> Arc<Mutex<Slot>> {
         self.slots.lock().entry(ip.to_string()).or_default().clone()
     }

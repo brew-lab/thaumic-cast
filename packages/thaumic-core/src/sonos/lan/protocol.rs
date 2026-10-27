@@ -24,6 +24,10 @@ pub const PORT: u16 = 1443;
 /// The WebSocket path on that port.
 pub const WS_PATH: &str = "/websocket/api";
 
+/// The path of a player's description of itself, on the same port, asked
+/// for with a plain `GET` carrying the key.
+pub const INFO_PATH: &str = "/api/v1/players/local/info";
+
 /// The WebSocket URL of a speaker's Control API.
 #[must_use]
 pub fn websocket_url(ip: &str) -> String {
@@ -50,6 +54,8 @@ pub mod code {
     pub const CONNECT_FAILED: &str = "LAN_CONNECT_FAILED";
     /// A reply the transport could not read.
     pub const BAD_REPLY: &str = "LAN_BAD_REPLY";
+    /// An operation this route does not carry out.
+    pub const UNSUPPORTED: &str = "LAN_UNSUPPORTED";
     /// The command went to a player that no longer leads the group.
     pub const GROUP_MOVED: &str = "GROUP_STATUS_MOVED";
     /// The household has Authentication on: every command is refused.
@@ -355,6 +361,50 @@ pub struct Player {
     /// What it supports, e.g. `PLAYBACK`, `HT_PLAYBACK`.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The devices that make up the player: one, or a bonded set.
+    #[serde(default)]
+    pub devices: Vec<Device>,
+}
+
+/// One device of a player.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Device {
+    /// The device id, which is its RINCON uuid.
+    pub id: String,
+    /// The model as Sonos names it to people, e.g. `Play:1`.
+    #[serde(default)]
+    pub model_display_name: Option<String>,
+}
+
+impl Player {
+    /// The model of the player's own device, as Sonos names it to people.
+    #[must_use]
+    pub fn model(&self) -> Option<&str> {
+        self.devices
+            .iter()
+            .find(|d| d.id == self.id)
+            .and_then(|d| d.model_display_name.as_deref())
+    }
+}
+
+/// A player's description of itself, from [`INFO_PATH`]: where detection
+/// learns the household id that every command carries.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalInfo {
+    /// The player id, which is its RINCON uuid.
+    pub player_id: String,
+    /// The household id.
+    pub household_id: String,
+}
+
+impl LocalInfo {
+    /// Reads the JSON the player answered with.
+    pub fn parse(text: &str) -> Result<Self, SoapError> {
+        serde_json::from_str(text)
+            .map_err(|e| transport_error(code::BAD_REPLY, format!("player info: {e}")))
+    }
 }
 
 impl Groups {
@@ -533,6 +583,23 @@ pub(crate) mod tests {
             .find(|p| p.id == "RINCON_000000000C0101400")
             .unwrap();
         assert!(playbar.capabilities.iter().any(|c| c == "HT_PLAYBACK"));
+        assert_eq!(playbar.model(), Some("Playbar"));
+        assert_eq!(Player::default().model(), None);
+    }
+
+    #[test]
+    fn player_info_gives_the_household_and_a_bad_one_is_refused() {
+        let info = LocalInfo::parse(
+            r#"{"device":{"modelDisplayName":"Play:1"},"householdId":"Sonos_H.x",
+                "playerId":"RINCON_A","groupId":"RINCON_A:5"}"#,
+        )
+        .unwrap();
+        assert_eq!(info.household_id, "Sonos_H.x");
+        assert_eq!(info.player_id, "RINCON_A");
+        match LocalInfo::parse(r#"{"playerId":"RINCON_A"}"#) {
+            Err(SoapError::Lan { code: c, .. }) => assert_eq!(c, code::BAD_REPLY),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]

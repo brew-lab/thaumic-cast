@@ -54,6 +54,10 @@
 //!   A `SetAVTransportURI` or leaving a group empties the queue, and the
 //!   AVTransport NOTIFY reports it as `NextAVTransportURI`, empty when
 //!   nothing is queued.
+//! * The local Control API (port 1443 on hardware) is served on the same
+//!   port: the player's description of itself and the WebSocket, answering
+//!   `getGroups` from the same model (see `lan`). Its commands have their
+//!   own log ([`FakeSonosSystem::lan_calls`]).
 //! * Every SOAP action and GENA request is appended to one ordered call log
 //!   for the household. Unknown actions answer with a SOAP fault (UPnP 401)
 //!   so a test fails loudly instead of silently succeeding.
@@ -87,8 +91,11 @@ use tokio::task::JoinHandle;
 use crate::sonos::services::SonosService;
 use crate::sonos::types::TransportState;
 
+mod lan;
 mod server;
 mod xml;
+
+pub(crate) use lan::{LanCall, FAKE_HOUSEHOLD_ID};
 
 /// How long [`FakeSonosSystem::wait_for_call`] waits before failing the test.
 const WAIT_FOR_CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -627,6 +634,11 @@ pub(crate) struct FakeSonosSystem {
     /// The household's Connection Security > UPnP switch; while off every
     /// control and event request is refused with a bare 403.
     upnp_enabled: AtomicBool,
+    /// The household's Authentication switch; while on, every command on
+    /// the local Control API is refused.
+    lan_authentication: AtomicBool,
+    /// Every command received on the local Control API, in order.
+    lan_calls: Mutex<Vec<LanCall>>,
     fetch_observer: Mutex<Option<FetchObserver>>,
     /// Satellite UUID to the UUID of the primary it is bonded to.
     satellites: Mutex<HashMap<String, String>>,
@@ -730,6 +742,8 @@ impl FakeSonosSystem {
             notify_seq: AtomicUsize::new(0),
             gena_timeout_secs: AtomicU64::new(DEFAULT_GENA_TIMEOUT_SECS),
             upnp_enabled: AtomicBool::new(true),
+            lan_authentication: AtomicBool::new(false),
+            lan_calls: Mutex::new(Vec::new()),
             fetch_observer: Mutex::new(None),
             satellites: Mutex::new(HashMap::new()),
             joins: Mutex::new(Vec::new()),
@@ -1198,6 +1212,28 @@ impl FakeSonosSystem {
 
     pub(super) fn upnp_enabled(&self) -> bool {
         self.upnp_enabled.load(Ordering::SeqCst)
+    }
+
+    // ── Local Control API ───────────────────────────────────────────────────
+
+    /// Flips the household's Authentication switch in the Sonos app. On,
+    /// every command on the local Control API is refused with
+    /// `ERROR_NO_PERMISSION`.
+    pub fn set_lan_authentication(&self, on: bool) {
+        self.lan_authentication.store(on, Ordering::SeqCst);
+    }
+
+    pub(super) fn lan_authentication(&self) -> bool {
+        self.lan_authentication.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn record_lan(&self, call: LanCall) {
+        self.lan_calls.lock().push(call);
+    }
+
+    /// Every command received on the local Control API so far, in order.
+    pub fn lan_calls(&self) -> Vec<LanCall> {
+        self.lan_calls.lock().clone()
     }
 
     /// Sets the subscription lifetime granted to SUBSCRIBE and renewals.

@@ -20,8 +20,9 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
 use tokio_tungstenite::tungstenite::Message;
 
-use super::protocol::{Frame, SpeakerIdentity, API_KEY, SUBPROTOCOL};
+use super::protocol::{Frame, SpeakerIdentity, API_KEY, INFO_PATH, SUBPROTOCOL, WS_PATH};
 use super::socket::{LanConnector, LanIo};
+use super::tls::get_info;
 
 /// What the fake does with one command.
 #[derive(Debug, Clone)]
@@ -187,6 +188,8 @@ pub(crate) struct FakeConnector {
     pub attempts: Mutex<HashMap<String, usize>>,
     /// The identity each attempt expected, in order.
     pub expected: Mutex<Vec<SpeakerIdentity>>,
+    /// What each IP answers when asked for its description.
+    pub infos: Mutex<HashMap<String, String>>,
 }
 
 impl FakeConnector {
@@ -217,6 +220,56 @@ impl LanConnector for FakeConnector {
             Some(a) => format!("ws://{a}/websocket/api"),
             None => format!("ws://{ip}:1/websocket/api"),
         }
+    }
+
+    async fn local_info(&self, ip: &str, expect: &SpeakerIdentity) -> io::Result<String> {
+        self.expected.lock().push(expect.clone());
+        self.infos
+            .lock()
+            .get(ip)
+            .cloned()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::ConnectionRefused, "no fake"))
+    }
+}
+
+/// Plain TCP and HTTP to speakers that serve the Control API on `port` of
+/// their own address, as the fake household in `testing::fake_sonos` does
+/// (on its UPnP port). It checks no identity: it records what was expected.
+pub(crate) struct PlainConnector {
+    port: u16,
+    http: reqwest::Client,
+    /// The identity each connection or info request expected, in order.
+    pub expected: Mutex<Vec<(String, SpeakerIdentity)>>,
+}
+
+impl PlainConnector {
+    pub fn new(port: u16) -> Self {
+        Self {
+            port,
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .expect("plain info client"),
+            expected: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl LanConnector for PlainConnector {
+    async fn connect(&self, ip: &str, expect: &SpeakerIdentity) -> io::Result<Box<dyn LanIo>> {
+        self.expected.lock().push((ip.to_string(), expect.clone()));
+        Ok(Box::new(TcpStream::connect((ip, self.port)).await?))
+    }
+
+    fn url(&self, ip: &str) -> String {
+        format!("ws://{ip}:{}{WS_PATH}", self.port)
+    }
+
+    async fn local_info(&self, ip: &str, expect: &SpeakerIdentity) -> io::Result<String> {
+        self.expected.lock().push((ip.to_string(), expect.clone()));
+        get_info(&self.http, &format!("http://{ip}:{}{INFO_PATH}", self.port)).await
     }
 }
 

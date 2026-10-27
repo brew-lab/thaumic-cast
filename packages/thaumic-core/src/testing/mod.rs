@@ -16,5 +16,6 @@ mod queue_tests;
 mod real_desktop;
 mod real_ext_companion;
 mod regroup_tests;
+mod route_tests;
 mod start_volume_tests;
 mod takeover_tests;

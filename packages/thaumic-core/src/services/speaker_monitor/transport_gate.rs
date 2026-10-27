@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::routed::HouseholdRoute;
 use crate::sonos::services::SonosService;
 use crate::sonos::types::TransportState;
 use crate::state::SonosState;
@@ -61,7 +62,8 @@ pub struct GenaTransport {
     pub state: TransportState,
     /// When that notification arrived.
     pub received_at: Instant,
-    /// Whether an AVTransport subscription for the speaker is currently held.
+    /// Whether an AVTransport subscription for the speaker is currently
+    /// held, or the household is watched over port 1443 instead.
     pub subscribed: bool,
 }
 
@@ -80,17 +82,28 @@ pub trait TransportStateView: Send + Sync {
     }
 }
 
-/// [`TransportStateView`] over the live GENA state.
+/// [`TransportStateView`] over the live GENA state, or over what port 1443
+/// reports into the same state when the household is controlled there.
 pub struct GenaTransportView {
     sonos_state: Arc<SonosState>,
     gena: Arc<GenaSubscriptionManager>,
+    route: Arc<HouseholdRoute>,
 }
 
 impl GenaTransportView {
     /// Reads transport states from `sonos_state`, and subscription status
-    /// from `gena`.
-    pub fn new(sonos_state: Arc<SonosState>, gena: Arc<GenaSubscriptionManager>) -> Self {
-        Self { sonos_state, gena }
+    /// from `gena`, or from `route` while the household is on port 1443,
+    /// where states are watched without a subscription.
+    pub fn new(
+        sonos_state: Arc<SonosState>,
+        gena: Arc<GenaSubscriptionManager>,
+        route: Arc<HouseholdRoute>,
+    ) -> Self {
+        Self {
+            sonos_state,
+            gena,
+            route,
+        }
     }
 }
 
@@ -101,9 +114,10 @@ impl TransportStateView for GenaTransportView {
         Some(GenaTransport {
             state,
             received_at,
-            subscribed: self
-                .gena
-                .is_subscribed(speaker_ip, SonosService::AVTransport),
+            subscribed: self.route.is_lan()
+                || self
+                    .gena
+                    .is_subscribed(speaker_ip, SonosService::AVTransport),
         })
     }
 
@@ -290,6 +304,22 @@ mod tests {
             received_at,
             subscribed: true,
         }
+    }
+
+    #[test]
+    fn a_household_on_port_1443_counts_as_watched_with_no_subscription() {
+        let state = Arc::new(SonosState::default());
+        state.record_transport_state("192.168.1.10", TransportState::Playing);
+        let (gena, _rx) = GenaSubscriptionManager::new(reqwest::Client::new());
+        let route = Arc::new(HouseholdRoute::default());
+        let view = GenaTransportView::new(state, Arc::new(gena), Arc::clone(&route));
+
+        let upnp = view.gena_transport("192.168.1.10").expect("a state");
+        assert_eq!(upnp.state, TransportState::Playing);
+        assert!(!upnp.subscribed);
+        route.set(crate::sonos::routed::Route::Lan);
+        assert!(view.gena_transport("192.168.1.10").unwrap().subscribed);
+        assert_eq!(view.gena_transport("192.168.1.11"), None);
     }
 
     #[test]

@@ -1,19 +1,24 @@
 //! The fake household's grouping model, checked against the crate's real
 //! parsers and Sonos client: pre-grouped rooms, home-theatre satellites,
 //! a coordinator leaving its group, joins, and regrouping from outside.
+//!
+//! Reading the groups runs on both routes. Joins, leaves and topology events
+//! are on UPnP only until port 1443 carries them.
 
 use crate::events::SonosEvent;
 use crate::sonos::types::TransportState;
+use crate::sonos::Route;
 
-use super::harness::{within, TestSystem};
+use super::harness::{both_routes, within, TestSystem};
 
 const MUSIC: &str = "x-sonos-spotify:spotify%3atrack%3a1";
 
+both_routes! {
 /// Proves: a household built pre-grouped, with a home theatre, reads back
-/// through the real `GetZoneGroupState` parser as those groups, the
-/// satellites marked invisible inside their primary's group.
-#[tokio::test]
-async fn a_pre_grouped_household_reads_back_as_its_groups() {
+/// through the real parser of its route as those groups. On UPnP the
+/// satellites are marked invisible inside their primary's group; `getGroups`
+/// lists a room, not its satellites.
+async fn a_pre_grouped_household_reads_back_as_its_groups(route) {
     within("pre-grouped", async {
         let sys = TestSystem::builder()
             .speakers([
@@ -25,8 +30,10 @@ async fn a_pre_grouped_household_reads_back_as_its_groups() {
             ])
             .groups(&[&["Kitchen", "Patio"]])
             .home_theatre("Living Room", &["Living Room Sub"])
+            .route(route)
             .build()
             .await;
+        assert_eq!(sys.route(), route);
 
         let groups = sys.services.sonos_state.groups.read().clone();
         assert_eq!(groups.len(), 3, "{groups:#?}");
@@ -45,14 +52,19 @@ async fn a_pre_grouped_household_reads_back_as_its_groups() {
             .iter()
             .find(|g| g.coordinator_uuid == sys.uuid("Living Room"))
             .expect("the Living Room group");
-        assert_eq!(living.members.len(), 2);
-        let sub = living
-            .members
-            .iter()
-            .find(|m| m.uuid == sys.uuid("Living Room Sub"))
-            .expect("the satellite");
-        assert!(sub.invisible);
-        assert_eq!(sub.zone_name, "Living Room");
+        assert_eq!(living.coordinator_ip, sys.ip("Living Room"));
+        if route == Route::Upnp {
+            assert_eq!(living.members.len(), 2);
+            let sub = living
+                .members
+                .iter()
+                .find(|m| m.uuid == sys.uuid("Living Room Sub"))
+                .expect("the satellite");
+            assert!(sub.invisible);
+            assert_eq!(sub.zone_name, "Living Room");
+        } else {
+            assert_eq!(living.members.len(), 1);
+        }
         assert_eq!(
             sys.fake.grouping(),
             [
@@ -63,6 +75,7 @@ async fn a_pre_grouped_household_reads_back_as_its_groups() {
         );
     })
     .await;
+}
 }
 
 /// Proves: when a playing group's coordinator leaves, its first member is

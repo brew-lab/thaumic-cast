@@ -26,10 +26,14 @@ use crate::runtime::TokioSpawner;
 use crate::services::speaker_monitor::GenaTransportView;
 use crate::services::{DiscoveryService, SpeakerMonitor, StreamCoordinator};
 use crate::sonos::gena::GenaSubscriptionManager;
+use crate::sonos::lan::hub::CONNECT_TIMEOUT as LAN_CONNECT_TIMEOUT;
+use crate::sonos::lan::{LanClient, LanConnector, TlsConnector};
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::traits::{SonosTopology, SonosVolumeControl};
 use crate::sonos::utils::SONOS_PORT;
-use crate::sonos::{SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient};
+use crate::sonos::{
+    HouseholdRoute, RoutedClient, SonosClient, SonosClientImpl, SonosPlayback, SonosTopologyClient,
+};
 use crate::state::{Config, SonosState};
 use crate::streaming_runtime::StreamingRuntime;
 
@@ -41,6 +45,8 @@ use crate::streaming_runtime::StreamingRuntime;
 pub struct BootstrappedServices {
     /// Sonos client for speaker operations.
     pub sonos: Arc<dyn SonosClient>,
+    /// How the household is controlled: UPnP, or port 1443 with UPnP off.
+    pub route: Arc<HouseholdRoute>,
     /// Coordinates active audio streams.
     pub stream_coordinator: Arc<StreamCoordinator>,
     /// Manages Sonos device discovery and topology.
@@ -219,12 +225,14 @@ pub fn bootstrap_services_with_network(
         runtime_handle,
         SONOS_PORT,
         Duration::from_secs(SOAP_TIMEOUT_SECS),
+        Arc::new(TlsConnector::new(LAN_CONNECT_TIMEOUT)),
     )
 }
 
 /// Like [`bootstrap_services_with_network`], but addresses speakers on
-/// `speaker_port` instead of the standard 1400 and gives every SOAP call
-/// `soap_timeout` instead of the standard [`SOAP_TIMEOUT_SECS`].
+/// `speaker_port` instead of the standard 1400, gives every SOAP call
+/// `soap_timeout` instead of the standard [`SOAP_TIMEOUT_SECS`], and reaches
+/// their local Control API through `lan` instead of TLS to port 1443.
 ///
 /// Crate-internal: production always uses the standard values; the
 /// integration tests point the real clients at fake speakers bound to an
@@ -236,6 +244,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     runtime_handle: tokio::runtime::Handle,
     speaker_port: u16,
     soap_timeout: Duration,
+    lan: Arc<dyn LanConnector>,
 ) -> ThaumicResult<BootstrappedServices> {
     // Create dedicated streaming runtime first (high-priority threads)
     let streaming_runtime = Arc::new(StreamingRuntime::new().map_err(|e| {
@@ -261,10 +270,17 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     let sonos_state = Arc::new(SonosState::default());
     let ws_manager = Arc::new(WsConnectionManager::new());
 
-    // Create the Sonos client (implements multiple traits)
-    let sonos_impl = Arc::new(SonosClientImpl::with_speaker_port(
-        http_client.clone(),
-        speaker_port,
+    // The Sonos client (implements multiple traits): each call goes to UPnP,
+    // or to the local Control API on port 1443 while the household has UPnP
+    // off. The route is shared with everything that must know it.
+    let route = Arc::new(HouseholdRoute::default());
+    let sonos_impl = Arc::new(RoutedClient::new(
+        Arc::new(SonosClientImpl::with_speaker_port(
+            http_client.clone(),
+            speaker_port,
+        )),
+        Arc::new(LanClient::new(lan)),
+        Arc::clone(&route),
     ));
 
     // mDNS advertisement slot, shared with the API layer and the topology monitor
@@ -286,7 +302,10 @@ pub(crate) fn bootstrap_services_with_speaker_port(
     let refresh_notify = Arc::new(tokio::sync::Notify::new());
 
     // Create subscription arbiter (shared between StreamCoordinator and TopologyMonitor)
-    let arbiter = Arc::new(SubscriptionArbiter::new(Arc::clone(&gena_manager)));
+    let arbiter = Arc::new(SubscriptionArbiter::with_route(
+        Arc::clone(&gena_manager),
+        Arc::clone(&route),
+    ));
 
     // Wire up stream coordinator with its dependencies
     let mut stream_coordinator = StreamCoordinator::new(
@@ -311,6 +330,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
         Arc::new(GenaTransportView::new(
             Arc::clone(&sonos_state),
             Arc::clone(&gena_manager),
+            Arc::clone(&route),
         )),
         cancel_token.clone(),
         spawner.clone(),
@@ -339,6 +359,7 @@ pub(crate) fn bootstrap_services_with_speaker_port(
 
     Ok(BootstrappedServices {
         sonos,
+        route,
         stream_coordinator,
         discovery_service,
         sonos_state,

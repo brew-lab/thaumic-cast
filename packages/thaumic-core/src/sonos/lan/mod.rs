@@ -7,15 +7,19 @@
 //!   checked for the player we meant to reach
 //! - `hub` - the household's sockets: open on use, reconnect with backoff,
 //!   follow a moved group, confirm group changes by reading them back
+//! - `client` - the household as the services see it: detection and the
+//!   topology from `getGroups`
 
+pub mod client;
 pub mod hub;
 pub mod protocol;
 pub mod socket;
 pub mod tls;
 
 #[cfg(test)]
-mod fake;
+pub(crate) mod fake;
 
+pub use client::LanClient;
 pub use hub::{HubReply, LanHub};
 pub use protocol::{Command, Frame, Groups, SpeakerIdentity, Target};
 pub use socket::{LanConnector, LanEvent, LanSocket, Reply};

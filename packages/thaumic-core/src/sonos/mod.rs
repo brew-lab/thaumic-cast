@@ -21,6 +21,7 @@
 //! - `gena_parser` - GENA notification parsing and event construction
 //! - `soap` - Low-level SOAP protocol implementation
 //! - `lan` - The local Control API (wss on port 1443), for households with UPnP off
+//! - `routed` - `RoutedClient`: each call sent to UPnP or to port 1443 by the household's route
 //! - `utils` - Shared utility functions
 
 pub mod client;
@@ -34,6 +35,7 @@ pub(crate) mod grouping;
 pub mod lan;
 pub(crate) mod playback;
 pub(crate) mod retry;
+pub mod routed;
 pub mod services;
 pub mod soap;
 pub mod subscription_arbiter;
@@ -54,3 +56,4 @@ pub use traits::{NextItem, SonosClient, SonosPlayback, SonosTopologyClient};
 
 // Re-export concrete implementation
 pub use client::SonosClientImpl;
+pub use routed::{HouseholdRoute, Route, RoutedClient};

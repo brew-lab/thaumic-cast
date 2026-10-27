@@ -24,7 +24,7 @@ use tokio::net::TcpStream;
 use x509_parser::prelude::{FromDer, GeneralName, X509Certificate};
 use x509_parser::time::ASN1Time;
 
-use super::protocol::{websocket_url, SpeakerIdentity, PORT};
+use super::protocol::{websocket_url, SpeakerIdentity, API_KEY, INFO_PATH, PORT};
 use super::socket::{LanConnector, LanIo};
 
 /// The issuer every Sonos device certificate names.
@@ -87,6 +87,32 @@ impl LanConnector for TlsConnector {
     fn url(&self, ip: &str) -> String {
         websocket_url(ip)
     }
+
+    async fn local_info(&self, ip: &str, expect: &SpeakerIdentity) -> io::Result<String> {
+        let client = reqwest::Client::builder()
+            .tls_backend_preconfigured(self.config(expect))
+            .timeout(self.connect_timeout)
+            .no_proxy()
+            .build()
+            .map_err(io::Error::other)?;
+        get_info(&client, &format!("https://{ip}:{}{INFO_PATH}", self.port)).await
+    }
+}
+
+/// `GET`s a player's description from `url` with the key, and returns the
+/// body of a successful answer.
+pub(crate) async fn get_info(client: &reqwest::Client, url: &str) -> io::Result<String> {
+    let response = client
+        .get(url)
+        .header("X-Sonos-Api-Key", API_KEY)
+        .send()
+        .await
+        .map_err(io::Error::other)?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(io::Error::other(format!("player info answered {status}")));
+    }
+    response.text().await.map_err(io::Error::other)
 }
 
 /// Checks that a certificate is a Sonos device certificate for `expect`.
@@ -393,7 +419,8 @@ mod hardware {
 
     use super::TlsConnector;
     use crate::sonos::lan::hub::LanHub;
-    use crate::sonos::lan::protocol::code;
+    use crate::sonos::lan::protocol::{code, LocalInfo, SpeakerIdentity};
+    use crate::sonos::lan::socket::LanConnector;
     use crate::sonos::soap::SoapError;
 
     fn env(name: &str) -> String {
@@ -427,5 +454,34 @@ mod hardware {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a speaker on the LAN"]
+    async fn a_real_speaker_describes_itself_only_as_itself() {
+        let (ip, player, hh) = (
+            env("THAUMIC_LAN_IP"),
+            env("THAUMIC_LAN_PLAYER"),
+            env("THAUMIC_LAN_HH"),
+        );
+        let tls = TlsConnector::new(Duration::from_secs(5));
+        let mut expect = SpeakerIdentity {
+            player_id: player.clone(),
+            household_id: None,
+        };
+        let text = tls.local_info(&ip, &expect).await.expect("player info");
+        println!("{text}");
+        let info = LocalInfo::parse(&text).expect("info parses");
+        assert_eq!(
+            (info.player_id.as_str(), info.household_id.as_str()),
+            (player.as_str(), hh.as_str())
+        );
+
+        expect.player_id = "RINCON_000000000000001400".into();
+        let refused = tls
+            .local_info(&ip, &expect)
+            .await
+            .expect_err("another player");
+        println!("refused as expected: {refused}");
     }
 }

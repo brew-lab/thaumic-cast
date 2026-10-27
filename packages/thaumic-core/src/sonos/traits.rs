@@ -154,6 +154,19 @@ pub trait SonosTopology: Send + Sync {
     /// * `ip` - IP address of any Sonos speaker on the network
     async fn get_zone_group_state(&self, ip: &str) -> SoapResult<ZoneGroupSnapshot>;
 
+    /// Fetches the zone group state for the topology refresh, the one
+    /// caller that decides how the household is controlled (UPnP, or the
+    /// local Control API when UPnP is off). Every other caller uses
+    /// [`Self::get_zone_group_state`], which follows that decision.
+    ///
+    /// # Arguments
+    /// * `ip` - IP address of a Sonos speaker
+    /// * `uuid` - The speaker's RINCON uuid, as discovery or the last
+    ///   topology named it
+    async fn refresh_zone_groups(&self, ip: &str, _uuid: &str) -> SoapResult<ZoneGroupSnapshot> {
+        self.get_zone_group_state(ip).await
+    }
+
     /// Reads a speaker's transport state (`GetTransportInfo`), for a speaker
     /// just subscribed to whose first event may be lost. `None` when it
     /// cannot be read, or by a client that does not read it.

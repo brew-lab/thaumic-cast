@@ -40,6 +40,11 @@ pub trait LanConnector: Send + Sync {
 
     /// The URL for the WebSocket handshake to the speaker at `ip`.
     fn url(&self, ip: &str) -> String;
+
+    /// Asks the speaker at `ip`, which must prove to be `expect`, for its
+    /// description of itself ([`super::protocol::INFO_PATH`]) and returns the
+    /// JSON text.
+    async fn local_info(&self, ip: &str, expect: &SpeakerIdentity) -> io::Result<String>;
 }
 
 /// Something a speaker sent that was not a reply to a call, or a change in a

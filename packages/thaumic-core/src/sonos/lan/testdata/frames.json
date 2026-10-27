@@ -601,5 +601,34 @@
       "websocketUrl": "wss://192.168.1.12:1443/websocket/api",
       "playerId": "RINCON_000000000C0101400"
     }
-  ]
+  ],
+  "local_info": {
+    "_objectType": "discoveryInfo",
+    "device": {
+      "_objectType": "deviceInfo",
+      "id": "RINCON_000000000A0101400",
+      "serialNumber": "00-00-00-00-00-00:0",
+      "deviceId": "000000000000",
+      "model": "S1",
+      "modelDisplayName": "Play:1",
+      "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+      "apiVersion": "1.54.1",
+      "minApiVersion": "1.1.0",
+      "name": "Office",
+      "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+      "softwareVersion": "86.10-80260",
+      "hwVersion": "1.8.3.7-2.0",
+      "swGen": 2,
+      "quarantineReasons": []
+    },
+    "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+    "locationId": "lc_00000000000000000000000000000000",
+    "playerId": "RINCON_000000000A0101400",
+    "deviceId": "000000000000",
+    "groupId": "RINCON_000000000A0101400:205",
+    "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+    "restUrl": "https://192.168.1.10:1443/api",
+    "allowGuestAccess": true,
+    "credentialTypeAllowed": "API_KEY"
+  }
 }
