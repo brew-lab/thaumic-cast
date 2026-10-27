@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { open } from '@tauri-apps/plugin-shell';
 import { WizardStep, Button, Cluster, DescriptionList } from '@thaumic-cast/ui';
 import { useTranslation } from 'react-i18next';
-import { GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { DOWNLOAD_URL } from '@thaumic-cast/shared';
 import { stats, fetchStats } from '../../state/store';
 import styles from './ExtensionStep.module.css';
 
@@ -42,8 +42,8 @@ export function ExtensionStep(): preact.JSX.Element {
     open(CHROME_STORE_URL);
   };
 
-  const handleOpenGithub = () => {
-    open(GITHUB_RELEASES_URL);
+  const handleOpenManual = () => {
+    open(`${DOWNLOAD_URL}#step-ext`);
   };
 
   return (
@@ -72,8 +72,8 @@ export function ExtensionStep(): preact.JSX.Element {
         <Button size="md" icon="external" onClick={handleOpenStore}>
           {t('onboarding.extension.chrome_link')}
         </Button>
-        <Button size="md" kind="outline" icon="external" onClick={handleOpenGithub}>
-          {t('onboarding.extension.github_link')}
+        <Button size="md" kind="outline" icon="external" onClick={handleOpenManual}>
+          {t('onboarding.extension.manual_link')}
         </Button>
       </Cluster>
 

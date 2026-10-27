@@ -279,7 +279,7 @@
   "about_check_for_updates": "Check for updates",
   "about_checking": "Checking…",
   "about_updates_store_hint": "Your browser updates the extension by itself. This checks now.",
-  "about_updates_manual_hint": "Opens the releases page. A copy loaded by hand never updates itself.",
+  "about_updates_manual_hint": "Opens the download page. A copy loaded by hand never updates itself.",
   "about_update_latest": "This is the latest version.",
   "about_update_ready": "Version {{version}} is ready.",
   "about_update_ready_unnamed": "A newer version is ready.",

@@ -21,7 +21,7 @@
  * forward — including from "unknown" to a real version — the dismissal no
  * longer matches and the Notice re-appears. Even when dismissed, the popup
  * footer keeps a persistent "Update available" link so the user always has
- * a way back to the releases page.
+ * a way back to the download page.
  *
  * The dismissal record stays in `chrome.storage.local` (a user preference
  * that should survive browser restarts), separate from `connectionState`

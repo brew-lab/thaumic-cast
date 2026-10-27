@@ -10,7 +10,7 @@
     "type": "git",
     "url": "https://github.com/brew-lab/thaumic-cast.git"
   },
-  "homepage": "https://github.com/brew-lab/thaumic-cast",
+  "homepage": "https://www.thaumiccast.com/",
   "bugs": "https://github.com/brew-lab/thaumic-cast/issues",
   "type": "module",
   "workspaces": [

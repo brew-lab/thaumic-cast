@@ -9,7 +9,7 @@
 // nothing moving when a setting saves, the Toast's bar sticky with the focused control never
 // under it, a Notice in a section keeping its own padding, Reset all settings (asks first,
 // Cancel changes nothing, Reset puts the defaults back and keeps the companion's address),
-// About's Check for updates (the releases page unpacked, each answer of a stand-in store),
+// About's Check for updates (the download page unpacked, each answer of a stand-in store),
 // About's Show again (the popup opened on the onboarding's first step, or the toolbar note), and
 // #about landing on About. Run
 // from check.mjs; the run's scale and scheme come from it.
@@ -197,8 +197,8 @@ async function clickSwitch(o, name) {
   await o.clickAt(at);
 }
 
-/** Where Check for updates sends an unpacked copy (GITHUB_RELEASES_URL in @thaumic-cast/shared). */
-const RELEASES = 'https://github.com/brew-lab/thaumic-cast/releases';
+/** Where Check for updates sends an unpacked copy (DOWNLOAD_URL in @thaumic-cast/shared). */
+const DOWNLOAD_PAGE = 'https://www.thaumiccast.com/download/';
 
 /**
  * Reads About's Updates row: its name, help, note, Button and where the Button ends against
@@ -273,9 +273,9 @@ async function updatesPass(env, o, { check, dark }) {
   };
   const manual = await updatesRow(o);
   check(
-    'options: an unpacked copy offers Check for updates, opening the releases page',
+    'options: an unpacked copy offers Check for updates, opening the download page',
     manual?.button === 'Check for updates' &&
-      manual.help === 'Opens the releases page. A copy loaded by hand never updates itself.' &&
+      manual.help === 'Opens the download page. A copy loaded by hand never updates itself.' &&
       manual.note === null &&
       manual.described === 1 &&
       manual.rule > 0 &&
@@ -291,10 +291,10 @@ async function updatesPass(env, o, { check, dark }) {
     if (!opened) await lib.sleep(200);
   }
   // The tab opens on the releases URL; offline it stays there on an error page.
-  for (let i = 0; i < 25 && opened && !opened.url().startsWith(RELEASES); i++) await lib.sleep(200);
+  for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++) await lib.sleep(200);
   check(
-    'options: Check for updates opens the releases page in a new tab',
-    Boolean(opened?.url().startsWith(RELEASES)),
+    'options: Check for updates opens the download page in a new tab',
+    Boolean(opened?.url().startsWith(DOWNLOAD_PAGE)),
     opened?.url(),
   );
   await opened?.close();

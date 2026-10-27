@@ -5,7 +5,7 @@
  * other Chromium store) is updated by the browser, and the store writes an `update_url` into
  * the installed manifest; `chrome.runtime.requestUpdateCheck()` asks it now rather than at
  * the browser's next round. The release zip, loaded unpacked, has no `update_url` and never
- * updates itself, so the only way on is the releases page. The manifest is read rather than
+ * updates itself, so the only way on is the download page. The manifest is read rather than
  * `chrome.management.getSelf()`, which says the same through another namespace.
  */
 

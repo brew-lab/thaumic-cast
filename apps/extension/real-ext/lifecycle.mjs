@@ -13,10 +13,8 @@ import http from 'node:http';
 import { join } from 'node:path';
 import * as lib from './lib.mjs';
 
-/** Where the download goes (GITHUB_RELEASES_URL in @thaumic-cast/shared). */
-const RELEASES = 'https://github.com/brew-lab/thaumic-cast/releases/latest';
-/** Where it lands: GitHub sends /latest on to the newest release's page. */
-const RELEASES_PAGES = 'https://github.com/brew-lab/thaumic-cast/releases/';
+/** Where the download goes (DOWNLOAD_URL in @thaumic-cast/shared). */
+const DOWNLOAD_PAGE = 'https://www.thaumiccast.com/download/';
 /** The download's words, in About and on the popup's banner. */
 const DOWNLOAD = 'Download the companion';
 
@@ -208,7 +206,7 @@ async function until(probe, ms = 6000) {
 }
 
 /**
- * Waits for a tab that was not open before, on the releases page, and closes it.
+ * Waits for a tab that was not open before, on the download page, and closes it.
  * @param {object} env - What lib.launch() returned
  * @param {Set<object>} before - The pages open before the click
  * @returns {Promise<string|undefined>} The new tab's URL, or undefined when none opened
@@ -220,7 +218,7 @@ async function releasesTab(env, before) {
     if (!opened) await lib.sleep(200);
   }
   // Offline it stays on the releases URL, on an error page.
-  for (let i = 0; i < 25 && opened && !opened.url().startsWith(RELEASES_PAGES); i++)
+  for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++)
     await lib.sleep(200);
   const url = opened?.url();
   await opened?.close();
@@ -271,7 +269,7 @@ const companionValue = (o) =>
 
 /**
  * Nothing answers (issue #109): About's readout and the popup's banner offer the desktop app's
- * download, each opening the releases page in a new tab; connected, About offers none.
+ * download, each opening the download page in a new tab; connected, About offers none.
  * @param {object} env - What lib.launch() returned
  * @param {() => Promise<void>} stop - Stops the companion
  */
@@ -327,8 +325,8 @@ async function nothingAnswers(env) {
     { words: DOWNLOAD },
   );
   check(
-    "the banner's download is a link to the releases page, in a new tab",
-    link?.href === RELEASES && link.target === '_blank',
+    "the banner's download is a link to the download page, in a new tab",
+    link?.href === DOWNLOAD_PAGE && link.target === '_blank',
     link,
   );
   for (const dark of [false, true]) {
@@ -341,8 +339,8 @@ async function nothingAnswers(env) {
   await p.click('[role="region"] a', DOWNLOAD);
   const fromPopup = await releasesTab(env, before);
   check(
-    "the banner's download opens the releases page",
-    Boolean(fromPopup?.startsWith(RELEASES_PAGES)),
+    "the banner's download opens the download page",
+    Boolean(fromPopup?.startsWith(DOWNLOAD_PAGE)),
     fromPopup,
   );
   p.close();
@@ -365,8 +363,8 @@ async function nothingAnswers(env) {
   await o.click('#about dd button', DOWNLOAD);
   const fromAbout = await releasesTab(env, before);
   check(
-    "About's download opens the releases page in a new tab",
-    Boolean(fromAbout?.startsWith(RELEASES_PAGES)),
+    "About's download opens the download page in a new tab",
+    Boolean(fromAbout?.startsWith(DOWNLOAD_PAGE)),
     fromAbout,
   );
   o.close();

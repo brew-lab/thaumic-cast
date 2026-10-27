@@ -40,7 +40,7 @@ import {
   type AddressResult,
 } from '@thaumic-cast/ui';
 import { PROTOCOL_VERSION } from '@thaumic-cast/protocol';
-import { createLogger, GITHUB_RELEASES_URL } from '@thaumic-cast/shared';
+import { createLogger, DOWNLOAD_URL } from '@thaumic-cast/shared';
 import i18n, { resources, SupportedLocale } from '../lib/i18n';
 import { hasLanguageChoice } from '../lib/language-choice';
 import { type ThemeMode, getTheme, saveTheme, applyTheme } from '../lib/theme';
@@ -139,7 +139,7 @@ export function Settings() {
   }, []);
 
   const handleCheckForUpdates = useCallback(() => {
-    open(GITHUB_RELEASES_URL);
+    open(DOWNLOAD_URL);
   }, []);
 
   // The onboarding replaces the window at once; it ends on Rooms, as on a first run.

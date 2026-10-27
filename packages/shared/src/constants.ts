@@ -3,11 +3,11 @@
  */
 
 /**
- * Canonical GitHub releases page — the single update destination for users who need
- * to grab a newer desktop app or server build. Keep hardcoded and literal so no
- * remote resolution is ever required (PRIVACY.md relies on this).
+ * The website's download page: the single destination for users who need the desktop
+ * app, the server, the extension zip, or a newer version of any of them. Keep hardcoded
+ * and literal so no remote resolution is ever required (PRIVACY.md relies on this).
  */
-export const GITHUB_RELEASES_URL = 'https://github.com/brew-lab/thaumic-cast/releases/latest';
+export const DOWNLOAD_URL = 'https://www.thaumiccast.com/download/';
 
 /**
  * Minimum wire-protocol semver the extension requires from the companion
