@@ -744,3 +744,40 @@ async fn a_failed_load_into_a_live_cast_keeps_the_cast_as_it_was() {
     })
     .await;
 }
+
+/// Proves: a cast that cannot move when UPnP is switched off mid-cast (FLAC
+/// never plays over port 1443) is ended rather than left playing with
+/// nothing able to control it, and its client is told why.
+#[tokio::test]
+async fn a_cast_that_cannot_move_when_upnp_goes_off_is_ended_with_its_reason() {
+    within("move failed", async {
+        let sys = TestSystem::builder()
+            .speakers(["Kitchen"])
+            .codec(AudioCodec::Flac)
+            .build()
+            .await;
+        let kitchen = sys.ip("Kitchen");
+        let stream = sys.new_stream();
+        assert!(sys.start(&stream, &["Kitchen"], false).await[0].success);
+
+        sys.fake.set_upnp_enabled(false);
+        sys.refresh_topology().await;
+        assert_eq!(sys.route(), Route::Lan);
+
+        sys.events
+            .wait_for_stream(|e| {
+                matches!(e, StreamEvent::PlaybackStopped { speaker_ip,
+                    reason: Some(SpeakerRemovalReason::MoveFailed), .. } if *speaker_ip == kitchen)
+            })
+            .await;
+        assert!(!sys
+            .events
+            .stream_events()
+            .iter()
+            .any(|e| matches!(e, StreamEvent::CastMoved { .. })));
+        assert!(sys.session(&stream, "Kitchen").is_none());
+        until(|| !sys.fake.speaker_named("Kitchen").is_fetching()).await;
+        assert!(!sys.services.route.is_held());
+    })
+    .await;
+}

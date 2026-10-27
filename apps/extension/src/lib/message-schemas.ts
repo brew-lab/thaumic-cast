@@ -550,6 +550,7 @@ export type TransportStateUpdateMessage = z.infer<typeof TransportStateUpdateMes
  * - `stream_ended`: The stream ended on the server side
  * - `user_removed`: User removed the last speaker via UI
  * - `continuation_failed`: A long cast could not be moved on to its next part
+ * - `move_failed`: Sonos UPnP was switched off and the cast could not move without it
  */
 export const CastAutoStopReasonSchema = z.enum([
   'source_changed',
@@ -557,6 +558,7 @@ export const CastAutoStopReasonSchema = z.enum([
   'speaker_stopped',
   'speaker_taken_over',
   'continuation_failed',
+  'move_failed',
   'stream_ended',
   'user_removed',
   ...CaptureErrorReasons,

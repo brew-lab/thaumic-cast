@@ -649,6 +649,8 @@ async function handlePlaybackStopped(
     log.warn(`Speaker ${speakerIp} was taken over by another client of the companion`);
   } else if (reason === 'continuation_failed') {
     log.warn(`Speaker ${speakerIp} would not start the next part of a long cast`);
+  } else if (reason === 'move_failed') {
+    log.warn(`Speaker ${speakerIp} could not be moved off UPnP, which was switched off`);
   }
 
   // Delegate to shared removal logic with pre-resolved session

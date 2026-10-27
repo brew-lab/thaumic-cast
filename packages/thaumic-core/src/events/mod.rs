@@ -29,6 +29,9 @@ use serde::{Deserialize, Serialize};
 /// - `SpeakerTakenOver`: Another cast client started its own stream on this speaker
 /// - `ContinuationFailed`: A long PCM cast could not be moved on to its next
 ///   segment (the speaker would not start it), so it ended there
+/// - `MoveFailed`: Sonos UPnP was switched off mid-cast and the cast could
+///   not be moved to the speakers' local connection (a FLAC cast cannot), so
+///   it ended there
 ///
 /// Wire strings are snake_case and are part of the client protocol: never
 /// rename an existing variant.
@@ -41,6 +44,7 @@ pub enum SpeakerRemovalReason {
     UserRemoved,
     SpeakerTakenOver,
     ContinuationFailed,
+    MoveFailed,
 }
 
 /// Events broadcast to clients.
@@ -594,6 +598,7 @@ mod tests {
             wire(SpeakerRemovalReason::ContinuationFailed),
             "\"continuation_failed\""
         );
+        assert_eq!(wire(SpeakerRemovalReason::MoveFailed), "\"move_failed\"");
     }
 
     /// The latency event's shape is protocol, shared with the extension's

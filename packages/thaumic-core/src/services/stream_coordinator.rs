@@ -850,7 +850,8 @@ impl StreamCoordinator {
     /// be stopped, continued or kept in sync. Each coordinator's stream is
     /// loaded again over port 1443, from the live edge (a skip of about the
     /// head start); its rooms follow it as a group does. A cast that cannot
-    /// move (FLAC) is left as it is, and logged.
+    /// move (FLAC, or a speaker that refuses) is ended with
+    /// [`SpeakerRemovalReason::MoveFailed`], so its client says why.
     pub async fn rehome_casts(&self) {
         let coordinators: Vec<PlaybackSession> = self
             .sessions
@@ -859,6 +860,7 @@ impl StreamCoordinator {
             .filter(|s| s.role == GroupRole::Coordinator)
             .collect();
         let mut moved: Vec<String> = Vec::new();
+        let mut failed: Vec<(String, String)> = Vec::new();
         for session in coordinators {
             // As every start does: under the speaker's start lock, for the
             // session as it stands once the lock is held.
@@ -909,12 +911,15 @@ impl StreamCoordinator {
                         moved.push(session.stream_id.clone());
                     }
                 }
-                Err(e) => log::warn!(
-                    "[Stream] Could not move stream={} speaker={} to port 1443: {}",
-                    session.stream_id,
-                    session.speaker_ip,
-                    e
-                ),
+                Err(e) => {
+                    log::warn!(
+                        "[Stream] Could not move stream={} speaker={} to port 1443: {}",
+                        session.stream_id,
+                        session.speaker_ip,
+                        e
+                    );
+                    failed.push((session.stream_id.clone(), session.speaker_ip.clone()));
+                }
             }
         }
         for stream_id in moved {
@@ -922,6 +927,17 @@ impl StreamCoordinator {
                 stream_id,
                 timestamp: now_millis(),
             });
+        }
+        // A cast that could not move would play on with nothing able to
+        // stop, continue or sync it: it is ended, and its client told why.
+        // Out of the loop, so no start lock is held while it stops.
+        for (stream_id, speaker_ip) in failed {
+            self.stop_playback_speaker(
+                &stream_id,
+                &speaker_ip,
+                Some(SpeakerRemovalReason::MoveFailed),
+            )
+            .await;
         }
     }
 

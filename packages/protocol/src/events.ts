@@ -12,6 +12,8 @@ import { TransportStateSchema, ZoneGroupSchema } from './sonos.js';
  * - `user_removed`: User explicitly removed the speaker via UI
  * - `continuation_failed`: A long PCM cast could not be moved on to its next segment
  *   (the speaker would not start it), so it ended there
+ * - `move_failed`: Sonos UPnP was switched off mid-cast and the cast could not be moved
+ *   to the speakers' local connection (a FLAC cast cannot), so it ended there
  */
 export const SpeakerRemovalReasonSchema = z.enum([
   'source_changed',
@@ -20,6 +22,7 @@ export const SpeakerRemovalReasonSchema = z.enum([
   'speaker_taken_over',
   'user_removed',
   'continuation_failed',
+  'move_failed',
 ]);
 export type SpeakerRemovalReason = z.infer<typeof SpeakerRemovalReasonSchema>;
 
