@@ -139,13 +139,13 @@ interface ToastState {
 }
 
 /**
- * Where focus lands once the casts change. After Stop (`stopped` has left the list), the next
- * tile's Stop or the TabCard's heading. After Cast (a cast not in `before` has joined the list),
- * that tile's title: never its Stop, which a second press of Cast would land on, with no Undo.
+ * Where focus lands once the casts change. After Stop (`stopped` has left the list), the title of
+ * the `next` cast's tile, or the TabCard's heading with none left. After Cast (a cast not in
+ * `before` has joined the list), that tile's title. Never a Stop: a second press would land on
+ * it, and Stop has no Undo.
  */
 type PendingFocus =
-  | { kind: 'stop'; stopped: number; tileId: string; name: string }
-  | { kind: 'tab'; stopped: number }
+  | { kind: 'stop'; stopped: number; next: number | null }
   | { kind: 'cast'; before: ReadonlySet<number> };
 
 /**
@@ -315,20 +315,23 @@ function MainPopup(): JSX.Element {
     const landed =
       focus.kind === 'cast' ? started : !casts.some((cast) => cast.tabId === focus.stopped);
     if (!landed) return;
+    // The cast that was next may have gone too, while this Stop ran: then the first that's left.
+    const tabId =
+      focus.kind === 'cast'
+        ? started?.tabId
+        : casts.some((cast) => cast.tabId === focus.next)
+          ? focus.next
+          : casts[0]?.tabId;
     pendingFocus.current = null;
     const active = document.activeElement;
     if (active && active !== document.body) return;
+    // A tile's title is a heading on a single cast, else the disclosure that holds it.
     const target =
-      focus.kind === 'tab'
+      tabId === null || tabId === undefined
         ? document.getElementById(TAB_CARD_ID)?.querySelector<HTMLElement>('h2')
-        : focus.kind === 'stop'
-          ? document
-              .getElementById(focus.tileId)
-              ?.querySelector<HTMLElement>(`button[aria-label="${CSS.escape(focus.name)}"]`)
-          : // The title: a heading on a single cast's tile, else the disclosure that holds it.
-            document
-              .getElementById(`cast-${started?.tabId}`)
-              ?.querySelector<HTMLElement>('h3, button[aria-expanded]');
+        : document
+            .getElementById(`cast-${tabId}`)
+            ?.querySelector<HTMLElement>('h3, button[aria-expanded]');
     target?.focus();
   }, [casts]);
 
@@ -532,18 +535,10 @@ function MainPopup(): JSX.Element {
       setToast(null);
       const index = casts.findIndex((c) => c.tabId === cast.tabId);
       const next = casts[index + 1] ?? casts[index - 1];
-      pendingFocus.current = next
-        ? {
-            kind: 'stop',
-            stopped: cast.tabId,
-            tileId: `cast-${next.tabId}`,
-            name: t('stop_cast_named', { title: castTitle(next) }),
-          }
-        : { kind: 'tab', stopped: cast.tabId };
+      pendingFocus.current = { kind: 'stop', stopped: cast.tabId, next: next?.tabId ?? null };
       const stopped = await stopCast(cast.tabId).catch(() => false);
       if (!stopped) {
-        // The cast still runs, so focus stays on its Stop (which shows it failed); a later
-        // change must not move it.
+        // The cast still runs, so focus stays on its Stop; a later change must not move it.
         pendingFocus.current = null;
         throw new Error('stop_failed');
       }
