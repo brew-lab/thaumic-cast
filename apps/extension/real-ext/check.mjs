@@ -112,7 +112,7 @@ const stopSpot = (target) =>
       red: band.matches('[class*="_red-guard_"]') }`);
 
 const tone = lib.serveTone();
-const env = await lib.launch({ profile: `check-${tag}`, scale });
+const env = await lib.launch({ profile: `check-${tag}`, scale, dark });
 const problems = [];
 
 /**
