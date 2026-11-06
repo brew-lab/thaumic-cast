@@ -15,6 +15,7 @@ import './catalogue.css';
 import { render } from 'preact';
 import { applyTheme, type ThemePreference } from '../src/theme';
 import { Catalogue } from './Catalogue';
+import { ArtworkFrame } from './sections/atoms';
 import { OptionsPageFrame } from './sections/pages';
 import { DesktopFrame, DialogFrame, WizardFrame } from './sections/desktop';
 
@@ -29,6 +30,7 @@ addEventListener('load', lowerStylesheets);
 // What owns its document or the window (OptionsShell, a modal Dialog, the desktop's shells)
 // is drawn alone, in an iframe of this page.
 const FRAMES = {
+  artwork: ArtworkFrame,
   options: OptionsPageFrame,
   dialog: DialogFrame,
   desktop: DesktopFrame,

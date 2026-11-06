@@ -1,5 +1,5 @@
-import type { ComponentChildren, JSX } from 'preact';
-import { useId, useState } from 'preact/hooks';
+import { hydrate, render, type ComponentChildren, type JSX } from 'preact';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { Artwork } from '../../src/Artwork';
 import { Badge, type BadgeTone } from '../../src/Badge';
 import { BrandBlock } from '../../src/BrandBlock';
@@ -1068,6 +1068,47 @@ const FAVICON =
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="#1d4ea8"/><circle cx="8" cy="8" r="3" fill="#fff"/></svg>',
   );
+
+/**
+ * Artwork's loading cases on their own (`?frame=artwork`): one drawn with a picture that arrives
+ * at once; one hydrated over markup whose picture has already loaded (no server renderer is
+ * needed: the markup is the component's own); and one that steps through `&art=a,b,,a`, where a
+ * name is `/artwork-test/<name>.png`, which the test answers itself, and an empty one is no src.
+ * @returns The frame
+ */
+export function ArtworkFrame(): JSX.Element {
+  const names = (new URLSearchParams(location.search).get('art') ?? 'a').split(',');
+  const [step, setStep] = useState(0);
+  const host = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    const art = <Artwork kind="image" size="md" src={ART} />;
+    const server = document.createElement('div');
+    render(art, server);
+    el.innerHTML = server.innerHTML;
+    render(null, server);
+    // Hydrated only once the load has fired, so the component cannot hear it.
+    el.querySelector('img')?.addEventListener('load', () => hydrate(art, el), { once: true });
+  }, []);
+
+  const name = names[step];
+  return (
+    <main>
+      <div data-case="fast">
+        <Artwork kind="image" size="md" src={ART} />
+      </div>
+      <div data-case="hydrated" ref={host} />
+      <div data-case="changing">
+        <Artwork kind="image" size="md" src={name ? `/artwork-test/${name}.png` : undefined} />
+        <button type="button" onClick={() => setStep((n) => n + 1)}>
+          Next picture
+        </button>
+      </div>
+    </main>
+  );
+}
 
 /**
  * Artwork: image, favicon, placeholder and disc at their sizes.
