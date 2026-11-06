@@ -1311,14 +1311,24 @@ try {
     secondCast ?? (await focusNow(pf)),
   );
   await keyPress(pf, 'Stop casting', 'Kitchen');
-  const nextStop = await until(async () => {
+  const nextTitle = await until(async () => {
     const now = await focusNow(pf);
-    return now.name.startsWith('Stop casting') && now.tile.includes('Bedroom') ? now : null;
+    return now.tag === 'H3' && now.tile.includes('Bedroom') ? now : null;
   }, 8000);
   check(
-    "Stop with another cast running moves focus straight to that cast's Stop",
-    nextStop?.trail.length === 1,
-    nextStop ?? (await focusNow(pf)),
+    "Stop with another cast running moves focus straight to that cast's title, not its Stop",
+    nextTitle?.trail.length === 1,
+    nextTitle ?? (await focusNow(pf)),
+  );
+  await pf.key('Enter');
+  await lib.sleep(1000);
+  const afterStopTwice =
+    await pf.eval(`return chrome.runtime.sendMessage({ type: 'GET_ACTIVE_CASTS' })
+    .then((r) => r.casts.length)`);
+  check(
+    'a second press of Enter after Stop leaves the next cast running',
+    afterStopTwice === 1,
+    afterStopTwice,
   );
   await keyPress(pf, 'Stop casting');
   const allStopped = await until(async () => !(await pf.text()).includes('Casting now'));
