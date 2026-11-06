@@ -407,12 +407,19 @@ export class Target {
  * @param {object} [options] - Launch options
  * @param {string} [options.profile] - Profile name; its directory is under the temp dir
  * @param {number} [options.scale] - Device scale factor (1.25 for 125 %)
+ * @param {boolean} [options.dark] - Start the browser itself dark
  * @param {boolean} [options.fresh] - Start from an empty profile
  * @param {string[]} [options.also] - More unpacked extensions to load beside it (another copy of
  *   the extension, as a store install beside an unpacked build gives); the helpers drive EXT
  * @returns {Promise<object>} The browser, its context, the service worker and helpers
  */
-export async function launch({ profile = 'check', scale = 1, fresh = true, also = [] } = {}) {
+export async function launch({
+  profile = 'check',
+  scale = 1,
+  dark = false,
+  fresh = true,
+  also = [],
+} = {}) {
   const dir = join(tmpdir(), `thaumic-real-ext-${profile}`);
   if (fresh) rmSync(dir, { recursive: true, force: true });
   mkdirSync(SHOTS, { recursive: true });
@@ -426,6 +433,8 @@ export async function launch({ profile = 'check', scale = 1, fresh = true, also 
       '--no-default-browser-check',
       '--autoplay-policy=no-user-gesture-required',
       `--force-device-scale-factor=${scale}`,
+      // The browser's own scheme: a page reports it as it loads, before any emulation.
+      ...(dark ? ['--force-dark-mode'] : []),
       `--disable-extensions-except=${[EXT, ...also].join(',')}`,
       `--load-extension=${[EXT, ...also].join(',')}`,
       `--allowlisted-extension-id=${unpackedId(EXT)}`,
