@@ -1197,6 +1197,140 @@ try {
   problems.push(...p.problems);
   p.close();
 
+  // ── Focus after Cast and Stop (P-stop), by every focusin on the way there ──
+  /**
+   * Presses a button from the keyboard, with a clean record of where focus goes next.
+   * @param {import('./lib.mjs').Target} page - The popup
+   * @param {string} start - How the button's name starts
+   * @param {string} [tile] - Words its cast's tile must hold
+   */
+  const keyPress = async (page, start, tile = '') => {
+    await page.eval(
+      `const b = [...document.querySelectorAll('button')].find((x) =>
+        (x.getAttribute('aria-label') || x.innerText).trim().startsWith(args.start) &&
+        (!args.tile || x.closest('[id^="cast-"]')?.innerText.includes(args.tile)));
+      b.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      b.focus({ focusVisible: true });
+      window.focusTrail = [];
+      if (!window.focusTrailOn) {
+        window.focusTrailOn = true;
+        document.addEventListener('focusin', (e) => window.focusTrail.push(
+          e.target.tagName + ':' + (e.target.getAttribute('aria-label') || e.target.innerText).trim()));
+      }`,
+      { start, tile },
+    );
+    await page.key('Enter');
+  };
+  const focusNow = (page) =>
+    page.eval(`const a = document.activeElement;
+      return { tag: a.tagName, name: (a.getAttribute('aria-label') || a.innerText).trim(),
+        visible: a.matches(':focus-visible'), expanded: a.getAttribute('aria-expanded'), tile: a.closest('[id^="cast-"]')?.innerText ?? '',
+        trail: window.focusTrail }`);
+  const focusOn = (page, tag, start) =>
+    until(async () => {
+      const now = await focusNow(page);
+      return now.tag === tag && now.name.startsWith(start) ? now : null;
+    }, 8000);
+  /**
+   * Chooses one room, unticking what the popup chose for itself (the last cast's rooms), then
+   * waits for Cast to name it.
+   * @param {import('./lib.mjs').Target} page - The popup
+   * @param {string} room - The room
+   */
+  const chooseOnly = async (page, room) => {
+    const ready = await until(() =>
+      page.eval(`return document.querySelectorAll('label input[type=checkbox]').length > 0`),
+    );
+    if (!ready) throw new Error('the popup shows no rooms');
+    await page.eval(
+      `for (const label of document.querySelectorAll('label')) {
+        const box = label.querySelector('input[type=checkbox]');
+        const want = label.innerText.split('\\n')[0].trim() === args.room;
+        if (box && box.checked !== want) box.click();
+      }`,
+      { room },
+    );
+    const named = await until(() =>
+      page.eval(`return [...document.querySelectorAll('button')].some((b) =>
+        b.innerText.trim() === 'Cast to 1 room' && b.getAttribute('aria-disabled') !== 'true')`),
+    );
+    if (!named)
+      throw new Error('Cast does not name one room: ' + (await page.text()).slice(0, 200));
+  };
+
+  p = await env.popup({ dark });
+  await chooseOnly(p, 'Bedroom');
+  await p.click('button', 'Cast to');
+  const mouseCast = await focusOn(p, 'H3', 'Test tone');
+  check(
+    "after a click on Cast focus is on the cast's title, with no ring",
+    mouseCast && !mouseCast.visible,
+    mouseCast ?? (await focusNow(p)),
+  );
+  await shot(p, '11a-focus-after-mouse-cast');
+  await keyPress(p, 'Stop casting');
+  const lastStop = await focusOn(p, 'H2', '');
+  check(
+    "Stop on the only cast moves focus straight to the TabCard's heading",
+    lastStop?.trail.length === 1,
+    lastStop ?? (await focusNow(p)),
+  );
+  await until(async () => !(await p.text()).includes('Casting now'));
+
+  await chooseOnly(p, 'Bedroom');
+  await keyPress(p, 'Cast to');
+  const keyCast = await focusOn(p, 'H3', 'Test tone');
+  check(
+    "Cast from the keyboard moves focus straight to the cast's title, and shows it",
+    keyCast?.visible && keyCast.trail.length === 1,
+    keyCast ?? (await focusNow(p)),
+  );
+  await shot(p, '11b-focus-after-key-cast');
+  // A second press of Cast lands on the title, not on a Stop with no Undo.
+  await p.key('Enter');
+  await lib.sleep(1000);
+  const afterSecond = await p.eval(`return chrome.runtime.sendMessage({ type: 'GET_ACTIVE_CASTS' })
+    .then((r) => r.casts.length)`);
+  check(
+    'a second press of Enter after Cast leaves the cast running',
+    afterSecond === 1,
+    afterSecond,
+  );
+
+  const focusTab = await env.audioTab(await env.ctx.newPage());
+  const pf = await env.popup({ dark });
+  await chooseOnly(pf, 'Kitchen');
+  await keyPress(pf, 'Cast to');
+  const secondCast = await until(async () => {
+    const now = await focusNow(pf);
+    return now.expanded !== null && now.tile.includes('Kitchen') ? now : null;
+  }, 8000);
+  check(
+    "a second cast's Cast moves focus to its own disclosure, never into the other cast",
+    secondCast?.trail.length === 1,
+    secondCast ?? (await focusNow(pf)),
+  );
+  await keyPress(pf, 'Stop casting', 'Kitchen');
+  const nextStop = await until(async () => {
+    const now = await focusNow(pf);
+    return now.name.startsWith('Stop casting') && now.tile.includes('Bedroom') ? now : null;
+  }, 8000);
+  check(
+    "Stop with another cast running moves focus straight to that cast's Stop",
+    nextStop?.trail.length === 1,
+    nextStop ?? (await focusNow(pf)),
+  );
+  await keyPress(pf, 'Stop casting');
+  const allStopped = await until(async () => !(await pf.text()).includes('Casting now'));
+  check('the focus pass leaves no cast running', allStopped, await pf.text());
+  // As after every Stop in this walk: the rooms regroup before the next pass reads them.
+  await lib.sleep(1500);
+  problems.push(...p.problems, ...pf.problems);
+  pf.close();
+  p.close();
+  await focusTab.close();
+  await tab.bringToFront();
+
   // ── Rooms joining and leaving casts, over and over (rooms.mjs) ────────
   problems.push(...(await roomsPass(env, { check, shot, dark })));
 

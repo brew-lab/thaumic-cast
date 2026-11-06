@@ -1,5 +1,5 @@
 import type { JSX } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ActiveCast, Room, RoomId } from '@thaumic-cast/protocol';
 import {
   getDisplaySubtitle,
@@ -138,8 +138,15 @@ interface ToastState {
   undo?: { tabId: number; ip: string; roomIds: RoomId[]; levels: Record<RoomId, number> };
 }
 
-/** The tile for the cast whose focus should land after Stop, or the TabCard. */
-type PendingFocus = { kind: 'stop'; tileId: string; name: string } | { kind: 'tab' };
+/**
+ * Where focus lands once the casts change. After Stop (`stopped` has left the list), the next
+ * tile's Stop or the TabCard's heading. After Cast (a cast not in `before` has joined the list),
+ * that tile's title: never its Stop, which a second press of Cast would land on, with no Undo.
+ */
+type PendingFocus =
+  | { kind: 'stop'; stopped: number; tileId: string; name: string }
+  | { kind: 'tab'; stopped: number }
+  | { kind: 'cast'; before: ReadonlySet<number> };
 
 /**
  * Main Extension Popup UI.
@@ -295,19 +302,34 @@ function MainPopup(): JSX.Element {
     );
     const live = new Set(casts.map((cast) => cast.tabId));
     if (addFor !== null && !live.has(addFor)) setAddFor(null);
+  }, [casts]);
 
+  // In a layout effect, so it runs before PopupShell's focus keeper catches what went. It is
+  // spent once the change lands, and only takes focus that has fallen to the page: focus a key
+  // has moved on in the meantime stays, and nothing moves it later.
+  useLayoutEffect(() => {
     const focus = pendingFocus.current;
     if (!focus) return;
+    const started =
+      focus.kind === 'cast' ? casts.find((cast) => !focus.before.has(cast.tabId)) : undefined;
+    const landed =
+      focus.kind === 'cast' ? started : !casts.some((cast) => cast.tabId === focus.stopped);
+    if (!landed) return;
+    pendingFocus.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
     const target =
       focus.kind === 'tab'
         ? document.getElementById(TAB_CARD_ID)?.querySelector<HTMLElement>('h2')
-        : document
-            .getElementById(focus.tileId)
-            ?.querySelector<HTMLElement>(`button[aria-label="${CSS.escape(focus.name)}"]`);
-    if (target) {
-      pendingFocus.current = null;
-      target.focus();
-    }
+        : focus.kind === 'stop'
+          ? document
+              .getElementById(focus.tileId)
+              ?.querySelector<HTMLElement>(`button[aria-label="${CSS.escape(focus.name)}"]`)
+          : // The title: a heading on a single cast's tile, else the disclosure that holds it.
+            document
+              .getElementById(`cast-${started?.tabId}`)
+              ?.querySelector<HTMLElement>('h3, button[aria-expanded]');
+    target?.focus();
   }, [casts]);
 
   // Add mode closes once no room is left to add (the last one joined, or every other room
@@ -474,6 +496,8 @@ function MainPopup(): JSX.Element {
     const roomIds = choice.choice;
     if (roomIds.length === 0) return;
     for (const room of rooms) if (roomIds.includes(room.id)) tookIps.current.add(room.ip);
+    // Set before asking: the new list can arrive before the answer does.
+    pendingFocus.current = { kind: 'cast', before: new Set(casts.map((cast) => cast.tabId)) };
     const message: StartCastMessage = {
       type: 'START_CAST',
       payload: { roomIds, startLevels: start.levelsFor(roomIds) },
@@ -481,6 +505,7 @@ function MainPopup(): JSX.Element {
     try {
       const response: ExtensionResponse = await chrome.runtime.sendMessage(message);
       if (!response?.success) {
+        pendingFocus.current = null;
         setCastFailure(castBarFailure(response?.error, response?.errorParams ?? {}));
         return;
       }
@@ -497,9 +522,10 @@ function MainPopup(): JSX.Element {
         }));
       }
     } catch {
+      pendingFocus.current = null;
       setCastFailure(castBarFailure(undefined));
     }
-  }, [choice.choice, start, rooms]);
+  }, [choice.choice, start, rooms, casts]);
 
   const handleStop = useCallback(
     async (cast: ActiveCast): Promise<void> => {
@@ -509,10 +535,11 @@ function MainPopup(): JSX.Element {
       pendingFocus.current = next
         ? {
             kind: 'stop',
+            stopped: cast.tabId,
             tileId: `cast-${next.tabId}`,
             name: t('stop_cast_named', { title: castTitle(next) }),
           }
-        : { kind: 'tab' };
+        : { kind: 'tab', stopped: cast.tabId };
       const stopped = await stopCast(cast.tabId).catch(() => false);
       if (!stopped) {
         // The cast still runs, so focus stays on its Stop (which shows it failed); a later
