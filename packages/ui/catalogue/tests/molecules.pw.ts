@@ -1,7 +1,7 @@
 /*
  * Behaviour of the molecules (DESIGN.md §5), on the catalogue page in a real browser:
  * copy feedback (P-copy), address testing and validation (M-address, P-forms), the
- * details-based Disclosure, and the notices' roles.
+ * details-based Disclosure, the notices' roles, and WizardStep's header.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { openSections } from './open';
@@ -330,5 +330,35 @@ test('a readout is ruled rows with every value on the end edge, at every width',
         `${width}: every row of the real readout on one line`,
       ).toBe(true);
     }
+  }
+});
+
+test("a WizardStep's header is the PopupHeader's height, with the disc starting with the title", async ({
+  page,
+}) => {
+  const popupHeader = await light(page, 'popup-header')
+    .locator('[class*="header"]')
+    .first()
+    .evaluate((el) => el.getBoundingClientRect().height);
+  const steps = await light(page, 'wizard-step')
+    .locator('h2')
+    .evaluateAll((titles) =>
+      titles.map((title) => {
+        const header = title.parentElement!.parentElement!.getBoundingClientRect();
+        const disc = title.parentElement!.previousElementSibling!.getBoundingClientRect();
+        return {
+          height: header.height,
+          discAbove: disc.top - header.top,
+          discBelow: header.bottom - disc.bottom,
+          titleFromDisc: title.getBoundingClientRect().top - disc.top,
+        };
+      }),
+    );
+  expect(steps.length).toBeGreaterThan(0);
+  for (const step of steps) {
+    expect(step.height).toBe(popupHeader);
+    expect(step.discAbove).toBe(4);
+    expect(step.discBelow).toBe(4);
+    expect(Math.abs(step.titleFromDisc)).toBeLessThanOrEqual(1);
   }
 });

@@ -36,11 +36,14 @@
   /*
    * The disc starts with the title, not centred on the header: a title that wraps (the
    * welcome's "Welcome to Thaumic Cast" in the popup's Card) keeps its first line by the disc.
+   * The same height as the PopupHeader: the 48 px disc with --space-2 above and below it.
    */
   .header {
     display: flex;
     align-items: start;
     gap: var(--space-4);
+    min-block-size: calc(var(--size-art-lg) + var(--space-3));
+    padding-block: var(--space-2);
   }
 
   /* The h2 is trimmed to its letters (F-textbox), so the gap gives the subtitle its room. */

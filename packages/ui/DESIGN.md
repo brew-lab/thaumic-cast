@@ -723,6 +723,7 @@ One row per room. It absorbs SpeakerRow, SpeakerVolumeRow, SpeakerMultiSelect's 
 - **What:** a disc Artwork plus the step's `h2` plus a subtitle plus a body slot.
 - **Gap:** the `h2` is trimmed (F-textbox), so the subtitle sits `--space-3` under it, as BrandBlock and PageHeader give their trimmed titles room.
 - **Disc:** it starts with the title, not centred on the header, so a title that wraps (the welcome's, in the popup's Card) keeps its first line beside the disc (§11 call 91).
+- **Header:** at least the PopupHeader's height (`--size-art-lg` + `--space-3`, 56 px): the disc with `--space-2` above and below it.
 - **Focus:** moves to the `h2` on a step change.
 - **Popup:** the parts sit `--space-4` apart (the Card's gap; `--space-5` on the desktop), and the body is set in the popup's `--text-3` (`--text-4` on the desktop): its paragraphs are plain `<p>`s with no type of their own. `note` is a quieter last line (`--text-2`, `--on-surface-variant`), for "\* Over your own network…" (§11 call 90).
 
