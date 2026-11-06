@@ -16,7 +16,11 @@
  */
 
 import { createLogger } from '@thaumic-cast/shared';
-import { OFFSCREEN_MESSAGE_TARGET, type WsStatusResponse } from '../lib/messages';
+import {
+  OFFSCREEN_MESSAGE_TARGET,
+  type ExtensionResponse,
+  type WsStatusResponse,
+} from '../lib/messages';
 import { setConnected, getConnectionState } from './connection-state';
 import { setSonosState } from './sonos-state';
 import { notifyPopup } from './notification-service';
@@ -83,6 +87,31 @@ export async function sendToOffscreen<T = unknown>(
     throw err;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Stops a tab's session in the offscreen document.
+ *
+ * With no document there is nothing to stop: the capture went with it. That is asked of Chrome
+ * rather than read from the send, because an open popup also listens: with the popup open and
+ * no document the send answers with nothing, and with the popup shut it throws.
+ *
+ * @param tabId - The tab whose session stops
+ * @throws When the document says the stop failed or does not answer, so it may still be playing
+ */
+export async function stopOffscreenSession(tabId: number): Promise<void> {
+  const existing = await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+  });
+  if (existing.length === 0) return;
+
+  const response = await sendToOffscreen<ExtensionResponse>({
+    type: 'STOP_SESSION',
+    payload: { tabId },
+  });
+  if (!response?.success) {
+    throw new Error(response?.error ?? 'The offscreen document did not answer');
   }
 }
 

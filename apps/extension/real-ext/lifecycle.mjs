@@ -496,6 +496,63 @@ async function twoCopiesPass() {
   }
 }
 
+/**
+ * The offscreen document goes away mid-cast: its capture went with it, so Stop has nothing to
+ * stop. It must not report a failure or keep a cast nothing can ever stop, and the speaker must
+ * stop too. The popup stays open throughout, as it is when Stop is pressed.
+ */
+async function closedDocumentPass() {
+  const env = await lib.launch({ profile: 'lifecycle-closed-document' });
+  /**
+   * Whether any room plays one of the companion's streams.
+   * @returns {Promise<boolean>} True while a cast plays
+   */
+  const castPlays = async () => (await lib.control('/state')).includes('/stream/');
+  try {
+    await env.audioTab();
+    const p = await skipOnboarding(env);
+    await p.clickRoom('Kitchen');
+    await p.click('button', 'Cast to');
+    await until(async () => (await p.text()).includes('Casting now'), 10000);
+    check('a cast plays before the document closes', Boolean(await until(castPlays, 10000)));
+    await env.sw.evaluate(() => chrome.offscreen.closeDocument());
+    const silent = await until(async () => !(await castPlays()), 10000);
+    check(
+      'with the offscreen document gone the rooms stop playing the cast',
+      Boolean(silent),
+      await lib.control('/state'),
+    );
+    await p.click('button', 'Stop');
+    const gone = await until(async () => !(await p.text()).includes('Casting now'), 15000);
+    const text = await p.text();
+    check(
+      'Stop with the offscreen document gone removes the cast and reports no failure',
+      gone && !text.includes('did not stop'),
+      text,
+    );
+    p.close();
+  } finally {
+    await env.close();
+  }
+}
+
+/**
+ * Walks past onboarding.
+ * @param {object} env - What lib.launch() returned
+ * @returns {Promise<import('./lib.mjs').Target>} A popup on its main page
+ */
+async function skipOnboarding(env) {
+  const p = await env.popup();
+  for (let i = 0; i < 4; i++) {
+    await p.click('button', 'Carry on').catch(() => {});
+    await lib.sleep(1200);
+  }
+  await p.click('button', 'That').catch(() => {});
+  await lib.sleep(1200);
+  p.close();
+  return env.popup();
+}
+
 if (!process.env.BIN) {
   console.error('BIN must name the thaumic-core test binary (run.sh sets it)');
   process.exit(2);
@@ -532,14 +589,7 @@ try {
 
   // ── A cast, then the companion quits and comes back ────────────────────
   const tab = await env.audioTab();
-  let p = await env.popup();
-  for (let i = 0; i < 4; i++) {
-    await p.click('button', 'Carry on').catch(() => {});
-    await lib.sleep(1200);
-  }
-  await p.click('button', 'That').catch(() => {});
-  await lib.sleep(1200);
-  p = await env.popup();
+  let p = await skipOnboarding(env);
   await p.clickRoom('Kitchen');
   await p.click('button', 'Cast to');
   const casting = await until(async () => (await p.text()).includes('Casting now'), 10000);
@@ -604,6 +654,9 @@ try {
 
   // ── Two copies of the extension: one press is still one track ──────────
   await twoCopiesPass();
+
+  // ── The offscreen document goes away mid-cast ──────────────────────────
+  await closedDocumentPass();
 } catch (e) {
   check('the lifecycle pass finished', false, String(e.stack ?? e));
 } finally {

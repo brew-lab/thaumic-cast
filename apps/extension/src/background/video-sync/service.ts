@@ -482,6 +482,16 @@ export async function stopVideoSync(tabId: number): Promise<void> {
 }
 
 /**
+ * Lets a cast's video sync run again after a stop that did not happen: the next report for the
+ * cast starts its controller afresh.
+ * @param tabId - The tab whose cast is still playing
+ */
+export function resumeVideoSync(tabId: number): void {
+  const streamId = getSession(tabId)?.streamId;
+  if (streamId) stoppedStreams.delete(streamId);
+}
+
+/**
  * Forgets every controller (tests).
  */
 export function resetVideoSyncService(): void {

@@ -26,6 +26,7 @@ import {
   resetVideoSyncService,
   setVideoSyncEnabled,
   setVideoSyncTrim,
+  resumeVideoSync,
   stopVideoSync,
 } from './service';
 
@@ -271,6 +272,21 @@ describe('video sync service', () => {
     await handleVideoSyncLatency(updated({ companionMs: 700, epoch: 2 }));
     await settle();
     expect(leads().length).toBe(sent);
+  });
+
+  it('should run again when a stop did not happen', async () => {
+    relaysAnswer();
+    cast();
+    await handleVideoSyncLatency(updated({ companionMs: 700 }));
+    await settle();
+    await stopVideoSync(TAB);
+    expect(await getVideoSyncStatus(TAB)).toBeNull();
+    const sent = leads().length;
+    resumeVideoSync(TAB);
+    await handleVideoSyncLatency(updated({ companionMs: 700, epoch: 2 }));
+    await settle();
+    expect(await getVideoSyncStatus(TAB)).not.toBeNull();
+    expect(leads().length).toBeGreaterThan(sent);
   });
 
   it('should not let a send queued before stop go out after its lead 0', async () => {
