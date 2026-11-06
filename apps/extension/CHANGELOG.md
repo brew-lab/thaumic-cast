@@ -1,5 +1,23 @@
 # @thaumic-cast/extension
 
+## 0.13.3
+
+### Patch Changes
+
+- [#304](https://github.com/brew-lab/thaumic-cast/pull/304) [`3eaa09d`](https://github.com/brew-lab/thaumic-cast/commit/3eaa09da7f5a13f87b44ad20a94aaadef377861a) Thanks [@skezo](https://github.com/skezo)! - Cover art and site icons that load very quickly, such as a cached cover when a cast starts, now show instead of staying
+  on the placeholder. A picture that failed is tried again when it comes back.
+
+- [#306](https://github.com/brew-lab/thaumic-cast/pull/306) [`be77881`](https://github.com/brew-lab/thaumic-cast/commit/be77881fcbe2aae3801c4ecd016be3a2188a58da) Thanks [@skezo](https://github.com/skezo)! - Pressing Cast now moves focus to the new cast's title. It used to land on Settings, or on another cast's volume slider if
+  one was running. Pressing Stop now moves focus to the next cast's title instead of its Stop button, so a second press
+  can't stop that cast too.
+
+- [#304](https://github.com/brew-lab/thaumic-cast/pull/304) [`4f1e029`](https://github.com/brew-lab/thaumic-cast/commit/4f1e0295e86e4d55a5c7ed7e7c3fef307ea4a82d) Thanks [@skezo](https://github.com/skezo)! - The onboarding step's header is now the same height as the popup's header, so it no longer looks cramped.
+
+- [#306](https://github.com/brew-lab/thaumic-cast/pull/306) [`5b993d4`](https://github.com/brew-lab/thaumic-cast/commit/5b993d4f9633a3519cb7ae1d5c4daaf92543e951) Thanks [@skezo](https://github.com/skezo)! - When stopping a cast reports an error, the popup now says so. Before, the button went back to normal with no message.
+
+- [#310](https://github.com/brew-lab/thaumic-cast/pull/310) [`6ad00ce`](https://github.com/brew-lab/thaumic-cast/commit/6ad00cefa8ce0fce0f49c49d92bbb22fddf3dd79) Thanks [@skezo](https://github.com/skezo)! - If the audio engine doesn't stop when you press Stop, the cast now stays in the popup and says so, so you can try again.
+  Before, the cast disappeared as if it had stopped, and the speakers could keep playing with nothing left to stop them.
+
 ## 0.13.2
 
 ### Patch Changes
