@@ -9,11 +9,26 @@ import type { BackgroundToPopupMessage } from '../lib/messages';
 import { resetChromeStub, tabMessages } from '../test-support/chrome-stub';
 // The offscreen broker is mocked process-wide by the test preload; see
 // test-support/offscreen-broker-mock.ts.
-import { brokerCalls as broker, resetBrokerCalls } from '../test-support/offscreen-broker-mock';
+import {
+  brokerCalls as broker,
+  brokerReplies,
+  resetBrokerCalls,
+} from '../test-support/offscreen-broker-mock';
 import { notificationService } from './notification-service';
 import { clearConnectionState, setDesktopApp } from './connection-state';
-import { clearAllSessions, getSession, hasSession, registerSession } from './session-manager';
-import { handleSonosEvent, onSourcePlaybackStarted, stopCastForTab } from './sonos-event-handlers';
+import {
+  clearAllSessions,
+  getSession,
+  hasSession,
+  registerSession,
+  removeSession,
+} from './session-manager';
+import {
+  handleSonosEvent,
+  onSourcePlaybackStarted,
+  stopCastForTab,
+  stopCastOrThrow,
+} from './sonos-event-handlers';
 import { resetVideoSyncService } from './video-sync/service';
 import { getSonosState, setSonosState } from './sonos-state';
 
@@ -624,6 +639,53 @@ describe('stopCastForTab', () => {
     await stopCastForTab(7);
     expect(tabMessages).toEqual([]);
     expect(broker.stoppedTabs).toEqual([7]);
+  });
+
+  it('should forget the cast even when the offscreen document cannot stop it', async () => {
+    brokerReplies.stopError = new Error('Offscreen message timed out');
+    registerOwnCast(8, 'closed-tab-stream', [freshIp()]);
+    await stopCastForTab(8);
+    expect(hasSession(8)).toBe(false);
+  });
+});
+
+describe('stopCastOrThrow', () => {
+  it('should forget the cast once the offscreen document has stopped it', async () => {
+    registerOwnCast(9, 'stopped-stream', [freshIp()]);
+    await stopCastOrThrow(9);
+    expect(broker.stoppedTabs).toEqual([9]);
+    expect(hasSession(9)).toBe(false);
+  });
+
+  it('should keep the cast when the offscreen document cannot stop it', async () => {
+    brokerReplies.stopError = new Error('Offscreen message timed out');
+    registerOwnCast(10, 'still-playing-stream', [freshIp()]);
+    await expect(stopCastOrThrow(10)).rejects.toThrow('Offscreen message timed out');
+    expect(hasSession(10)).toBe(true);
+  });
+
+  it('should keep a kept cast from being discarded', async () => {
+    const tabsApi = chrome.tabs as unknown as { update: (...args: unknown[]) => Promise<void> };
+    const original = tabsApi.update;
+    const updates: unknown[] = [];
+    tabsApi.update = async (_tabId, change) => void updates.push(change);
+    try {
+      brokerReplies.stopError = new Error('Offscreen message timed out');
+      registerSession(11, 'kept-stream', [freshIp()], ['Kitchen'], ENCODER, false, 'tab', false);
+      await expect(stopCastOrThrow(11)).rejects.toThrow();
+    } finally {
+      tabsApi.update = original;
+    }
+    expect(updates).toEqual([{ autoDiscardable: true }, { autoDiscardable: false }]);
+  });
+
+  it('should report no failure for a cast that ended while the stop was waiting', async () => {
+    brokerReplies.stopError = new Error('Offscreen message timed out');
+    registerOwnCast(12, 'ended-stream', [freshIp()]);
+    const stopping = stopCastOrThrow(12);
+    removeSession(12);
+    await stopping;
+    expect(hasSession(12)).toBe(false);
   });
 });
 

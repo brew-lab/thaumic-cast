@@ -50,6 +50,8 @@ export interface PlaybackResult {
  */
 export const brokerReplies = {
   playbackResult: undefined as ((speakerIp: string) => PlaybackResult) | undefined,
+  /** Set to make `stopSession` fail with it, as an offscreen document that could not stop. */
+  stopError: undefined as Error | undefined,
 };
 
 /**
@@ -61,6 +63,7 @@ export function resetBrokerCalls(): void {
   brokerCalls.startedPlayback.length = 0;
   brokerCalls.startedCapture.length = 0;
   brokerReplies.playbackResult = undefined;
+  brokerReplies.stopError = undefined;
 }
 
 mock.module('../background/offscreen-broker', () => ({
@@ -71,6 +74,7 @@ mock.module('../background/offscreen-broker', () => ({
     },
     async stopSession(tabId: number): Promise<void> {
       brokerCalls.stoppedTabs.push(tabId);
+      if (brokerReplies.stopError) throw brokerReplies.stopError;
     },
     syncSonosState(state: SonosStateSnapshot): void {
       brokerCalls.syncedStates.push(state);

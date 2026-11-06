@@ -57,7 +57,7 @@ import {
 } from '@thaumic-cast/protocol';
 import { applyIngestGapsEvent, ingestGapsBroadcast } from './ingest-gaps-state';
 import { getConnectionState, setCompanionAudio } from './connection-state';
-import { handleVideoSyncLatency, stopVideoSync } from './video-sync/service';
+import { handleVideoSyncLatency, resumeVideoSync, stopVideoSync } from './video-sync/service';
 
 const log = createLogger('SonosEvents');
 
@@ -453,11 +453,10 @@ function handleZoneGroupsUpdated(groups: SonosStateSnapshot['groups']): void {
 }
 
 /**
- * Stops a cast for a specific tab.
- * Centralizes the stop-cast cleanup sequence to avoid duplication.
+ * What every stop does before it asks the offscreen document to stop the capture.
  * @param tabId - The tab ID to stop
  */
-export async function stopCastForTab(tabId: number): Promise<void> {
+async function prepareStop(tabId: number): Promise<void> {
   // Clear tracked media action state for this tab
   clearTabMediaActionState(tabId);
 
@@ -472,11 +471,41 @@ export async function stopCastForTab(tabId: number): Promise<void> {
     // Put the page's sound back in step before capture stops
     if (session?.videoSync) await stopVideoSync(tabId).catch(noop);
   }
+}
 
-  // Send stop message to offscreen (unified for both capture modes)
-  await offscreenBroker.stopSession(tabId).catch(noop);
+/**
+ * Stops a cast for a specific tab, and forgets it whatever the offscreen document says: its tab
+ * has closed or its stream has ended, so there is nothing left to try again from.
+ * @param tabId - The tab ID to stop
+ */
+export async function stopCastForTab(tabId: number): Promise<void> {
+  await prepareStop(tabId);
+  await offscreenBroker.stopSession(tabId).catch((err) => {
+    log.warn(`Offscreen stop failed for tab ${tabId}: ${String(err)}`);
+  });
+  removeSession(tabId);
+}
 
-  // Remove session from manager
+/**
+ * Stops a cast for a person pressing Stop. If the offscreen document cannot stop it, it may still
+ * be playing, so it stays listed and carries on as it was, and Stop can be pressed again.
+ * @param tabId - The tab ID to stop
+ * @throws When the offscreen document says the stop failed or does not answer
+ */
+export async function stopCastOrThrow(tabId: number): Promise<void> {
+  await prepareStop(tabId);
+  try {
+    await offscreenBroker.stopSession(tabId);
+  } catch (err) {
+    const session = getSession(tabId);
+    // It ended some other way while the stop was waiting, so nothing failed.
+    if (!session) return;
+    if (session.captureMode === 'tab') {
+      chrome.tabs.update(tabId, { autoDiscardable: false }).catch(noop);
+      if (session.videoSync) resumeVideoSync(tabId);
+    }
+    throw err;
+  }
   removeSession(tabId);
 }
 

@@ -1310,27 +1310,47 @@ try {
     secondCast?.trail.length === 1,
     secondCast ?? (await focusNow(pf)),
   );
-  // A Stop that fails says so and keeps focus; the cast plays on.
-  await pf.eval(`const send = chrome.runtime.sendMessage;
-    window.realSend = send;
-    chrome.runtime.sendMessage = (m, ...rest) =>
-      m?.type === 'STOP_CAST' ? Promise.resolve({ success: false }) : send.call(chrome.runtime, m, ...rest);`);
-  await keyPress(pf, 'Stop casting', 'Kitchen');
-  // Busy holds for a moment after the answer, and ignores a press until it clears.
-  const stopRefused = await until(async () => {
-    const said = (await pf.text()).includes('did not stop');
-    const busy = await pf.eval(
-      `return document.activeElement.getAttribute('aria-busy') === 'true'`,
+  // A Stop the offscreen document refuses, or never answers, says so and keeps focus; the cast
+  // stays listed. The worker's send to the document is what fails.
+  const stopSessionDoes = (how) =>
+    env.sw.evaluate((how) => {
+      globalThis.__realSend ??= chrome.runtime.sendMessage;
+      const send = globalThis.__realSend;
+      chrome.runtime.sendMessage = (m, ...rest) => {
+        if (m?.type !== 'STOP_SESSION' || how === 'answer')
+          return send.call(chrome.runtime, m, ...rest);
+        return how === 'refuse'
+          ? Promise.resolve({ success: false, error: 'refused by the rig' })
+          : new Promise(() => {});
+      };
+    }, how);
+  for (const [how, ms] of [
+    ['refuse', 6000],
+    ['hang', 15000],
+  ]) {
+    await stopSessionDoes(how);
+    await keyPress(pf, 'Stop casting', 'Kitchen');
+    await lib.sleep(500);
+    // Busy holds for a moment after the answer, and ignores a press until it clears.
+    const stopFailed = await until(async () => {
+      const said = (await pf.text()).includes('did not stop');
+      const busy = await pf.eval(
+        `return document.activeElement.getAttribute('aria-busy') === 'true'`,
+      );
+      return said && !busy ? focusNow(pf) : null;
+    }, ms);
+    const listed = await pf.eval(`return chrome.runtime.sendMessage({ type: 'GET_ACTIVE_CASTS' })
+      .then((r) => r.casts.length)`);
+    if (how === 'refuse') await shot(pf, '11c-stop-failed');
+    check(
+      `a Stop the offscreen document ${how === 'refuse' ? 'refuses' : 'never answers'} says so, keeps the cast, and focus stays on it`,
+      stopFailed?.name.startsWith('Stop casting') &&
+        stopFailed.tile.includes('Kitchen') &&
+        listed === 2,
+      { stopFailed, listed, text: await pf.text() },
     );
-    return said && !busy ? focusNow(pf) : null;
-  });
-  await shot(pf, '11c-stop-failed');
-  check(
-    'a Stop that fails says so, and focus stays on it',
-    stopRefused?.name.startsWith('Stop casting') && stopRefused.tile.includes('Kitchen'),
-    stopRefused ?? (await pf.text()),
-  );
-  await pf.eval(`chrome.runtime.sendMessage = window.realSend;`);
+  }
+  await stopSessionDoes('answer');
 
   await keyPress(pf, 'Stop casting', 'Kitchen');
   const nextTitle = await until(async () => {

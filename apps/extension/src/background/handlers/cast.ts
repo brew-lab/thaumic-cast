@@ -51,7 +51,7 @@ import {
 import { getSpeakerGroups, getSonosState } from '../sonos-state';
 import { recordJoinFailed } from '../away-log';
 import { getConnectionState, clearConnectionState } from '../connection-state';
-import { stopCastForTab } from '../sonos-event-handlers';
+import { stopCastOrThrow } from '../sonos-event-handlers';
 import { ensureOffscreen } from '../offscreen-manager';
 import { offscreenBroker } from '../offscreen-broker';
 import { detectBrowserExecutable } from '../../lib/browser-detect';
@@ -374,7 +374,7 @@ export async function handleStopCast(msg: StopCastMessage): Promise<ExtensionRes
     }
 
     if (tabId && hasSession(tabId)) {
-      await stopCastForTab(tabId);
+      await stopCastOrThrow(tabId);
     }
     return { success: true };
   } catch (err) {

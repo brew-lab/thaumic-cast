@@ -33,7 +33,8 @@ speaker dropping off the network and the Undo Toast, rooms joining slowly beside
 alone (every row's Slider on one start and end), a cast in every room (no Add a room), the next-cast Notice in
 Settings › Audio (a cast on Bespoke PCM: Smoothing changed brings it, changed back takes it away,
 Theme never brings it, a reload mid-cast keeps it, the cast stopping takes it away), Settings › Saved sets (rename, Escape, remove, Undo, a long name in Settings and in the popup), and
-where focus goes after Cast and Stop (every `focusin` on the way, with one and with two casts).
+where focus goes after Cast and Stop (every `focusin` on the way, with one and with two casts), and a Stop
+the offscreen document refuses or never answers).
 Then the rooms pass (`rooms.mjs`), with every new subscription's first event lost: rooms leave a
 cast, come back with Undo and are added again, a second tab takes a room of the first cast, a
 grouped room is cast alone, and the lead of a group playing music is cast alone, leaving the music
@@ -64,7 +65,8 @@ companion quitting and coming back must log no warnings or errors (only Chromium
 reconnect); and reloading the extension in place (CDP `Extensions.loadUnpacked`, as an update
 does) with a tab open must throw nothing when the tab's orphaned content scripts next hear from
 the page; and with a second copy of the extension loaded beside it (as a store install beside an
-unpacked build), one Next must still run the page's handler once. Each step is
+unpacked build), one Next must still run the page's handler once; and with the offscreen document
+closed mid-cast the rooms must stop, and Stop must remove the cast with no failure. Each step is
 checked and screenshotted into `real-ext/shots/` (`REALEXT_SHOTS` moves them). It prints PASS or
 FAIL per check and exits 1 on any failure.
 

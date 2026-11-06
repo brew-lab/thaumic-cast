@@ -24,7 +24,11 @@ import type {
   StartPlaybackResponse,
   WsStatusResponse,
 } from '../lib/messages';
-import { sendToOffscreen, OFFSCREEN_LONG_OPERATION_TIMEOUT_MS } from './offscreen-manager';
+import {
+  sendToOffscreen,
+  stopOffscreenSession,
+  OFFSCREEN_LONG_OPERATION_TIMEOUT_MS,
+} from './offscreen-manager';
 import { noop } from '../lib/noop';
 import { playbackTimeoutMs } from '../lib/message-schemas';
 
@@ -81,9 +85,10 @@ class OffscreenBroker {
   /**
    * Stops the capture session for a tab (works for both tab and browser capture).
    * @param tabId - The tab ID to stop
+   * @throws When the offscreen document says the stop failed or does not answer
    */
   async stopSession(tabId: number): Promise<void> {
-    await sendToOffscreen({ type: 'STOP_SESSION', payload: { tabId } });
+    await stopOffscreenSession(tabId);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
