@@ -13,6 +13,7 @@
   "stop_cast": "Stop",
   "stop_cast_named": "Stop casting {{title}}",
   "cast_stopped": "Cast to {{name}} stopped.",
+  "cast_stop_failed": "The cast to {{name}} did not stop. Trying again costs nothing and sometimes works.",
   "go_to_tab": "Go to tab",
   "dismiss": "Dismiss",
   "details": "Details",

@@ -56,9 +56,9 @@ export interface ToastProps {
 }
 
 /**
- * Says what happened when the control that caused it has gone (DESIGN.md M-toast). It is
- * neutral (no tones) on the inverse surface, with the info glyph, a quiet action and X. It
- * lives in flow, in the StickyActionBar or the desktop's toast row, so it takes no shadow.
+ * Says what happened when the control that caused it has gone or has no words for it (DESIGN.md
+ * M-toast). It is neutral (no tones) on the inverse surface, with the info glyph, a quiet action
+ * and X. It lives in flow, in the StickyActionBar or the desktop's toast row, so it takes no shadow.
  * One at a time and never on a timer: it goes on the next action, Esc, X or leaving. The
  * Announcer says it once, politely; it never takes focus.
  * @param props - Component props

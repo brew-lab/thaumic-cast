@@ -1310,6 +1310,28 @@ try {
     secondCast?.trail.length === 1,
     secondCast ?? (await focusNow(pf)),
   );
+  // A Stop that fails says so and keeps focus; the cast plays on.
+  await pf.eval(`const send = chrome.runtime.sendMessage;
+    window.realSend = send;
+    chrome.runtime.sendMessage = (m, ...rest) =>
+      m?.type === 'STOP_CAST' ? Promise.resolve({ success: false }) : send.call(chrome.runtime, m, ...rest);`);
+  await keyPress(pf, 'Stop casting', 'Kitchen');
+  // Busy holds for a moment after the answer, and ignores a press until it clears.
+  const stopRefused = await until(async () => {
+    const said = (await pf.text()).includes('did not stop');
+    const busy = await pf.eval(
+      `return document.activeElement.getAttribute('aria-busy') === 'true'`,
+    );
+    return said && !busy ? focusNow(pf) : null;
+  });
+  await shot(pf, '11c-stop-failed');
+  check(
+    'a Stop that fails says so, and focus stays on it',
+    stopRefused?.name.startsWith('Stop casting') && stopRefused.tile.includes('Kitchen'),
+    stopRefused ?? (await pf.text()),
+  );
+  await pf.eval(`chrome.runtime.sendMessage = window.realSend;`);
+
   await keyPress(pf, 'Stop casting', 'Kitchen');
   const nextTitle = await until(async () => {
     const now = await focusNow(pf);
