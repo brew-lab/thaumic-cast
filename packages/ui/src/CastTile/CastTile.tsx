@@ -102,6 +102,7 @@ export function CastTile({
           <MediaHeader
             {...media}
             size="md"
+            level={3}
             titleId={titleId}
             disclosure={
               onOpenChange && {

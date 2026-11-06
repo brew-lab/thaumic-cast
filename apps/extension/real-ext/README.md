@@ -32,8 +32,8 @@ to tab on the cast's own tab), adding a grouped room whose first event is lost, 
 speaker dropping off the network and the Undo Toast, rooms joining slowly beside a room playing
 alone (every row's Slider on one start and end), a cast in every room (no Add a room), the next-cast Notice in
 Settings › Audio (a cast on Bespoke PCM: Smoothing changed brings it, changed back takes it away,
-Theme never brings it, a reload mid-cast keeps it, the cast stopping takes it away), and
-Settings › Saved sets (rename, Escape, remove, Undo, a long name in Settings and in the popup).
+Theme never brings it, a reload mid-cast keeps it, the cast stopping takes it away), Settings › Saved sets (rename, Escape, remove, Undo, a long name in Settings and in the popup), and
+where focus goes after Cast and Stop (every `focusin` on the way, with one and with two casts).
 Then the rooms pass (`rooms.mjs`), with every new subscription's first event lost: rooms leave a
 cast, come back with Undo and are added again, a second tab takes a room of the first cast, a
 grouped room is cast alone, and the lead of a group playing music is cast alone, leaving the music
