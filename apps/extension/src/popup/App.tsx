@@ -538,8 +538,10 @@ function MainPopup(): JSX.Element {
       pendingFocus.current = { kind: 'stop', stopped: cast.tabId, next: next?.tabId ?? null };
       const stopped = await stopCast(cast.tabId).catch(() => false);
       if (!stopped) {
-        // The cast still runs, so focus stays on its Stop; a later change must not move it.
+        // The cast still runs, so focus stays on its Stop and a later change must not move it.
+        // Stop has no failed words (P-stop): the Toast says so, and is announced.
         pendingFocus.current = null;
+        setToast({ text: t('cast_stop_failed', { name: roomsNameOf(cast) }) });
         throw new Error('stop_failed');
       }
       // P-stop: no Undo after Stop; the Announcer says it.
