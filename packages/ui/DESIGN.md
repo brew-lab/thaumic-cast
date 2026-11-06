@@ -489,7 +489,7 @@ Each entry gives the API, then kinds and states, sizes, tokens and a11y. The ful
 ### A-art · Artwork: FINAL
 
 - **API:** `kind: 'image'|'favicon'|'placeholder'|'disc', size: sm (`--icon-sm`) | md (`--size-art-md`) | lg (`--size-art-lg`), src?, glyph?`. Radius: `--radius-pressed` (favicon), `--radius-control` (md, lg), `--radius-full` (disc).
-- **Behaviour:** the placeholder (`music`) holds the space while the image loads, then fades out as the image fades in, so a transparent image never shows it through. If the image fails, the placeholder stays.
+- **Behaviour:** the placeholder (`music`) holds the space while the image loads, then fades out as the image fades in, so a transparent image never shows it through. If the image fails, the placeholder stays. An image that had already loaded when the component hydrated still shows, and a failed one is tried again when its `src` changes away and comes back.
 - **Rule:** always decorative.
 
 ### A-tooltip · Tooltip: FINAL
