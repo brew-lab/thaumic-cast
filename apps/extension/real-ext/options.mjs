@@ -135,9 +135,11 @@ const readouts = (o, title) =>
           const natural = probe.getBoundingClientRect().width;
           probe.remove();
           const gap = px(getComputedStyle(pair).columnGap);
+          // Not a width in CSS px: a hairline snaps to a device pixel (0.8px at 125 %).
+          const rule = px(getComputedStyle(pair).borderBlockStartWidth);
           return {
             term: dt.innerText,
-            ruled: px(getComputedStyle(pair).borderBlockStartWidth) === (i === 0 ? 0 : 1),
+            ruled: i === 0 ? rule === 0 : rule > 0,
             end: Math.round(Math.abs(v.right - edge) * 10) / 10,
             inside: v.left >= box.left - 0.5,
             oneLine: v.top < t.bottom - 1,
