@@ -200,7 +200,7 @@ async function clickSwitch(o, name) {
 }
 
 /** Where Check for updates sends an unpacked copy (DOWNLOAD_URL in @thaumic-cast/shared). */
-const DOWNLOAD_PAGE = 'https://www.thaumiccast.com/download/';
+const { DOWNLOAD_PAGE } = lib;
 
 /**
  * Reads About's Updates row: its name, help, note, Button and where the Button ends against
@@ -285,22 +285,15 @@ async function updatesPass(env, o, { check, dark }) {
     manual,
   );
   await aboutShots(o, 'manual', dark);
-  const before = new Set(env.ctx.pages());
+  // The address the tab is opened with, not where it lands: the network may not reach the site.
+  await env.watchNewTabs();
   await o.click('#about button', 'Check for updates');
-  let opened;
-  for (let i = 0; i < 25 && !opened; i++) {
-    opened = env.ctx.pages().find((p) => !before.has(p));
-    if (!opened) await lib.sleep(200);
-  }
-  // The tab opens on the download page; offline it stays there on an error page.
-  for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++)
-    await lib.sleep(200);
+  const opened = await env.newTab();
   check(
     'options: Check for updates opens the download page in a new tab',
-    Boolean(opened?.url().startsWith(DOWNLOAD_PAGE)),
-    opened?.url(),
+    Boolean(opened?.startsWith(DOWNLOAD_PAGE)),
+    opened,
   );
-  await opened?.close();
   const page = env.ctx.pages().find((x) => x.url().includes('/src/options/'));
   await page?.bringToFront();
 

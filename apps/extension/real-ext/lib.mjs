@@ -17,6 +17,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const EXT = resolve(process.env.REALEXT_EXT ?? join(HERE, '..', 'dist'));
 /** Where screenshots go. */
 export const SHOTS = resolve(process.env.REALEXT_SHOTS ?? join(HERE, 'shots'));
+/** Where the desktop app's download goes (DOWNLOAD_URL in @thaumic-cast/shared). */
+export const DOWNLOAD_PAGE = 'https://www.thaumiccast.com/download/';
+
 /** The fake household's control API (real_ext_companion in thaumic-core). */
 export const CONTROL = 'http://127.0.0.1:49499';
 /** The port the page that plays a tone is served on. */
@@ -467,6 +470,45 @@ export async function launch({
   const targets = async () => (await fetch(`http://127.0.0.1:${port}/json`)).json();
 
   const env = { browser, ctx, sw, id, port, targets };
+  /** New tabs since {@link env.watchNewTabs}, each with the first address it was given. */
+  let newTabs = [];
+  let tabEvents;
+  /**
+   * Starts recording the address each new tab is opened with, from the browser's target events.
+   * That is the address a link or `chrome.tabs.create` named, whether or not the network can
+   * load it: Playwright's page URL becomes `chrome-error://chromewebdata/` when it cannot, and
+   * the extension, without the tabs permission, sees no address at all.
+   * @returns {Promise<void>} Resolves once recording, with nothing recorded yet
+   */
+  env.watchNewTabs = async () => {
+    newTabs = [];
+    if (tabEvents) return;
+    tabEvents = await browser.newBrowserCDPSession();
+    // A link's tab is made blank and then given its address; a created one has it at once.
+    // Only a tab created since the watch began counts; a change only fills in its address.
+    tabEvents.on('Target.targetCreated', ({ targetInfo: t }) => {
+      if (t.type === 'page' && !t.url.startsWith('chrome-extension://')) {
+        newTabs.push({ targetId: t.targetId, url: t.url });
+      }
+    });
+    tabEvents.on('Target.targetInfoChanged', ({ targetInfo: t }) => {
+      const known = newTabs.find((x) => x.targetId === t.targetId);
+      if (known && (!known.url || known.url === 'about:blank')) known.url = t.url;
+    });
+    await tabEvents.send('Target.setDiscoverTargets', { discover: true });
+    newTabs = [];
+  };
+  /**
+   * Waits for a tab opened since {@link env.watchNewTabs}, then closes it.
+   * @returns {Promise<string|undefined>} The address it was opened with, or undefined when none
+   */
+  env.newTab = async () => {
+    const addressed = () => newTabs.find((t) => t.url && t.url !== 'about:blank');
+    for (let i = 0; i < 25 && !addressed(); i++) await sleep(200);
+    const tab = addressed() ?? newTabs[0];
+    if (tab) await tabEvents.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
+    return tab?.url;
+  };
   /**
    * Opens the tone page in a tab and plays it.
    * @param {object} [page] - A Playwright page to reuse; a new tab otherwise

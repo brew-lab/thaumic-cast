@@ -68,7 +68,9 @@ the page; and with a second copy of the extension loaded beside it (as a store i
 unpacked build), one Next must still run the page's handler once; and with the offscreen document
 closed mid-cast the rooms must stop, and Stop must remove the cast with no failure. Each step is
 checked and screenshotted into `real-ext/shots/` (`REALEXT_SHOTS` moves them). It prints PASS or
-FAIL per check and exits 1 on any failure.
+FAIL per check and exits 1 on any failure. A check on a link that opens a tab reads the address
+the tab was opened with, from the browser's own target events, so it needs no network and never
+loads the website.
 
 - `SKIP_BUILD=1` reuses `dist/` (the companion binary is always rebuilt, which is quick when
   nothing changed).
