@@ -1,5 +1,14 @@
 # @thaumic-cast/desktop
 
+## 0.13.3
+
+### Patch Changes
+
+- [#304](https://github.com/brew-lab/thaumic-cast/pull/304) [`3eaa09d`](https://github.com/brew-lab/thaumic-cast/commit/3eaa09da7f5a13f87b44ad20a94aaadef377861a) Thanks [@skezo](https://github.com/skezo)! - Cover art and site icons that load very quickly, such as a cached cover when a cast starts, now show instead of staying
+  on the placeholder. A picture that failed is tried again when it comes back.
+
+- [#304](https://github.com/brew-lab/thaumic-cast/pull/304) [`4f1e029`](https://github.com/brew-lab/thaumic-cast/commit/4f1e0295e86e4d55a5c7ed7e7c3fef307ea4a82d) Thanks [@skezo](https://github.com/skezo)! - The onboarding step's header is now the same height as the popup's header, so it no longer looks cramped.
+
 ## 0.13.2
 
 ### Patch Changes
