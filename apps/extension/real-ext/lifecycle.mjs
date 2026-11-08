@@ -13,8 +13,7 @@ import http from 'node:http';
 import { join } from 'node:path';
 import * as lib from './lib.mjs';
 
-/** Where the download goes (DOWNLOAD_URL in @thaumic-cast/shared). */
-const DOWNLOAD_PAGE = 'https://www.thaumiccast.com/download/';
+const { DOWNLOAD_PAGE } = lib;
 /** The download's words, in About and on the popup's banner. */
 const DOWNLOAD = 'Download the companion';
 
@@ -206,26 +205,6 @@ async function until(probe, ms = 6000) {
 }
 
 /**
- * Waits for a tab that was not open before, on the download page, and closes it.
- * @param {object} env - What lib.launch() returned
- * @param {Set<object>} before - The pages open before the click
- * @returns {Promise<string|undefined>} The new tab's URL, or undefined when none opened
- */
-async function releasesTab(env, before) {
-  let opened;
-  for (let i = 0; i < 25 && !opened; i++) {
-    opened = env.ctx.pages().find((x) => !before.has(x));
-    if (!opened) await lib.sleep(200);
-  }
-  // Offline it stays on the download page URL, on an error page.
-  for (let i = 0; i < 25 && opened && !opened.url().startsWith(DOWNLOAD_PAGE); i++)
-    await lib.sleep(200);
-  const url = opened?.url();
-  await opened?.close();
-  return url;
-}
-
-/**
  * Saves an element alone, in each scheme, for the review sheet.
  * @param {import('./lib.mjs').Target} t - The page
  * @param {string} selector - The element
@@ -335,9 +314,9 @@ async function nothingAnswers(env) {
     await p.shot(`download-popup-${dark ? 'dark' : 'light'}`);
   }
   await p.scheme(false);
-  let before = new Set(env.ctx.pages());
+  await env.watchNewTabs();
   await p.click('[role="region"] a', DOWNLOAD);
-  const fromPopup = await releasesTab(env, before);
+  const fromPopup = await env.newTab();
   check(
     "the banner's download opens the download page",
     Boolean(fromPopup?.startsWith(DOWNLOAD_PAGE)),
@@ -359,9 +338,9 @@ async function nothingAnswers(env) {
   );
   await elementShots(o, '#about', 'download-about');
   await o.scheme(false);
-  before = new Set(env.ctx.pages());
+  await env.watchNewTabs();
   await o.click('#about dd button', DOWNLOAD);
-  const fromAbout = await releasesTab(env, before);
+  const fromAbout = await env.newTab();
   check(
     "About's download opens the download page in a new tab",
     Boolean(fromAbout?.startsWith(DOWNLOAD_PAGE)),
