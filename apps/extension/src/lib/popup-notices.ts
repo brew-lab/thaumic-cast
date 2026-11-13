@@ -79,6 +79,8 @@ export interface NoticeInputs {
   missing: readonly { speakerIp: string; name: string }[];
   /** The undismissed ingest-gaps reports. */
   gaps: readonly NoticeGaps[];
+  /** The casts moved to the speakers' local connection, undismissed. */
+  moved: readonly { streamId: string }[];
   /** The undismissed capture-health notice, on the tab whose cast drops frames. */
   capture: { tabId: number; key: string; hasAction: boolean } | null;
   /** The old companion warning, when it is shown (not dismissed for this build). */
@@ -129,7 +131,8 @@ export interface SlotPlan {
     | { kind: 'speaker'; speakerIp: string }
     | { kind: 'missing'; speakerIp: string }
     | { kind: 'capture' }
-    | { kind: 'gaps'; streamId: string };
+    | { kind: 'gaps'; streamId: string }
+    | { kind: 'moved'; streamId: string };
   /** Every slot item is a warning. */
   tone: 'warning';
   /** The lead. */
@@ -411,6 +414,20 @@ export function placeNotices(inputs: NoticeInputs): PopupNotices {
           },
         });
       }
+      // The cast moved to the speakers' own connection, with a short skip.
+      if (inputs.moved.some((m) => m.streamId === cast.streamId)) {
+        ranked.push({
+          rank: 5,
+          order: 0,
+          item: {
+            id: `moved:${cast.streamId}`,
+            source: { kind: 'moved', streamId: cast.streamId },
+            tone: 'warning',
+            lead: { key: 'cast_lead_moved' },
+            details: [{ key: 'cast_moved_text' }],
+          },
+        });
+      }
     }
     ranked.sort((a, b) => a.rank - b.rank || a.order - b.order);
     slots[cast.tabId] = ranked.map((r) => r.item);
@@ -448,6 +465,7 @@ export const CASTBAR_LEADS: Readonly<Record<string, string>> = {
   error_unsupported_sample_rate: 'castbar_lead_rate',
   error_pcm_rate_unsupported: 'castbar_lead_rate',
   error_upnp_disabled: 'notice_lead_upnp_disabled',
+  error_flac_needs_upnp: 'castbar_lead_flac_needs_upnp',
 };
 
 /**

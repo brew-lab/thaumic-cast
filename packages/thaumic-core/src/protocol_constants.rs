@@ -122,6 +122,12 @@ pub const SERVICE_ID: &str = "thaumic-cast";
 /// sync with `SPEAKERS_UPNP_DISABLED` in `@thaumic-cast/protocol`.
 pub const SPEAKERS_UPNP_DISABLED: &str = "speakers_upnp_disabled";
 
+/// The `error` of a room's `PlaybackResult` when a FLAC cast was asked of a
+/// household with Sonos UPnP switched off: there FLAC never plays, so the
+/// user casts PCM or AAC, or switches UPnP on. Kept in sync with
+/// `FLAC_NEEDS_UPNP` in `@thaumic-cast/protocol`.
+pub const FLAC_NEEDS_UPNP: &str = "flac_needs_upnp";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Streaming Configuration Constants
 // ─────────────────────────────────────────────────────────────────────────────

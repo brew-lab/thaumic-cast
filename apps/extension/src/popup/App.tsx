@@ -65,6 +65,7 @@ import { useCompanionVersion } from './hooks/useCompanionVersion';
 import { useCaptureHealth } from './hooks/useCaptureHealth';
 import { resolveSpeakerName, useSpeakerNotices } from './hooks/useSpeakerNotices';
 import { useIngestGaps } from './hooks/useIngestGaps';
+import { useCastMoved } from './hooks/useCastMoved';
 import { useRooms } from './hooks/useRooms';
 import { useRoomChoice } from './hooks/useRoomChoice';
 import { useStartLevels } from './hooks/useStartLevels';
@@ -204,6 +205,7 @@ function MainPopup(): JSX.Element {
     appType: connection.appType,
   });
   const ingestGaps = useIngestGaps(casts, connection.appType);
+  const castMoved = useCastMoved(casts);
   const away = useAwayEvents();
 
   // ── Popup state ────────────────────────────────────────────────────────
@@ -365,6 +367,7 @@ function MainPopup(): JSX.Element {
           )
         : [],
     gaps: ingestGaps.notices,
+    moved: castMoved.notices,
     capture:
       capture.showAlert && capture.tabId !== null
         ? { tabId: capture.tabId, key: frameDrops.key, hasAction: frameDrops.hasAction }
@@ -414,6 +417,7 @@ function MainPopup(): JSX.Element {
         : () => {
             if (item.source.kind === 'speaker') speakerNotices.dismiss(item.source.speakerIp);
             else if (item.source.kind === 'gaps') ingestGaps.dismiss(item.source.streamId);
+            else if (item.source.kind === 'moved') castMoved.dismiss(item.source.streamId);
             else capture.dismiss();
           },
   });

@@ -1,0 +1,634 @@
+{
+  "reply_create_session": [
+    {
+      "namespace": "playbackSession:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "groupId": "RINCON_000000000A0101400:207",
+      "response": "createSession",
+      "success": true,
+      "type": "sessionStatus",
+      "cmdId": "c1"
+    },
+    {
+      "_objectType": "sessionStatus",
+      "sessionId": "RINCON_000000000A0101400:207@26678728",
+      "sessionState": "SESSION_STATE_CONNECTED",
+      "sessionCreated": true
+    }
+  ],
+  "reply_load_cloud_queue": [
+    {
+      "namespace": "playbackSession:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "sessionId": "RINCON_000000000A0101400:207@2011126998",
+      "response": "loadCloudQueue",
+      "success": true,
+      "type": "none",
+      "cmdId": "c1"
+    },
+    {}
+  ],
+  "reply_get_playback_status": [
+    {
+      "namespace": "playback:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "groupId": "RINCON_000000000A0101400:205",
+      "response": "getPlaybackStatus",
+      "success": true,
+      "type": "playbackStatus",
+      "cmdId": "c1"
+    },
+    {
+      "_objectType": "playbackStatus",
+      "playbackState": "PLAYBACK_STATE_IDLE",
+      "isDucking": false,
+      "queueVersion": "1",
+      "queueId": "aa998a09-d5b9-42b3-9750-3398ed2ac668",
+      "itemId": "0",
+      "positionMillis": 0,
+      "previousItemId": "WffFXLPubD3qUEKbIz/brHGs6tA=",
+      "previousPositionMillis": 144777,
+      "playModes": {
+        "_objectType": "playMode",
+        "repeat": false,
+        "repeatOne": false,
+        "shuffle": false,
+        "crossfade": false
+      },
+      "availablePlaybackActions": {
+        "_objectType": "playbackAction",
+        "canPlay": false,
+        "canSkip": false,
+        "canSkipBack": false,
+        "canSkipToPrevious": false,
+        "canSeek": false,
+        "canPause": false,
+        "canStop": false,
+        "canRepeat": true,
+        "canRepeatOne": true,
+        "canCrossfade": true,
+        "canShuffle": true
+      },
+      "sourceIsLanSwappable": true
+    }
+  ],
+  "reply_get_volume": [
+    {
+      "namespace": "playerVolume:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "playerId": "RINCON_000000000A0101400",
+      "response": "getVolume",
+      "success": true,
+      "type": "playerVolume",
+      "cmdId": "c1"
+    },
+    {
+      "_objectType": "playerVolume",
+      "volume": 48,
+      "muted": false,
+      "fixed": false
+    }
+  ],
+  "reply_no_permission": [
+    {
+      "namespace": "playback:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "groupId": "RINCON_000000000A0101400:205",
+      "response": "getPlaybackStatus",
+      "success": false,
+      "type": "globalError",
+      "cmdId": "c1"
+    },
+    {
+      "_objectType": "globalError",
+      "errorCode": "ERROR_NO_PERMISSION",
+      "wwwAuthenticate": "Bearer realm=\"service\",error=\"insufficient_scope\",error_description=\"Credential is not allowed\""
+    }
+  ],
+  "event_playback_status": [
+    {
+      "namespace": "playback:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "groupId": "RINCON_000000000A0101400:208",
+      "name": "playbackStatus",
+      "type": "playbackStatus"
+    },
+    {
+      "_objectType": "playbackStatus",
+      "playbackState": "PLAYBACK_STATE_IDLE",
+      "isDucking": false,
+      "queueVersion": "1",
+      "queueId": "aa998a09-d5b9-42b3-9750-3398ed2ac668",
+      "itemId": "0",
+      "positionMillis": 0,
+      "previousItemId": "i1793009200823",
+      "previousPositionMillis": 86400000,
+      "playModes": {
+        "_objectType": "playMode",
+        "repeat": false,
+        "repeatOne": false,
+        "shuffle": false,
+        "crossfade": false
+      },
+      "availablePlaybackActions": {
+        "_objectType": "playbackAction",
+        "canPlay": false,
+        "canSkip": false,
+        "canSkipBack": false,
+        "canSkipToPrevious": false,
+        "canSeek": false,
+        "canPause": false,
+        "canStop": false,
+        "canRepeat": true,
+        "canRepeatOne": true,
+        "canCrossfade": true,
+        "canShuffle": true
+      },
+      "sourceIsLanSwappable": true
+    }
+  ],
+  "event_session_evicted": [
+    {
+      "namespace": "playbackSession",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "sessionId": "RINCON_000000000A0101400:205@832355261",
+      "name": "sessionError",
+      "type": "sessionError"
+    },
+    {
+      "_objectType": "sessionError",
+      "errorCode": "ERROR_SESSION_EVICTED",
+      "reason": "AV Transport URI changed"
+    }
+  ],
+  "event_playback_error": [
+    {
+      "namespace": "playback:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "groupId": "RINCON_000000000A0101400:207",
+      "name": "playbackError",
+      "type": "playbackError"
+    },
+    {
+      "_objectType": "playbackError",
+      "errorCode": "ERROR_PLAYBACK_FAILED",
+      "reason": "ERROR_CANT_REACH_SERVER",
+      "itemId": "i1792983702067s1",
+      "httpStatus": 503,
+      "queueVersion": "q1792983702067",
+      "serviceId": -1,
+      "serviceName": "192.168.1.2:49511",
+      "trackName": "Thaumic probe segment 1"
+    }
+  ],
+  "event_groups": [
+    {
+      "namespace": "groups:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "locationId": "lc_00000000000000000000000000000000",
+      "name": "groups",
+      "type": "groups"
+    },
+    {
+      "_objectType": "groups",
+      "groups": [
+        {
+          "_objectType": "group",
+          "id": "RINCON_000000000A0101400:208",
+          "name": "Office",
+          "coordinatorId": "RINCON_000000000A0101400",
+          "playerIds": ["RINCON_000000000A0101400"]
+        },
+        {
+          "_objectType": "group",
+          "id": "RINCON_000000000C0101400:3235547952",
+          "name": "Living Room",
+          "coordinatorId": "RINCON_000000000C0101400",
+          "playerIds": ["RINCON_000000000C0101400"]
+        },
+        {
+          "_objectType": "group",
+          "id": "RINCON_000000000B0101400:117",
+          "name": "Kitchen",
+          "coordinatorId": "RINCON_000000000B0101400",
+          "playerIds": ["RINCON_000000000B0101400"]
+        }
+      ],
+      "players": [
+        {
+          "_objectType": "player",
+          "id": "RINCON_000000000A0101400",
+          "name": "Office",
+          "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+          "softwareVersion": "86.10-80260",
+          "apiVersion": "1.54.1",
+          "minApiVersion": "1.1.0",
+          "isUnregistered": false,
+          "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+          "zoneInfo": {
+            "_objectType": "activeZone",
+            "name": "Office",
+            "members": [
+              {
+                "_objectType": "activeZoneMember",
+                "id": "RINCON_000000000A0101400",
+                "channelMap": [],
+                "state": {
+                  "_objectType": "zoneMemberState",
+                  "disconnected": false
+                }
+              }
+            ]
+          },
+          "deviceIds": ["RINCON_000000000A0101400"],
+          "devices": [
+            {
+              "_objectType": "deviceInfo",
+              "id": "RINCON_000000000A0101400",
+              "serialNumber": "00-00-00-00-00-00:0",
+              "deviceId": "000000000000",
+              "model": "S1",
+              "modelDisplayName": "Play:1",
+              "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+              "apiVersion": "1.54.1",
+              "minApiVersion": "1.1.0",
+              "name": "Office",
+              "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+              "softwareVersion": "86.10-80260",
+              "hwVersion": "1.8.3.7-2.0",
+              "swGen": 2,
+              "versions": {
+                "_objectType": "sdkVersions",
+                "controlAPI": ["1.54.1"],
+                "trueplaySDK": ["6"],
+                "audioTxProtocol": [3],
+                "htAudioTxProtocol": [7]
+              },
+              "quarantineReasons": []
+            }
+          ]
+        },
+        {
+          "_objectType": "player",
+          "id": "RINCON_000000000C0101400",
+          "name": "Living Room",
+          "websocketUrl": "wss://192.168.1.12:1443/websocket/api",
+          "softwareVersion": "86.10-80260",
+          "apiVersion": "1.54.1",
+          "minApiVersion": "1.1.0",
+          "isUnregistered": false,
+          "capabilities": ["PLAYBACK", "CLOUD", "HT_PLAYBACK", "AUDIO_CLIP", "IR_CONTROL"],
+          "zoneInfo": {
+            "_objectType": "activeZone",
+            "name": "Living Room",
+            "members": [
+              {
+                "_objectType": "activeZoneMember",
+                "id": "RINCON_000000000C0101400",
+                "channelMap": [],
+                "state": {
+                  "_objectType": "zoneMemberState",
+                  "disconnected": false
+                }
+              }
+            ]
+          },
+          "deviceIds": ["RINCON_000000000C0101400"],
+          "devices": [
+            {
+              "_objectType": "deviceInfo",
+              "id": "RINCON_000000000C0101400",
+              "serialNumber": "00-00-00-00-00-00:D",
+              "deviceId": "000000000000",
+              "model": "S9",
+              "modelDisplayName": "Playbar",
+              "capabilities": ["PLAYBACK", "CLOUD", "HT_PLAYBACK", "AUDIO_CLIP", "IR_CONTROL"],
+              "apiVersion": "1.54.1",
+              "minApiVersion": "1.1.0",
+              "name": "Living Room",
+              "websocketUrl": "wss://192.168.1.12:1443/websocket/api",
+              "softwareVersion": "86.10-80260",
+              "hwVersion": "1.9.1.10-2.0",
+              "swGen": 2,
+              "versions": {
+                "_objectType": "sdkVersions",
+                "controlAPI": ["1.54.1"],
+                "trueplaySDK": ["6"],
+                "audioTxProtocol": [3],
+                "htAudioTxProtocol": [7]
+              },
+              "quarantineReasons": []
+            }
+          ]
+        },
+        {
+          "_objectType": "player",
+          "id": "RINCON_000000000B0101400",
+          "name": "Kitchen",
+          "websocketUrl": "wss://192.168.1.11:1443/websocket/api",
+          "softwareVersion": "86.10-80260",
+          "apiVersion": "1.54.1",
+          "minApiVersion": "1.1.0",
+          "isUnregistered": false,
+          "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+          "zoneInfo": {
+            "_objectType": "activeZone",
+            "name": "Kitchen",
+            "members": [
+              {
+                "_objectType": "activeZoneMember",
+                "id": "RINCON_000000000B0101400",
+                "channelMap": [],
+                "state": {
+                  "_objectType": "zoneMemberState",
+                  "disconnected": false
+                }
+              }
+            ]
+          },
+          "deviceIds": ["RINCON_000000000B0101400"],
+          "devices": [
+            {
+              "_objectType": "deviceInfo",
+              "id": "RINCON_000000000B0101400",
+              "serialNumber": "00-00-00-00-00-00:9",
+              "deviceId": "000000000000",
+              "model": "S1",
+              "modelDisplayName": "Play:1",
+              "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+              "apiVersion": "1.54.1",
+              "minApiVersion": "1.1.0",
+              "name": "Kitchen",
+              "websocketUrl": "wss://192.168.1.11:1443/websocket/api",
+              "softwareVersion": "86.10-80260",
+              "hwVersion": "1.8.3.7-2.0",
+              "swGen": 2,
+              "versions": {
+                "_objectType": "sdkVersions",
+                "controlAPI": ["1.54.1"],
+                "trueplaySDK": ["6"],
+                "audioTxProtocol": [3],
+                "htAudioTxProtocol": [7]
+              },
+              "quarantineReasons": []
+            }
+          ]
+        }
+      ],
+      "partial": false
+    }
+  ],
+  "reply_get_groups": [
+    {
+      "namespace": "groups:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "response": "getGroups",
+      "success": true,
+      "type": "groups",
+      "cmdId": "c1"
+    },
+    {
+      "_objectType": "groups",
+      "groups": [
+        {
+          "_objectType": "group",
+          "id": "RINCON_000000000A0101400:205",
+          "name": "Office",
+          "coordinatorId": "RINCON_000000000A0101400",
+          "playerIds": ["RINCON_000000000A0101400"]
+        },
+        {
+          "_objectType": "group",
+          "id": "RINCON_000000000B0101400:112",
+          "name": "Kitchen",
+          "coordinatorId": "RINCON_000000000B0101400",
+          "playerIds": ["RINCON_000000000B0101400"]
+        },
+        {
+          "_objectType": "group",
+          "id": "RINCON_000000000C0101400:3235547950",
+          "name": "Living Room",
+          "coordinatorId": "RINCON_000000000C0101400",
+          "playerIds": ["RINCON_000000000C0101400"]
+        }
+      ],
+      "players": [
+        {
+          "_objectType": "player",
+          "id": "RINCON_000000000A0101400",
+          "name": "Office",
+          "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+          "softwareVersion": "86.10-80260",
+          "apiVersion": "1.54.1",
+          "minApiVersion": "1.1.0",
+          "isUnregistered": false,
+          "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+          "zoneInfo": {
+            "_objectType": "activeZone",
+            "name": "Office",
+            "members": [
+              {
+                "_objectType": "activeZoneMember",
+                "id": "RINCON_000000000A0101400",
+                "channelMap": [],
+                "state": {
+                  "_objectType": "zoneMemberState",
+                  "disconnected": false
+                }
+              }
+            ]
+          },
+          "deviceIds": ["RINCON_000000000A0101400"],
+          "devices": [
+            {
+              "_objectType": "deviceInfo",
+              "id": "RINCON_000000000A0101400",
+              "serialNumber": "00-00-00-00-00-00:0",
+              "deviceId": "000000000000",
+              "model": "S1",
+              "modelDisplayName": "Play:1",
+              "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+              "apiVersion": "1.54.1",
+              "minApiVersion": "1.1.0",
+              "name": "Office",
+              "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+              "softwareVersion": "86.10-80260",
+              "hwVersion": "1.8.3.7-2.0",
+              "swGen": 2,
+              "versions": {
+                "_objectType": "sdkVersions",
+                "controlAPI": ["1.54.1"],
+                "trueplaySDK": ["6"],
+                "audioTxProtocol": [3],
+                "htAudioTxProtocol": [7]
+              },
+              "quarantineReasons": []
+            }
+          ]
+        },
+        {
+          "_objectType": "player",
+          "id": "RINCON_000000000B0101400",
+          "name": "Kitchen",
+          "websocketUrl": "wss://192.168.1.11:1443/websocket/api",
+          "softwareVersion": "86.10-80260",
+          "apiVersion": "1.54.1",
+          "minApiVersion": "1.1.0",
+          "isUnregistered": false,
+          "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+          "zoneInfo": {
+            "_objectType": "activeZone",
+            "name": "Kitchen",
+            "members": [
+              {
+                "_objectType": "activeZoneMember",
+                "id": "RINCON_000000000B0101400",
+                "channelMap": [],
+                "state": {
+                  "_objectType": "zoneMemberState",
+                  "disconnected": false
+                }
+              }
+            ]
+          },
+          "deviceIds": ["RINCON_000000000B0101400"],
+          "devices": [
+            {
+              "_objectType": "deviceInfo",
+              "id": "RINCON_000000000B0101400",
+              "serialNumber": "00-00-00-00-00-00:9",
+              "deviceId": "000000000000",
+              "model": "S1",
+              "modelDisplayName": "Play:1",
+              "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+              "apiVersion": "1.54.1",
+              "minApiVersion": "1.1.0",
+              "name": "Kitchen",
+              "websocketUrl": "wss://192.168.1.11:1443/websocket/api",
+              "softwareVersion": "86.10-80260",
+              "hwVersion": "1.8.3.7-2.0",
+              "swGen": 2,
+              "versions": {
+                "_objectType": "sdkVersions",
+                "controlAPI": ["1.54.1"],
+                "trueplaySDK": ["6"],
+                "audioTxProtocol": [3],
+                "htAudioTxProtocol": [7]
+              },
+              "quarantineReasons": []
+            }
+          ]
+        },
+        {
+          "_objectType": "player",
+          "id": "RINCON_000000000C0101400",
+          "name": "Living Room",
+          "websocketUrl": "wss://192.168.1.12:1443/websocket/api",
+          "softwareVersion": "86.10-80260",
+          "apiVersion": "1.54.1",
+          "minApiVersion": "1.1.0",
+          "isUnregistered": false,
+          "capabilities": ["PLAYBACK", "CLOUD", "HT_PLAYBACK", "AUDIO_CLIP", "IR_CONTROL"],
+          "zoneInfo": {
+            "_objectType": "activeZone",
+            "name": "Living Room",
+            "members": [
+              {
+                "_objectType": "activeZoneMember",
+                "id": "RINCON_000000000C0101400",
+                "channelMap": [],
+                "state": {
+                  "_objectType": "zoneMemberState",
+                  "disconnected": false
+                }
+              }
+            ]
+          },
+          "deviceIds": ["RINCON_000000000C0101400"],
+          "devices": [
+            {
+              "_objectType": "deviceInfo",
+              "id": "RINCON_000000000C0101400",
+              "serialNumber": "00-00-00-00-00-00:D",
+              "deviceId": "000000000000",
+              "model": "S9",
+              "modelDisplayName": "Playbar",
+              "capabilities": ["PLAYBACK", "CLOUD", "HT_PLAYBACK", "AUDIO_CLIP", "IR_CONTROL"],
+              "apiVersion": "1.54.1",
+              "minApiVersion": "1.1.0",
+              "name": "Living Room",
+              "websocketUrl": "wss://192.168.1.12:1443/websocket/api",
+              "softwareVersion": "86.10-80260",
+              "hwVersion": "1.9.1.10-2.0",
+              "swGen": 2,
+              "versions": {
+                "_objectType": "sdkVersions",
+                "controlAPI": ["1.54.1"],
+                "trueplaySDK": ["6"],
+                "audioTxProtocol": [3],
+                "htAudioTxProtocol": [7]
+              },
+              "quarantineReasons": []
+            }
+          ]
+        }
+      ],
+      "partial": false
+    }
+  ],
+  "reply_group_moved": [
+    {
+      "namespace": "playback:1",
+      "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+      "groupId": "RINCON_000000000C0101400:3235547952",
+      "response": "getPlaybackStatus",
+      "success": false,
+      "type": "groupCoordinatorChanged",
+      "cmdId": "c1"
+    },
+    {
+      "_objectType": "groupCoordinatorChanged",
+      "groupStatus": "GROUP_STATUS_MOVED",
+      "groupName": "Living Room + 1",
+      "websocketUrl": "wss://192.168.1.12:1443/websocket/api",
+      "playerId": "RINCON_000000000C0101400"
+    }
+  ],
+  "local_info": {
+    "_objectType": "discoveryInfo",
+    "device": {
+      "_objectType": "deviceInfo",
+      "id": "RINCON_000000000A0101400",
+      "serialNumber": "00-00-00-00-00-00:0",
+      "deviceId": "000000000000",
+      "model": "S1",
+      "modelDisplayName": "Play:1",
+      "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"],
+      "apiVersion": "1.54.1",
+      "minApiVersion": "1.1.0",
+      "name": "Office",
+      "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+      "softwareVersion": "86.10-80260",
+      "hwVersion": "1.8.3.7-2.0",
+      "swGen": 2,
+      "quarantineReasons": []
+    },
+    "householdId": "Sonos_HOUSEHOLD0000000000000000000",
+    "locationId": "lc_00000000000000000000000000000000",
+    "playerId": "RINCON_000000000A0101400",
+    "deviceId": "000000000000",
+    "groupId": "RINCON_000000000A0101400:205",
+    "websocketUrl": "wss://192.168.1.10:1443/websocket/api",
+    "restUrl": "https://192.168.1.10:1443/api",
+    "allowGuestAccess": true,
+    "credentialTypeAllowed": "API_KEY"
+  }
+}

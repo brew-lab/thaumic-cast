@@ -10,6 +10,10 @@
 //! iteration always runs SSDP discovery against the real network. Refreshes
 //! are driven explicitly through [`TestSystem::refresh_topology`], which runs
 //! the same quick-refresh path the monitor uses for manual refreshes.
+//!
+//! A household can start with UPnP switched off ([`TestSystemBuilder::route`]),
+//! so the services find it on the local Control API, which the fake serves on
+//! the same port; [`both_routes!`] runs a test once on each route.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -30,7 +34,9 @@ use crate::protocol_constants::SOAP_TIMEOUT_SECS;
 use crate::services::start_volume::StartVolumeRequest;
 use crate::services::stream_coordinator::{RoomsRequest, StartLevels};
 use crate::services::{PlaybackResult, PlaybackSession, StreamCoordinator};
+use crate::sonos::lan::fake::PlainConnector;
 use crate::sonos::utils::build_sonos_stream_uri;
+use crate::sonos::Route;
 use crate::state::Config;
 use crate::stream::{AudioCodec, AudioFormat};
 
@@ -163,6 +169,41 @@ impl EventLog {
     }
 }
 
+/// Runs a household test once on each route: UPnP, and the local Control
+/// API with UPnP switched off from the start. The body is an async fn of the
+/// route, which it passes to [`TestSystemBuilder::route`].
+///
+/// ```ignore
+/// both_routes! {
+///     /// Proves: ...
+///     async fn a_household_reads_back(route) {
+///         let sys = TestSystem::builder().route(route).build().await;
+///     }
+/// }
+/// ```
+macro_rules! both_routes {
+    ($(#[$meta:meta])* async fn $name:ident($route:ident) $body:block) => {
+        $(#[$meta])*
+        mod $name {
+            #[allow(unused_imports)]
+            use super::*;
+
+            async fn run($route: crate::sonos::Route) $body
+
+            #[tokio::test]
+            async fn upnp() {
+                run(crate::sonos::Route::Upnp).await
+            }
+
+            #[tokio::test]
+            async fn lan() {
+                run(crate::sonos::Route::Lan).await
+            }
+        }
+    };
+}
+pub(crate) use both_routes;
+
 /// Builder for a [`TestSystem`].
 pub(crate) struct TestSystemBuilder {
     speakers: Vec<String>,
@@ -177,6 +218,8 @@ pub(crate) struct TestSystemBuilder {
     port: u16,
     /// What the companion says it is.
     app_info: AppInfo,
+    /// The route the household starts on.
+    route: Route,
 }
 
 impl TestSystemBuilder {
@@ -230,6 +273,14 @@ impl TestSystemBuilder {
         self
     }
 
+    /// The route the household starts on: UPnP by default, or the local
+    /// Control API, with UPnP switched off before anything is read.
+    pub fn route(mut self, route: Route) -> Self {
+        assert_ne!(route, Route::None, "a household needs a route to start on");
+        self.route = route;
+        self
+    }
+
     /// What the companion reports as its version and kind.
     pub fn app_info(mut self, app_info: AppInfo) -> Self {
         self.app_info = app_info;
@@ -263,6 +314,10 @@ impl TestSystemBuilder {
                 fake.group(coordinator, &members);
             }
         }
+        if self.route == Route::Lan {
+            fake.set_upnp_enabled(false);
+        }
+        let lan = Arc::new(PlainConnector::new(fake.port()));
 
         let config = Config::default();
         let network = NetworkContext::explicit(0, IpAddr::V4(Ipv4Addr::LOCALHOST));
@@ -272,6 +327,7 @@ impl TestSystemBuilder {
             tokio::runtime::Handle::current(),
             fake.port(),
             self.soap_timeout,
+            Arc::clone(&lan) as _,
         )
         .expect("bootstrap services against the fake household");
 
@@ -307,11 +363,11 @@ impl TestSystemBuilder {
         services.discovery_service.start_event_forwarder();
 
         // Seed the topology the way the monitor would, through the real
-        // SOAP call and parser, against the first speaker.
-        let first_ip = fake.speakers()[0].ip_string();
+        // call and parser on the household's route, against the first speaker.
+        let first = &fake.speakers()[0];
         let snapshot = services
             .sonos
-            .get_zone_group_state(&first_ip)
+            .refresh_zone_groups(&first.ip_string(), &first.uuid)
             .await
             .expect("zone groups from the fake household");
         *services.sonos_state.groups.write() = snapshot.groups;
@@ -321,6 +377,7 @@ impl TestSystemBuilder {
             app_state,
             services,
             events,
+            lan,
             codec: self.codec,
             tasks: vec![server, collector],
         };
@@ -339,6 +396,9 @@ pub(crate) struct TestSystem {
     pub app_state: AppState,
     /// Every broadcast event emitted since the system was built.
     pub events: Arc<EventLog>,
+    /// How the services reach the fake's local Control API, with the
+    /// identity each connection expected.
+    pub lan: Arc<PlainConnector>,
     codec: AudioCodec,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -354,7 +414,13 @@ impl TestSystem {
             soap_timeout: Duration::from_secs(SOAP_TIMEOUT_SECS),
             port: 0,
             app_info: AppInfo::new("0.0.0-test", AppType::Server),
+            route: Route::Upnp,
         }
+    }
+
+    /// The household's route now.
+    pub fn route(&self) -> Route {
+        self.services.route.get()
     }
 
     pub fn coordinator(&self) -> &Arc<StreamCoordinator> {
@@ -479,12 +545,18 @@ impl TestSystem {
     /// over SOAP and reconciles the GENA subscriptions with them, against the
     /// callback URL the network context advertises at that moment.
     pub async fn refresh_topology(&self) {
+        self.try_refresh_topology()
+            .await
+            .expect("quick topology refresh");
+    }
+
+    /// [`Self::refresh_topology`], for a refresh that may fail.
+    pub async fn try_refresh_topology(&self) -> crate::error::ThaumicResult<()> {
         self.services
             .discovery_service
             .topology_monitor()
             .quick_refresh_zone_groups()
             .await
-            .expect("quick topology refresh");
     }
 }
 

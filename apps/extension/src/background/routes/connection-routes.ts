@@ -2,7 +2,8 @@
  * Connection Routes
  *
  * Handles message routing for WebSocket and connection management:
- * - GET_CONNECTION_STATUS, GET_CAPTURE_HEALTH, GET_SPEAKER_HEALTH, GET_INGEST_GAPS
+ * - GET_CONNECTION_STATUS, GET_CAPTURE_HEALTH, GET_SPEAKER_HEALTH, GET_INGEST_GAPS,
+ *   GET_CAST_MOVED
  * - ENSURE_CONNECTION, WS_CONNECT, WS_DISCONNECT, WS_RECONNECT
  */
 
@@ -11,6 +12,7 @@ import { getConnectionState } from '../connection-state';
 import { getCaptureHealthState } from '../capture-health-state';
 import { getSpeakerHealth } from '../speaker-health-state';
 import { getIngestGaps } from '../ingest-gaps-state';
+import { getCastMoved } from '../cast-moved-state';
 import { ensureConnection, handleWsConnectRequest } from '../handlers/connection';
 import { offscreenBroker } from '../offscreen-broker';
 import { WsConnectMessageSchema, WsReconnectMessageSchema } from '../../lib/message-schemas';
@@ -33,6 +35,10 @@ export function registerConnectionRoutes(): void {
 
   registerRoute('GET_INGEST_GAPS', () => {
     return getIngestGaps();
+  });
+
+  registerRoute('GET_CAST_MOVED', () => {
+    return getCastMoved();
   });
 
   registerRoute('ENSURE_CONNECTION', async () => {

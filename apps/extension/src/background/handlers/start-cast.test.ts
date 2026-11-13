@@ -152,6 +152,20 @@ describe('handleStartCast with a companion that regroups', () => {
     expect(brokerCalls.stoppedTabs).toEqual([1]);
     expect(getSession(1)).toBeUndefined();
   });
+
+  it('should say FLAC needs UPnP when a household with it off refuses FLAC', async () => {
+    brokerReplies.playbackResult = (speakerIp) => ({
+      speakerIp,
+      success: false,
+      error: 'flac_needs_upnp',
+    });
+
+    const response = await cast(['RINCON_STUDY']);
+
+    expect(response).toMatchObject({ success: false, error: 'error_flac_needs_upnp' });
+    expect(brokerCalls.stoppedTabs).toEqual([1]);
+    expect(getSession(1)).toBeUndefined();
+  });
 });
 
 describe('handleStartCast with an older companion', () => {

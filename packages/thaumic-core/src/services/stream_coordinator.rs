@@ -23,7 +23,6 @@ use crate::context::NetworkContext;
 use crate::error::ThaumicResult;
 use crate::events::{EventEmitter, SpeakerRemovalReason, StreamEvent};
 use crate::protocol_constants::SPEAKERS_UPNP_DISABLED;
-use crate::sonos::soap::SoapError;
 use crate::sonos::subscription_arbiter::SubscriptionArbiter;
 use crate::sonos::types::TransportState;
 use crate::sonos::utils::build_sonos_stream_uri;
@@ -841,6 +840,105 @@ impl StreamCoordinator {
     /// Speaker stop/switch failures are logged but don't prevent cleanup.
     pub async fn remove_stream_async(&self, stream_id: &str) {
         self.remove_streams(&[stream_id.to_string()], None).await;
+    }
+
+    /// Starts every cast this companion leads again on the route the
+    /// household is on now, and tells each stream's client its cast moved.
+    ///
+    /// For a household whose Sonos UPnP was switched off mid-cast: the audio
+    /// plays on, but port 1400 refuses every command, so the cast could not
+    /// be stopped, continued or kept in sync. Each coordinator's stream is
+    /// loaded again over port 1443, from the live edge (a skip of about the
+    /// head start); its rooms follow it as a group does. A cast that cannot
+    /// move (FLAC, or a speaker that refuses) is ended with
+    /// [`SpeakerRemovalReason::MoveFailed`], so its client says why.
+    pub async fn rehome_casts(&self) {
+        let coordinators: Vec<PlaybackSession> = self
+            .sessions
+            .all_sessions()
+            .into_iter()
+            .filter(|s| s.role == GroupRole::Coordinator)
+            .collect();
+        let mut moved: Vec<String> = Vec::new();
+        let mut failed: Vec<(String, String)> = Vec::new();
+        for session in coordinators {
+            // As every start does: under the speaker's start lock, for the
+            // session as it stands once the lock is held.
+            let _start = self
+                .sessions
+                .lock_speaker_start(&session.stream_id, &session.speaker_ip)
+                .await;
+            let Some(session) = self
+                .sessions
+                .get(&session.stream_id, &session.speaker_ip)
+                .filter(|s| s.role == GroupRole::Coordinator)
+            else {
+                continue;
+            };
+            let Some(stream) = self.stream_registry.get_stream(&session.stream_id) else {
+                continue;
+            };
+            let metadata = stream.metadata.read().clone();
+            let artwork_url = self.network.url_builder().artwork_url();
+            match self
+                .sonos
+                .play_uri(
+                    &session.speaker_ip,
+                    &session.stream_url,
+                    session.codec,
+                    &stream.audio_format,
+                    Some(&metadata),
+                    &artwork_url,
+                )
+                .await
+            {
+                Ok(())
+                    if self
+                        .sessions
+                        .get(&session.stream_id, &session.speaker_ip)
+                        .is_none() =>
+                {
+                    // Stopped while it moved: end what the move started.
+                    let _ = self.sonos.stop(&session.speaker_ip).await;
+                }
+                Ok(()) => {
+                    log::info!(
+                        "[Stream] Moved stream={} speaker={} to port 1443",
+                        session.stream_id,
+                        session.speaker_ip
+                    );
+                    if !moved.contains(&session.stream_id) {
+                        moved.push(session.stream_id.clone());
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[Stream] Could not move stream={} speaker={} to port 1443: {}",
+                        session.stream_id,
+                        session.speaker_ip,
+                        e
+                    );
+                    failed.push((session.stream_id.clone(), session.speaker_ip.clone()));
+                }
+            }
+        }
+        for stream_id in moved {
+            self.emit_event(StreamEvent::CastMoved {
+                stream_id,
+                timestamp: now_millis(),
+            });
+        }
+        // A cast that could not move would play on with nothing able to
+        // stop, continue or sync it: it is ended, and its client told why.
+        // Out of the loop, so no start lock is held while it stops.
+        for (stream_id, speaker_ip) in failed {
+            self.stop_playback_speaker(
+                &stream_id,
+                &speaker_ip,
+                Some(SpeakerRemovalReason::MoveFailed),
+            )
+            .await;
+        }
     }
 
     /// Ends `stream_ids` with graceful speaker cleanup, in one pass under the
@@ -1676,10 +1774,9 @@ impl StreamCoordinator {
             }
             Err(e) => {
                 log::warn!("Failed to start playback on {}: {}", speaker_ip, e);
-                let error = match e {
-                    SoapError::UpnpDisabled => SPEAKERS_UPNP_DISABLED.to_string(),
-                    e => e.to_string(),
-                };
+                let error = e
+                    .user_reason()
+                    .map_or_else(|| e.to_string(), str::to_string);
                 outcome(failed(speaker_ip, error), left_group)
             }
         }

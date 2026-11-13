@@ -10,12 +10,17 @@
 //!
 //! The arbiter maintains a `sync_ips` set that is updated BEFORE GENA operations,
 //! closing TOCTOU race windows that existed when using `gena.is_subscribed()` queries.
+//!
+//! A household off UPnP (on port 1443, or with no route) has no GENA: the
+//! arbiter still keeps `sync_ips`, which says which volume source counts for
+//! each speaker, and makes no subscription.
 
 use std::sync::Arc;
 
 use dashmap::DashSet;
 
 use super::gena::GenaSubscriptionManager;
+use super::routed::HouseholdRoute;
 use super::services::SonosService;
 
 /// Arbitrates between RenderingControl and GroupRenderingControl subscriptions.
@@ -28,15 +33,29 @@ pub struct SubscriptionArbiter {
     /// Speaker IPs currently in active sync sessions (using RenderingControl).
     /// Updated BEFORE GENA operations to close TOCTOU race windows.
     sync_ips: DashSet<String>,
+    /// How the household is controlled; off UPnP there is no GENA.
+    route: Arc<HouseholdRoute>,
 }
 
 impl SubscriptionArbiter {
-    /// Creates a new SubscriptionArbiter.
+    /// Creates a new SubscriptionArbiter for a household on UPnP.
     pub fn new(gena: Arc<GenaSubscriptionManager>) -> Self {
+        Self::with_route(gena, Arc::default())
+    }
+
+    /// Creates a SubscriptionArbiter that follows the household's `route`.
+    pub fn with_route(gena: Arc<GenaSubscriptionManager>, route: Arc<HouseholdRoute>) -> Self {
         Self {
             gena,
             sync_ips: DashSet::new(),
+            route,
         }
+    }
+
+    /// The household's route.
+    #[must_use]
+    pub fn route(&self) -> &Arc<HouseholdRoute> {
+        &self.route
     }
 
     /// Returns whether a speaker IP is in an active sync session.
@@ -67,6 +86,9 @@ impl SubscriptionArbiter {
         // Any concurrent ensure_group_rendering() call will see this immediately.
         for ip in ips {
             self.sync_ips.insert(ip.clone());
+        }
+        if !self.route.has_gena() {
+            return;
         }
 
         // Parallelize per-IP GENA operations (per-IP sequence is preserved within each future)
@@ -122,6 +144,9 @@ impl SubscriptionArbiter {
     /// Called by StreamCoordinator when a speaker leaves a sync group.
     pub async fn leave_sync_session(&self, ip: &str, callback_url: &str) {
         self.sync_ips.remove(ip);
+        if !self.route.has_gena() {
+            return;
+        }
 
         // Unsubscribe from RenderingControl
         self.gena
@@ -160,6 +185,9 @@ impl SubscriptionArbiter {
     ///
     /// Called by TopologyMonitor during subscription sync.
     pub async fn ensure_group_rendering(&self, ip: &str, callback_url: &str) {
+        if !self.route.has_gena() {
+            return;
+        }
         if self.sync_ips.contains(ip) {
             // Proactively clean up any stale GRC subscription
             self.gena
@@ -275,5 +303,35 @@ mod tests {
             .await;
 
         assert!(arbiter.is_in_sync_session("192.168.1.100"));
+    }
+
+    #[tokio::test]
+    async fn over_port_1443_sync_sessions_are_kept_with_no_subscription() {
+        // A listener stands in for the speaker: any GENA request reaches it.
+        let speaker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = speaker.local_addr().unwrap().port();
+        let (gena, _rx) = GenaSubscriptionManager::with_speaker_port(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_millis(200))
+                .build()
+                .unwrap(),
+            port,
+        );
+        let arbiter = SubscriptionArbiter::with_route(Arc::new(gena), Arc::default());
+        arbiter.route().set(crate::sonos::routed::Route::Lan);
+        let ip = "127.0.0.1".to_string();
+        let callback = "http://127.0.0.1:1/notify";
+
+        arbiter
+            .enter_sync_session(std::slice::from_ref(&ip), callback)
+            .await;
+        assert!(arbiter.is_in_sync_session(&ip));
+        arbiter.ensure_group_rendering("127.0.0.1", callback).await;
+        arbiter.leave_sync_session(&ip, callback).await;
+        assert!(!arbiter.is_in_sync_session(&ip));
+
+        let contacted =
+            tokio::time::timeout(std::time::Duration::from_millis(300), speaker.accept()).await;
+        assert!(contacted.is_err(), "the speaker was sent a GENA request");
     }
 }

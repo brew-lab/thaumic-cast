@@ -92,7 +92,9 @@ fn stream_event(event: &StreamEvent) -> Option<(&'static str, Value)> {
             }
             Some(("playback-stop-failed", payload))
         }
-        StreamEvent::IngestGaps { .. } | StreamEvent::CompanionAudioChanged { .. } => None,
+        StreamEvent::IngestGaps { .. }
+        | StreamEvent::CastMoved { .. }
+        | StreamEvent::CompanionAudioChanged { .. } => None,
     }
 }
 

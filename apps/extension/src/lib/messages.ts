@@ -157,6 +157,12 @@ export {
   type IngestGapsChangedMessage,
   GetIngestGapsMessageSchema,
   type GetIngestGapsMessage,
+  CastMovedEntrySchema,
+  type CastMovedEntry,
+  CastMovedChangedMessageSchema,
+  type CastMovedChangedMessage,
+  GetCastMovedMessageSchema,
+  type GetCastMovedMessage,
   CompanionAudioChangedMessageSchema,
   type CompanionAudioChangedMessage,
   CaptureHealthEventMessageSchema,
@@ -246,6 +252,7 @@ import type {
   CaptureHealthChangedMessage,
   SpeakerHealthChangedMessage,
   IngestGapsChangedMessage,
+  CastMovedChangedMessage,
   CompanionAudioChangedMessage,
   VideoSyncStateChangedMessage,
   TabMetadataUpdateMessage,
@@ -296,6 +303,7 @@ export type PopupToBackgroundType =
   | 'GET_CAPTURE_HEALTH'
   | 'GET_SPEAKER_HEALTH'
   | 'GET_INGEST_GAPS'
+  | 'GET_CAST_MOVED'
   | 'GET_CURRENT_TAB_STATE'
   | 'GET_ACTIVE_CASTS'
   | 'ENSURE_CONNECTION'
@@ -327,6 +335,7 @@ export type BackgroundToPopupType =
   | 'CAPTURE_HEALTH_CHANGED'
   | 'SPEAKER_HEALTH_CHANGED'
   | 'INGEST_GAPS_CHANGED'
+  | 'CAST_MOVED_CHANGED'
   | 'COMPANION_AUDIO_CHANGED'
   | 'VIDEO_SYNC_STATE_CHANGED';
 
@@ -392,6 +401,7 @@ export type PopupToBackgroundMessage =
   | { type: 'GET_CAPTURE_HEALTH' }
   | { type: 'GET_SPEAKER_HEALTH' }
   | { type: 'GET_INGEST_GAPS' }
+  | { type: 'GET_CAST_MOVED' }
   | { type: 'GET_CURRENT_TAB_STATE' }
   | GetActiveCastsMessage
   | EnsureConnectionMessage
@@ -426,6 +436,7 @@ export type BackgroundToPopupMessage =
   | CaptureHealthChangedMessage
   | SpeakerHealthChangedMessage
   | IngestGapsChangedMessage
+  | CastMovedChangedMessage
   | CompanionAudioChangedMessage
   | VideoSyncStateChangedMessage;
 
