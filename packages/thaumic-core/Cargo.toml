@@ -32,7 +32,7 @@ html-escape = "0.3.0"
 # Networking
 local-ip-address = "0.6"
 socket2 = { version = "0.6", features = ["all"] }
-mdns-sd = "0.21"
+mdns-sd = "0.22"
 
 # Concurrency
 dashmap = "6"
